@@ -1,0 +1,21 @@
+{
+  "id": "rule-memory-high",
+  "name": "内存使用率过高",
+  "description": "当内存使用率超过 85% 时触发告警",
+  "type": "memory",
+  "enabled": true,
+  "condition": {
+    "metric": "memory_percent",
+    "operator": "\u003e",
+    "threshold": 85
+  },
+  "threshold": 85,
+  "duration": 120000000000,
+  "severity": "warning",
+  "labels": {
+    "category": "system",
+    "service": "cloud-flow"
+  },
+  "created_at": "2026-04-13T13:53:42.985581311Z",
+  "updated_at": "2026-04-13T13:53:42.985707719Z"
+}

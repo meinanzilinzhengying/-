@@ -1,0 +1,237 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"syscall"
+	"time"
+
+	"google.golang.org/grpc"
+
+	"cloud-flow-center/internal/alerting"
+	"cloud-flow-center/internal/cluster"
+	"cloud-flow-center/internal/config"
+	"cloud-flow-center/internal/grpcserver"
+	"cloud-flow-center/internal/portal"
+	"cloud-flow-center/internal/storage"
+	"cloud-flow-center/pkg/audit"
+	"cloud-flow-center/pkg/logger"
+	"cloud-flow-center/pkg/metrics"
+	edge "cloud-flow/proto"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	log := logger.New(logger.Config{
+		Level:      cfg.Log.Level,
+		Format:     cfg.Log.Format,
+		Output:     cfg.Log.Output,
+		LogDir:     cfg.Log.LogDir,
+		MaxSize:    cfg.Log.MaxSize,
+		MaxBackups: cfg.Log.MaxBackups,
+		MaxAge:     cfg.Log.MaxAge,
+	})
+	defer log.Sync()
+
+	log.Infof("中心服务启动中... 配置: %s", cfg.Summary())
+
+	// 初始化集群管理器
+	clusterMgr, err := cluster.NewManager(cluster.Config{
+		EtcdEndpoints: cfg.Cluster.EtcdEndpoints,
+		LeaseTTL:      cfg.Cluster.LeaseTTL,
+		NodeID:        cfg.Cluster.NodeID,
+		NodeAddr:      cfg.Cluster.NodeAddr,
+		StoragePath:   cfg.DataDir,
+	}, log)
+	if err != nil {
+		log.Warnf("初始化集群管理器失败: %v，将以单机模式运行", err)
+	} else {
+		clusterMgr.Start()
+		defer clusterMgr.Stop()
+	}
+
+
+
+	store, err := storage.NewStorageEngine(cfg.Storage, log)
+	if err != nil {
+		log.Errorf("初始化存储失败: %v", err)
+		os.Exit(1)
+	}
+	store.StartCleanup()
+
+	// 初始化告警管理器
+	ruleDir := filepath.Join(cfg.DataDir, "alerting", "rules")
+	if err := os.MkdirAll(ruleDir, 0755); err != nil {
+		log.Warnf("创建规则目录 %s 失败: %v", ruleDir, err)
+	}
+
+	// 创建多渠道通知器
+	multiNotifier := alerting.NewMultiNotifier(log)
+
+	// 添加邮件通知器（如果启用）
+	if cfg.Alerting.Email.Enabled {
+		emailNotifier := alerting.NewEmailNotifier(
+			cfg.Alerting.Email.SMTPHost,
+			fmt.Sprintf("%d", cfg.Alerting.Email.SMTPPort),
+			cfg.Alerting.Email.SMTPUsername,
+			cfg.Alerting.Email.SMTPPassword,
+			cfg.Alerting.Email.From,
+			cfg.Alerting.Email.To,
+			log,
+		)
+		multiNotifier.AddNotifier(emailNotifier)
+		log.Info("邮件通知器已添加")
+	}
+
+	// 添加Webhook通知器（如果启用）
+	if cfg.Alerting.Webhook.Enabled && cfg.Alerting.Webhook.URL != "" {
+		webhookNotifier := alerting.NewWebhookNotifier(
+			cfg.Alerting.Webhook.URL,
+			log,
+		)
+		multiNotifier.AddNotifier(webhookNotifier)
+		log.Info("Webhook通知器已添加")
+	}
+
+
+
+	// 初始化告警管理器
+	alertMgr := alerting.NewAlertManager(ruleDir, store, getDB(store), multiNotifier, log, 0)
+	alertMgr.Start()
+	defer alertMgr.Stop()
+	log.Info("告警系统已启动")
+
+	srv := grpcserver.NewServer(store, log, cfg.APIKey)
+
+	// 构建 gRPC Server 选项（TLS + 限流 + 其他）
+	serverOpts, err := grpcserver.BuildServerOpts(cfg.TLS, cfg.RateLimit, cfg.APIKey, log)
+	if err != nil {
+		log.Errorf("构建 gRPC 服务端选项失败: %v", err)
+		os.Exit(1)
+	}
+	grpcServer := grpc.NewServer(serverOpts...)
+	edge.RegisterCenterServiceServer(grpcServer, srv)
+
+	listenAddr := fmt.Sprintf(":%d", cfg.GRPCListenPort)
+	lis, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Errorf("监听端口失败: %v", err)
+		os.Exit(1)
+	}
+
+	go func() {
+		log.Infof("gRPC 服务监听: %s", listenAddr)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Errorf("gRPC 服务异常: %v", err)
+		}
+	}()
+
+	// 启动 Portal HTTP 服务
+	auditDir := cfg.DataDir + "/audit"
+	auditLogger, err := audit.NewLogger(auditDir, log)
+	if err != nil {
+		log.Warnf("初始化审计日志记录器失败: %v，审计功能已禁用", err)
+	} else {
+		log.Info("审计日志记录器已初始化")
+		defer auditLogger.Stop()
+	}
+
+	jwtSecret := cfg.JWT.SecretKey
+	if jwtSecret == "" {
+		// 未配置 JWT 密钥时，生成随机密钥（每次重启后已签发 token 失效）
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err == nil {
+			jwtSecret = hex.EncodeToString(b)
+		}
+		log.Warn("JWT 密钥未配置，已生成随机密钥（服务重启后所有已签发 token 将失效，生产环境请设置 CLOUD_FLOW_JWT_SECRET 环境变量）")
+	}
+
+	secureCookie := cfg.TLS.Enabled
+	portalSrv := portal.NewServer(store, jwtSecret, auditLogger, alertMgr, log, secureCookie, cfg.RateLimit, time.Duration(cfg.JWT.TokenDuration)*time.Hour, cfg.Portal.RedisAddr, cfg)
+
+	httpListenAddr := fmt.Sprintf(":%d", cfg.Portal.Port)
+	httpServer := &http.Server{
+		Addr:         httpListenAddr,
+		Handler:      portalSrv.Handler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+	go func() {
+		log.Infof("Portal HTTP 服务监听: %s", httpListenAddr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Errorf("Portal HTTP 服务异常: %v", err)
+		}
+	}()
+
+	log.Info("中心服务已启动")
+
+	// 启动 Prometheus metrics HTTP 服务（独立端口，避免与 Portal 冲突）
+	metricsPort := 9191
+	if p := os.Getenv("METRICS_PORT"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil {
+			metricsPort = v
+		}
+	}
+	metrics.StartServer(metricsPort)
+	log.Infof("Prometheus metrics 服务监听: :%d", metricsPort)
+
+	// 优雅关闭
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Infof("收到信号 %v，开始优雅关闭...", sig)
+
+	done := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(done)
+	}()
+
+	// 优雅关闭 HTTP 服务
+	httpDone := make(chan struct{})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		httpServer.Shutdown(ctx)
+		close(httpDone)
+	}()
+
+	select {
+	case <-done:
+		log.Info("gRPC 服务已停止")
+	case <-time.After(30 * time.Second):
+		log.Warn("优雅关闭超时，强制停止")
+		grpcServer.Stop()
+	}
+
+	<-httpDone
+	log.Info("Portal HTTP 服务已停止")
+
+	store.Stop()
+	log.Info("中心服务已安全退出")
+}
+
+// getDB 从存储引擎中提取 *sql.DB，用于告警历史持久化
+func getDB(store storage.StorageEngine) *sql.DB {
+	if store == nil {
+		return nil
+	}
+	if tidbStore, ok := store.(*storage.TiDBStorage); ok {
+		return tidbStore.GetDB()
+	}
+	return nil
+}

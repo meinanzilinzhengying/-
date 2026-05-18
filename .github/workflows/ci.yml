@@ -1,0 +1,215 @@
+# =============================================================================
+# 云内流量监测系统 (Cloud Flow) - GitHub Actions CI 配置
+# =============================================================================
+# 触发条件: push 和 pull_request
+# 检查内容: Go 测试、前端构建、Docker 镜像构建、Lint 检查
+# =============================================================================
+
+name: Cloud Flow CI
+
+on:
+  push:
+    branches: [main, develop, "release/*"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  GO_VERSION: "1.22"
+  NODE_VERSION: "20"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Go Lint 检查 (golangci-lint)
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Go Lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - cloud-flow-center
+          - cloud-flow-agent
+          - cloud-flow-edge
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.60
+          working-directory: ${{ matrix.module }}
+          args: --timeout=5m
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Go 测试
+  # ---------------------------------------------------------------------------
+  go-test:
+    name: Go Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - cloud-flow-center
+          - cloud-flow-agent
+          - cloud-flow-edge
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        working-directory: ${{ matrix.module }}
+        run: go mod download
+
+      - name: Run go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: Run tests
+        working-directory: ${{ matrix.module }}
+        run: |
+          if [ "${{ matrix.module }}" = "cloud-flow-agent" ]; then
+            # Agent 模块跳过 eBPF 测试（需要 root 权限和特定内核支持）
+            go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v ebpfcollector)
+          else
+            go test -v -race -coverprofile=coverage.out ./...
+          fi
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: matrix.module == 'cloud-flow-center'
+        with:
+          name: coverage-${{ matrix.module }}
+          path: ${{ matrix.module }}/coverage.out
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 3: 前端构建检查
+  # ---------------------------------------------------------------------------
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cloud-flow-frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cloud-flow-frontend
+        run: npm ci
+
+      - name: Type check
+        working-directory: cloud-flow-frontend
+        run: npx vue-tsc --noEmit
+
+      - name: Build
+        working-directory: cloud-flow-frontend
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: cloud-flow-frontend/dist/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Docker 镜像构建检查
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: center
+            context: cloud-flow-center
+            dockerfile: deployments/Dockerfile
+          - name: edge
+            context: cloud-flow-edge
+            dockerfile: deployments/Dockerfile
+          - name: agent
+            context: cloud-flow-agent
+            dockerfile: deployments/Dockerfile
+          - name: frontend
+            context: cloud-flow-frontend
+            dockerfile: deployments/Dockerfile
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service.context }}
+          file: ./${{ matrix.service.context }}/${{ matrix.service.dockerfile }}
+          push: false
+          cache-from: |
+            type=gha
+            type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+          tags: cloud-flow-${{ matrix.service.name }}:ci-check
+
+  # ---------------------------------------------------------------------------
+  # Job 5: 数据库迁移文件检查
+  # ---------------------------------------------------------------------------
+  migration-check:
+    name: Migration Files Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check migration file pairs
+        run: |
+          echo "Checking migration file pairs..."
+          MIGRATIONS_DIR="cloud-flow-center/deployments/migrations"
+          MISSING=0
+
+          for up_file in "$MIGRATIONS_DIR"/*.up.sql; do
+            if [ -f "$up_file" ]; then
+              base=$(basename "$up_file" .up.sql)
+              down_file="$MIGRATIONS_DIR/${base}.down.sql"
+              if [ ! -f "$down_file" ]; then
+                echo "ERROR: Missing down migration for $up_file"
+                MISSING=1
+              fi
+            fi
+          done
+
+          for down_file in "$MIGRATIONS_DIR"/*.down.sql; do
+            if [ -f "$down_file" ]; then
+              base=$(basename "$down_file" .down.sql)
+              up_file="$MIGRATIONS_DIR/${base}.up.sql"
+              if [ ! -f "$up_file" ]; then
+                echo "ERROR: Missing up migration for $down_file"
+                MISSING=1
+              fi
+            fi
+          done
+
+          if [ "$MISSING" -eq 1 ]; then
+            echo "FAIL: Some migration files are missing their pair"
+            exit 1
+          fi
+
+          echo "PASS: All migration files have matching pairs"

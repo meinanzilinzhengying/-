@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 720" width="680" height="720" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0d9488"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#d97706"/>
+    </marker>
+    <marker id="arrow-indigo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#6366f1"/>
+    </marker>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="680" height="720" rx="8" fill="url(#bg)" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="340" y="30" text-anchor="middle" font-size="16" font-weight="bold" fill="#1e293b">云内流量监测系统 - 系统架构</text>
+
+  <!-- ===== Row 1: Frontend Layer ===== -->
+  <rect x="20" y="48" width="640" height="62" rx="6" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="1" opacity="0.5"/>
+  <text x="32" y="66" font-size="11" fill="#0369a1" font-weight="bold">前端层</text>
+  <rect x="200" y="56" width="280" height="46" rx="8" fill="#0ea5e9" filter="url(#shadow)"/>
+  <text x="340" y="76" text-anchor="middle" font-size="13" fill="white" font-weight="bold">Frontend (Vue 3 + Element Plus)</text>
+  <text x="340" y="93" text-anchor="middle" font-size="10" fill="#e0f2fe">端口 :8888</text>
+
+  <!-- Arrow: Frontend -> Center Portal -->
+  <line x1="340" y1="102" x2="340" y2="130" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="352" y="120" font-size="9" fill="#64748b">HTTP API</text>
+
+  <!-- ===== Row 2: API Gateway ===== -->
+  <rect x="20" y="130" width="640" height="62" rx="6" fill="#fef3c7" stroke="#fcd34d" stroke-width="1" opacity="0.4"/>
+  <text x="32" y="148" font-size="11" fill="#92400e" font-weight="bold">API 网关</text>
+  <rect x="200" y="138" width="280" height="46" rx="8" fill="#f59e0b" filter="url(#shadow)"/>
+  <text x="340" y="158" text-anchor="middle" font-size="13" fill="white" font-weight="bold">Center Portal (HTTP :8080)</text>
+  <text x="340" y="175" text-anchor="middle" font-size="10" fill="#fef3c7">端口 :9090</text>
+
+  <!-- Arrow: Center Portal -> Center gRPC -->
+  <line x1="340" y1="184" x2="340" y2="218" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== Row 3: Core Services ===== -->
+  <rect x="20" y="218" width="640" height="78" rx="6" fill="#ccfbf1" stroke="#5eead4" stroke-width="1" opacity="0.4"/>
+  <text x="32" y="236" font-size="11" fill="#0f766e" font-weight="bold">核心服务</text>
+
+  <!-- Agent -->
+  <rect x="38" y="244" width="180" height="46" rx="8" fill="#14b8a6" filter="url(#shadow)"/>
+  <text x="128" y="264" text-anchor="middle" font-size="12" fill="white" font-weight="bold">Agent (eBPF 探针)</text>
+  <text x="128" y="280" text-anchor="middle" font-size="9" fill="#ccfbf1">无外部端口</text>
+
+  <!-- Edge -->
+  <rect x="250" y="244" width="180" height="46" rx="8" fill="#14b8a6" filter="url(#shadow)"/>
+  <text x="340" y="264" text-anchor="middle" font-size="12" fill="white" font-weight="bold">Edge (边缘节点)</text>
+  <text x="340" y="280" text-anchor="middle" font-size="9" fill="#ccfbf1">端口 :10001, :10002</text>
+
+  <!-- Center gRPC -->
+  <rect x="462" y="244" width="180" height="46" rx="8" fill="#14b8a6" filter="url(#shadow)"/>
+  <text x="552" y="264" text-anchor="middle" font-size="12" fill="white" font-weight="bold">Center gRPC (:9090)</text>
+  <text x="552" y="280" text-anchor="middle" font-size="9" fill="#ccfbf1">端口 :9999</text>
+
+  <!-- Arrow: Agent -> Edge (gRPC) -->
+  <line x1="218" y1="267" x2="250" y2="267" stroke="#0d9488" stroke-width="1.5" marker-end="url(#arrow-teal)"/>
+  <text x="234" y="260" text-anchor="middle" font-size="8" fill="#0d9488">gRPC</text>
+  <text x="234" y="270" text-anchor="middle" font-size="7" fill="#0d9488">:50051</text>
+
+  <!-- Arrow: Edge -> Center (gRPC) -->
+  <line x1="430" y1="267" x2="462" y2="267" stroke="#0d9488" stroke-width="1.5" marker-end="url(#arrow-teal)"/>
+  <text x="446" y="260" text-anchor="middle" font-size="8" fill="#0d9488">gRPC</text>
+  <text x="446" y="270" text-anchor="middle" font-size="7" fill="#0d9488">:9090</text>
+
+  <!-- Arrow: Center -> TiDB, Redis -->
+  <line x1="552" y1="290" x2="552" y2="328" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+
+  <!-- ===== Row 4: Infrastructure ===== -->
+  <rect x="20" y="328" width="640" height="68" rx="6" fill="#fef3c7" stroke="#fcd34d" stroke-width="1" opacity="0.4"/>
+  <text x="32" y="346" font-size="11" fill="#92400e" font-weight="bold">基础设施</text>
+
+  <!-- TiDB -->
+  <rect x="180" y="340" width="220" height="46" rx="8" fill="#f59e0b" filter="url(#shadow)"/>
+  <text x="290" y="360" text-anchor="middle" font-size="12" fill="white" font-weight="bold">TiDB (:4000)</text>
+  <text x="290" y="376" text-anchor="middle" font-size="9" fill="#fef3c7">127.0.0.1:4000</text>
+
+  <!-- Redis -->
+  <rect x="430" y="340" width="220" height="46" rx="8" fill="#f59e0b" filter="url(#shadow)"/>
+  <text x="540" y="360" text-anchor="middle" font-size="12" fill="white" font-weight="bold">Redis (:6379)</text>
+  <text x="540" y="376" text-anchor="middle" font-size="9" fill="#fef3c7">127.0.0.1:6379</text>
+
+  <!-- Arrow: Center -> TiDB (curved) -->
+  <path d="M 520 290 Q 520 314 370 328" fill="none" stroke="#d97706" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-amber)"/>
+  <!-- Arrow: Center -> Redis (straight, already drawn above) -->
+
+  <!-- Arrow: Agent/Edge -> Prometheus (metrics) -->
+  <line x1="128" y1="290" x2="128" y2="430" stroke="#6366f1" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-indigo)"/>
+  <text x="100" y="365" font-size="8" fill="#6366f1" transform="rotate(-90,100,365)">metrics</text>
+
+  <line x1="300" y1="290" x2="300" y2="430" stroke="#6366f1" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-indigo)"/>
+  <text x="272" y="365" font-size="8" fill="#6366f1" transform="rotate(-90,272,365)">metrics</text>
+
+  <!-- ===== Row 5: Monitoring Stack ===== -->
+  <rect x="20" y="430" width="640" height="100" rx="6" fill="#e0e7ff" stroke="#a5b4fc" stroke-width="1" opacity="0.4"/>
+  <text x="32" y="448" font-size="11" fill="#4338ca" font-weight="bold">监控栈</text>
+
+  <!-- Prometheus -->
+  <rect x="38" y="456" width="145" height="62" rx="8" fill="#6366f1" filter="url(#shadow)"/>
+  <text x="110" y="478" text-anchor="middle" font-size="11" fill="white" font-weight="bold">Prometheus</text>
+  <text x="110" y="493" text-anchor="middle" font-size="9" fill="#c7d2fe">:9090</text>
+  <text x="110" y="508" text-anchor="middle" font-size="8" fill="#c7d2fe">127.0.0.1:9091</text>
+
+  <!-- Grafana -->
+  <rect x="198" y="456" width="145" height="62" rx="8" fill="#6366f1" filter="url(#shadow)"/>
+  <text x="270" y="478" text-anchor="middle" font-size="11" fill="white" font-weight="bold">Grafana</text>
+  <text x="270" y="493" text-anchor="middle" font-size="9" fill="#c7d2fe">:3000</text>
+  <text x="270" y="508" text-anchor="middle" font-size="8" fill="#c7d2fe">127.0.0.1:3001</text>
+
+  <!-- Alertmanager -->
+  <rect x="358" y="456" width="145" height="62" rx="8" fill="#6366f1" filter="url(#shadow)"/>
+  <text x="430" y="478" text-anchor="middle" font-size="11" fill="white" font-weight="bold">Alertmanager</text>
+  <text x="430" y="493" text-anchor="middle" font-size="9" fill="#c7d2fe">:9093</text>
+  <text x="430" y="508" text-anchor="middle" font-size="8" fill="#c7d2fe">127.0.0.1:9094</text>
+
+  <!-- Loki -->
+  <rect x="518" y="456" width="130" height="62" rx="8" fill="#6366f1" filter="url(#shadow)"/>
+  <text x="583" y="478" text-anchor="middle" font-size="11" fill="white" font-weight="bold">Loki</text>
+  <text x="583" y="493" text-anchor="middle" font-size="9" fill="#c7d2fe">:3100</text>
+  <text x="583" y="508" text-anchor="middle" font-size="8" fill="#c7d2fe">127.0.0.1:3100</text>
+
+  <!-- Arrow: Prometheus -> Alertmanager -->
+  <line x1="183" y1="487" x2="358" y2="487" stroke="#6366f1" stroke-width="1.2" marker-end="url(#arrow-indigo)"/>
+
+  <!-- Arrow: Promtail -> Loki -->
+  <rect x="518" y="540" width="130" height="30" rx="6" fill="#818cf8" filter="url(#shadow)"/>
+  <text x="583" y="560" text-anchor="middle" font-size="10" fill="white" font-weight="bold">Promtail</text>
+  <line x1="583" y1="540" x2="583" y2="518" stroke="#6366f1" stroke-width="1.2" marker-end="url(#arrow-indigo)"/>
+
+  <!-- Arrow: Loki -> Grafana -->
+  <line x1="518" y1="475" x2="343" y2="475" stroke="#6366f1" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-indigo)"/>
+
+  <!-- ===== Legend ===== -->
+  <rect x="20" y="590" width="640" height="120" rx="6" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="40" y="612" font-size="12" fill="#1e293b" font-weight="bold">图例</text>
+
+  <!-- Legend items -->
+  <rect x="40" y="622" width="16" height="12" rx="3" fill="#0ea5e9"/>
+  <text x="62" y="633" font-size="10" fill="#475569">前端层 (c-sky)</text>
+
+  <rect x="180" y="622" width="16" height="12" rx="3" fill="#14b8a6"/>
+  <text x="202" y="633" font-size="10" fill="#475569">核心服务 (c-teal)</text>
+
+  <rect x="340" y="622" width="16" height="12" rx="3" fill="#f59e0b"/>
+  <text x="362" y="633" font-size="10" fill="#475569">基础设施 (c-amber)</text>
+
+  <rect x="500" y="622" width="16" height="12" rx="3" fill="#6366f1"/>
+  <text x="522" y="633" font-size="10" fill="#475569">监控栈 (c-indigo)</text>
+
+  <!-- Legend arrows -->
+  <line x1="40" y1="656" x2="80" y2="656" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="88" y="660" font-size="10" fill="#475569">数据流</text>
+
+  <line x1="160" y1="656" x2="200" y2="656" stroke="#6366f1" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-indigo)"/>
+  <text x="208" y="660" font-size="10" fill="#475569">指标/日志流</text>
+
+  <!-- Data flow summary -->
+  <text x="40" y="685" font-size="9" fill="#94a3b8">数据流: Agent → Edge → Center → TiDB/Redis | Agent/Edge → Prometheus → Alertmanager | Promtail → Loki → Grafana</text>
+  <text x="40" y="700" font-size="9" fill="#94a3b8">Frontend → Center Portal (HTTP :9090) | Center gRPC (:9999) | Edge (:10001, :10002)</text>
+</svg>

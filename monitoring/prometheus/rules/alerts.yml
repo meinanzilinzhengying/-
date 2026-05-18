@@ -1,0 +1,141 @@
+# =============================================================================
+# 告警规则 - 云内流量监测系统
+# =============================================================================
+groups:
+  # ---------------------------------------------------------------------------
+  # Agent 探针告警
+  # ---------------------------------------------------------------------------
+  - name: cloud-flow-agent
+    rules:
+      - alert: AgentDown
+        expr: up{job="agent"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Agent 探针服务不可用"
+          description: "Agent 探针 {{ $labels.instance }} 已离线超过 1 分钟"
+
+      - alert: AgentHighErrorRate
+        expr: >
+          rate(cloud_flow_agent_collect_errors_total[5m]) 
+          / rate(cloud_flow_agent_collect_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent 采集错误率过高"
+          description: "Agent {{ $labels.instance }} 采集错误率为 {{ $value | humanizePercentage }}"
+
+      - alert: AgentCollectLatency
+        expr: >
+          histogram_quantile(0.95, 
+            rate(cloud_flow_agent_collect_duration_seconds_bucket[5m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent 采集延迟过高"
+          description: "Agent {{ $labels.instance }} P95 采集延迟为 {{ $value }}s"
+
+      - alert: AgentSendErrors
+        expr: rate(cloud_flow_agent_send_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent 数据发送失败"
+          description: "Agent {{ $labels.instance }} 发送错误率上升"
+
+      - alert: AgentHeartbeatStopped
+        expr: rate(cloud_flow_agent_heartbeat_total[5m]) == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Agent 心跳停止"
+          description: "Agent {{ $labels.instance }} 已超过 3 分钟未发送心跳"
+
+  # ---------------------------------------------------------------------------
+  # Edge 边缘节点告警
+  # ---------------------------------------------------------------------------
+  - name: cloud-flow-edge
+    rules:
+      - alert: EdgeDown
+        expr: up{job="edge"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Edge 边缘节点不可用"
+          description: "Edge 节点 {{ $labels.instance }} 已离线超过 1 分钟"
+
+  # ---------------------------------------------------------------------------
+  # 系统资源告警
+  # ---------------------------------------------------------------------------
+  - name: system-resources
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 使用率过高"
+          description: "节点 {{ $labels.instance }} CPU 使用率为 {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: >
+          (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内存使用率过高"
+          description: "节点 {{ $labels.instance }} 内存使用率为 {{ $value }}%"
+
+      - alert: DiskSpaceLow
+        expr: >
+          (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} 
+          / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘空间不足"
+          description: "节点 {{ $labels.instance }} 挂载点 {{ $labels.mountpoint }} 使用率为 {{ $value }}%"
+
+      - alert: HighContainerRestartCount
+        expr: >
+          increase(container_last_seen{name=~"cloud-flow.*"}[1h]) == 0 
+          and increase(container_restarts_total{name=~"cloud-flow.*"}[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "容器频繁重启"
+          description: "容器 {{ $labels.name }} 在过去 1 小时内重启 {{ $value }} 次"
+
+  # ---------------------------------------------------------------------------
+  # 数据库告警
+  # ---------------------------------------------------------------------------
+  - name: database
+    rules:
+      - alert: TiDBDown
+        expr: up{job="tidb"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TiDB 数据库不可用"
+          description: "TiDB {{ $labels.instance }} 已离线超过 1 分钟"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 不可用"
+          description: "Redis {{ $labels.instance }} 已离线超过 1 分钟"

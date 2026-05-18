@@ -1,0 +1,65 @@
+# 边缘节点服务配置
+# 
+# ⚠️ 安全警告：API Key 安全加载方式（按优先级排序）
+# 1. CLOUD_FLOW_API_KEY_FILE - 从文件读取（推荐用于 Docker Secrets / K8s Secrets）
+#    示例: export CLOUD_FLOW_API_KEY_FILE=/run/secrets/api-key
+# 2. CLOUD_FLOW_API_KEY - 直接环境变量（适合 CI/CD）
+#    示例: export CLOUD_FLOW_API_KEY=your-secret-key
+# 3. VAULT_ADDR + VAULT_PATH - 从 HashiCorp Vault 读取（企业级方案）
+#    示例: export VAULT_ADDR=https://vault.example.com && export VAULT_PATH=secret/data/cloud-flow/api-key
+# 4. 本配置文件 - 仅用于开发环境，生产环境请勿在配置文件中写入明文 API Key
+# 5. 自动生成 - 如果以上都未配置，系统会自动生成一个随机 API Key（仅开发环境）
+
+edge_node_id: ""            # 留空则自动使用 hostname
+grpc_listen_port: 50051
+metrics_port: 9092
+health_port: 8081
+center_addr: "center:50052"
+
+# 服务发现配置
+service_discovery:
+  enabled: false
+  type: "etcd"  # etcd, consul, dns
+  endpoints: ["localhost:2379"]
+  service_name: "cloud-flow-center"
+  refresh_interval: 30
+  port: 9090
+# 云平台和区域配置
+# 云平台示例值: aws, azure, gcp, onprem, kubernetes
+# 区域示例值: us-east-1, eastus, us-central1, local
+cloud_platform: "onprem"
+region: "local"
+batch_size: 100
+flush_interval: 5
+
+# ⚠️ 安全警告：以下 API Key 配置仅用于开发环境
+# 生产环境请使用环境变量或 Vault 等安全方式加载
+# 详见文件顶部注释
+
+# API Key 认证（探针注册到本节点时必须携带此 key）
+# 建议通过 CLOUD_FLOW_API_KEY_FILE 或 CLOUD_FLOW_API_KEY 环境变量设置
+api_key: ""
+
+# 中心服务认证（连接中心服务时使用的 API Key，必须与 center 配置的 api_key 一致）
+# 建议通过 CLOUD_FLOW_CENTER_API_KEY 环境变量设置
+center_api_key: ""
+
+# 限流配置
+rate_limit:
+  enabled: true
+  bucket_size: 100  # 令牌桶容量
+  refill_rate: 50    # 每秒填充令牌数
+
+# TLS 配置（默认启用，留空证书路径则自动使用内置自签名证书）
+tls:
+  enabled: true
+  ca_cert: ""               # CA 证书路径
+  client_cert: ""           # 客户端证书路径（mTLS 可选）
+  client_key: ""            # 客户端私钥路径（mTLS 可选）
+  server_cert: ""           # 服务端证书路径（边缘节点作为服务端）
+  server_key: ""            # 服务端私钥路径
+  server_name: ""           # 用于 TLS 握手验证的域名
+
+log:
+  level: info
+  format: json

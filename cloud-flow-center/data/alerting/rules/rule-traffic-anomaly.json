@@ -1,0 +1,21 @@
+{
+  "id": "rule-traffic-anomaly",
+  "name": "流量异常",
+  "description": "当流量超过 500MB/s 时触发告警",
+  "type": "traffic",
+  "enabled": true,
+  "condition": {
+    "metric": "traffic_bytes",
+    "operator": "\u003e",
+    "threshold": 536870912
+  },
+  "threshold": 536870912,
+  "duration": 60000000000,
+  "severity": "info",
+  "labels": {
+    "category": "network",
+    "service": "cloud-flow"
+  },
+  "created_at": "2026-04-13T13:53:42.98558186Z",
+  "updated_at": "2026-04-13T13:53:42.985817681Z"
+}

@@ -1,0 +1,96 @@
+// Package auth 提供认证相关功能
+package auth
+
+import (
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"log"
+	"math/big"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// GenerateRandomString 生成指定长度的随机字符串
+func GenerateRandomString(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random number: %w", err)
+		}
+		result[i] = charset[num.Int64()]
+	}
+	return string(result), nil
+}
+
+// Claims JWT声明
+
+type Claims struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+// JWTManager JWT管理器
+type JWTManager struct {
+	secretKey string
+}
+
+// NewJWTManager 创建JWT管理器
+func NewJWTManager(secretKey string) *JWTManager {
+	if secretKey == "" {
+		// 未配置固定密钥时自动生成随机密钥
+		generatedKey, err := GenerateRandomString(32)
+		if err != nil {
+			log.Fatalf("生成随机 JWT 密钥失败: %v", err)
+		}
+		secretKey = generatedKey
+		log.Printf("[WARNING] JWT secret_key 未配置，已自动生成随机密钥。服务重启后所有已签发的 token 将失效，" +
+			"所有用户需要重新登录。建议通过环境变量 CLOUD_FLOW_JWT_SECRET 或配置文件 center.jwt.secret_key 设置固定密钥。")
+	}
+	return &JWTManager{secretKey: secretKey}
+}
+
+// GenerateToken 生成JWT令牌
+func (m *JWTManager) GenerateToken(userID, role string, duration time.Duration) (string, error) {
+	claims := &Claims{
+		UserID: userID,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   userID,
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(m.secretKey))
+}
+
+// ValidateToken 验证JWT令牌
+func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&Claims{},
+		func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("unexpected signing method")
+			}
+			return []byte(m.secretKey), nil
+		},
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+
+	return claims, nil
+}

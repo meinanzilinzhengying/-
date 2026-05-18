@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud Flow - 监控平台</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.header{background:#1e293b;padding:16px 24px;border-bottom:1px solid #334155;display:flex;align-items:center;gap:12px}
+.header h1{font-size:20px;font-weight:600;color:#f1f5f9}
+.header .status{display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;margin-right:4px}
+.header .status-text{font-size:13px;color:#94a3b8}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:24px}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px}
+.card h3{font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px}
+.card .value{font-size:32px;font-weight:700;color:#f1f5f9}
+.card .sub{font-size:12px;color:#64748b;margin-top:4px}
+.chart-card{background:#1e293b;border:1px solid #334155;border-radius:12px;overflow:hidden;margin-bottom:24px}
+.chart-card h3{padding:16px 20px;font-size:14px;font-weight:600;border-bottom:1px solid #334155}
+.chart-container{height:300px;padding:20px}
+.table-card{background:#1e293b;border:1px solid #334155;border-radius:12px;overflow:hidden}
+.table-card h3{padding:16px 20px;font-size:14px;font-weight:600;border-bottom:1px solid #334155}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px 20px;text-align:left;font-size:13px;border-bottom:1px solid #1e293b}
+th{background:#0f172a;color:#94a3b8;font-weight:500;text-transform:uppercase;font-size:11px;letter-spacing:0.5px}
+td{color:#cbd5e1}
+tr:hover td{background:#334155}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:500}
+.badge-green{background:#166534;color:#86efac}
+.badge-gray{background:#374151;color:#9ca3af}
+.badge-yellow{background:#78350f;color:#fde68a}
+.badge-red{background:#7f1d1d;color:#fca5a5}
+.refresh{background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px}
+.refresh:hover{background:#2563eb}
+.tabs{display:flex;gap:1px;background:#334155;border-radius:8px;overflow:hidden;margin-bottom:24px}
+.tab{flex:1;padding:12px;text-align:center;background:#1e293b;cursor:pointer;font-size:13px}
+.tab.active{background:#3b82f6;color:white}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>☁️ Cloud Flow</h1>
+  <span class="status"></span>
+  <span class="status-text">运行中</span>
+  <div style="margin-left:auto">
+    <button class="refresh" onclick="loadData()">刷新</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="grid">
+    <div class="card">
+      <h3>在线探针</h3>
+      <div class="value" id="nodes">-</div>
+      <div class="sub">已注册探针数</div>
+    </div>
+    <div class="card">
+      <h3>数据天数</h3>
+      <div class="value" id="days">-</div>
+      <div class="sub">历史数据跨度</div>
+    </div>
+    <div class="card">
+      <h3>今日数据</h3>
+      <div class="value" id="today">-</div>
+      <div class="sub">今日采集条数</div>
+    </div>
+    <div class="card">
+      <h3>系统状态</h3>
+      <div class="value" id="status" style="font-size:20px;color:#22c55e">-</div>
+      <div class="sub">所有服务运行中</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('dashboard')">仪表盘</div>
+    <div class="tab" onclick="switchTab('metrics')">指标分析</div>
+    <div class="tab" onclick="switchTab('network')">网络流量</div>
+    <div class="tab" onclick="switchTab('protocol')">协议分析</div>
+    <div class="tab" onclick="switchTab('alerts')">告警管理</div>
+    <div class="tab" onclick="switchTab('nodes')">探针管理</div>
+  </div>
+
+  <div id="dashboard-tab">
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 24px;">
+      <div class="chart-card">
+        <h3>流量趋势</h3>
+        <div class="chart-container" id="traffic-chart"></div>
+      </div>
+      <div class="chart-card">
+        <h3>协议分布</h3>
+        <div class="chart-container" id="protocol-chart"></div>
+      </div>
+      <div class="chart-card">
+        <h3>CPU 使用趋势</h3>
+        <div class="chart-container" id="cpu-chart"></div>
+      </div>
+      <div class="chart-card">
+        <h3>内存使用趋势</h3>
+        <div class="chart-container" id="memory-chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="metrics-tab" style="display:none">
+    <div class="chart-card">
+      <h3>指标分析</h3>
+      <div class="chart-container" id="metrics-chart"></div>
+    </div>
+  </div>
+
+  <div id="network-tab" style="display:none">
+    <div class="chart-card">
+      <h3>网络流量分析</h3>
+      <div class="chart-container" id="network-chart"></div>
+    </div>
+  </div>
+
+  <div id="nodes-tab" style="display:none">
+    <div class="table-card">
+      <h3>探针列表</h3>
+      <table>
+        <thead><tr><th>探针 ID</th><th>主机</th><th>IP</th><th>状态</th><th>版本</th></tr></thead>
+        <tbody id="node-list"><tr><td colspan="5" style="text-align:center;color:#64748b">加载中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="protocol-tab" style="display:none">
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 24px;">
+      <div class="chart-card">
+        <h3>协议分布</h3>
+        <div class="chart-container" id="protocol-distribution-chart"></div>
+      </div>
+      <div class="chart-card">
+        <h3>协议流量趋势</h3>
+        <div class="chart-container" id="protocol-trend-chart"></div>
+      </div>
+      <div class="chart-card" style="grid-column: 1 / -1;">
+        <h3>协议详情</h3>
+        <div class="chart-container" id="protocol-details-chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="alerts-tab" style="display:none">
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 24px;">
+      <div class="chart-card">
+        <h3>告警状态分布</h3>
+        <div class="chart-container" id="alerts-status-chart"></div>
+      </div>
+      <div class="chart-card">
+        <h3>告警趋势</h3>
+        <div class="chart-container" id="alerts-trend-chart"></div>
+      </div>
+      <div class="table-card" style="grid-column: 1 / -1;">
+        <h3>告警列表</h3>
+        <table>
+          <thead><tr><th>告警 ID</th><th>规则名称</th><th>严重程度</th><th>消息</th><th>时间</th><th>状态</th></tr></thead>
+          <tbody id="alerts-list"><tr><td colspan="6" style="text-align:center;color:#64748b">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 标签页切换
+function switchTab(tabName) {
+  // 隐藏所有标签页
+  document.getElementById('dashboard-tab').style.display = 'none';
+  document.getElementById('metrics-tab').style.display = 'none';
+  document.getElementById('network-tab').style.display = 'none';
+  document.getElementById('protocol-tab').style.display = 'none';
+  document.getElementById('alerts-tab').style.display = 'none';
+  document.getElementById('nodes-tab').style.display = 'none';
+  
+  // 显示选中的标签页
+  document.getElementById(tabName + '-tab').style.display = 'block';
+  
+  // 更新标签样式
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  event.target.classList.add('active');
+  
+  // 初始化图表
+  if (tabName === 'dashboard') {
+    initCharts();
+  } else if (tabName === 'protocol') {
+    initProtocolCharts();
+  } else if (tabName === 'alerts') {
+    loadAlerts();
+  }
+}
+
+// 初始化图表
+function initCharts() {
+  // 流量趋势图
+  const trafficChart = echarts.init(document.getElementById('traffic-chart'));
+  trafficChart.setOption({
+    tooltip: {
+      trigger: 'axis'
+    },
+    legend: {
+      data: ['入站流量', '出站流量']
+    },
+    xAxis: {
+      type: 'category',
+      data: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00']
+    },
+    yAxis: {
+      type: 'value',
+      name: '流量 (MB)'
+    },
+    series: [
+      {
+        name: '入站流量',
+        type: 'line',
+        data: [120, 132, 101, 134, 90, 230, 210, 250],
+        smooth: true,
+        itemStyle: {
+          color: '#3b82f6'
+        }
+      },
+      {
+        name: '出站流量',
+        type: 'line',
+        data: [820, 932, 901, 934, 1290, 1330, 1320, 1400],
+        smooth: true,
+        itemStyle: {
+          color: '#10b981'
+        }
+      }
+    ],
+    backgroundColor: 'transparent',
+    textStyle: {
+      color: '#e2e8f0'
+    },
+    grid: {
+      borderColor: '#334155'
+    },
+    xAxis: {
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      }
+    },
+    yAxis: {
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#334155'
+        }
+      }
+    }
+  });
+  
+  // 协议分布图
+  const protocolChart = echarts.init(document.getElementById('protocol-chart'));
+  protocolChart.setOption({
+    tooltip: {
+      trigger: 'item'
+    },
+    legend: {
+      orient: 'vertical',
+      left: 'left',
+      textStyle: {
+        color: '#e2e8f0'
+      }
+    },
+    series: [
+      {
+        name: '协议分布',
+        type: 'pie',
+        radius: '70%',
+        data: [
+          {value: 45, name: 'HTTP'},
+          {value: 25, name: 'HTTPS'},
+          {value: 15, name: 'TCP'},
+          {value: 10, name: 'UDP'},
+          {value: 5, name: '其他'}
+        ],
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
+          }
+        },
+        itemStyle: {
+          color: function(params) {
+            const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+            return colors[params.dataIndex];
+          }
+        },
+        label: {
+          color: '#e2e8f0'
+        },
+        labelLine: {
+          lineStyle: {
+            color: '#94a3b8'
+          }
+        }
+      }
+    ],
+    backgroundColor: 'transparent'
+  });
+  
+  // CPU 使用趋势图
+  const cpuChart = echarts.init(document.getElementById('cpu-chart'));
+  cpuChart.setOption({
+    tooltip: {
+      trigger: 'axis'
+    },
+    xAxis: {
+      type: 'category',
+      data: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00']
+    },
+    yAxis: {
+      type: 'value',
+      name: 'CPU 使用率 (%)'
+    },
+    series: [
+      {
+        name: 'CPU 使用率',
+        type: 'line',
+        data: [30, 40, 25, 50, 60, 45, 70, 55],
+        smooth: true,
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            {offset: 0, color: 'rgba(59, 130, 246, 0.5)'},
+            {offset: 1, color: 'rgba(59, 130, 246, 0.1)'}
+          ])
+        },
+        itemStyle: {
+          color: '#3b82f6'
+        }
+      }
+    ],
+    backgroundColor: 'transparent',
+    textStyle: {
+      color: '#e2e8f0'
+    },
+    grid: {
+      borderColor: '#334155'
+    },
+    xAxis: {
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      }
+    },
+    yAxis: {
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#334155'
+        }
+      }
+    }
+  });
+  
+  // 内存使用趋势图
+  const memoryChart = echarts.init(document.getElementById('memory-chart'));
+  memoryChart.setOption({
+    tooltip: {
+      trigger: 'axis'
+    },
+    xAxis: {
+      type: 'category',
+      data: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00']
+    },
+    yAxis: {
+      type: 'value',
+      name: '内存使用率 (%)'
+    },
+    series: [
+      {
+        name: '内存使用率',
+        type: 'line',
+        data: [60, 65, 55, 70, 75, 68, 80, 72],
+        smooth: true,
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            {offset: 0, color: 'rgba(16, 185, 129, 0.5)'},
+            {offset: 1, color: 'rgba(16, 185, 129, 0.1)'}
+          ])
+        },
+        itemStyle: {
+          color: '#10b981'
+        }
+      }
+    ],
+    backgroundColor: 'transparent',
+    textStyle: {
+      color: '#e2e8f0'
+    },
+    grid: {
+      borderColor: '#334155'
+    },
+    xAxis: {
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      }
+    },
+    yAxis: {
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#334155'
+        }
+      }
+    }
+  });
+  
+  // 窗口大小变化时，重新调整图表大小
+  window.addEventListener('resize', function() {
+    trafficChart.resize();
+    protocolChart.resize();
+    cpuChart.resize();
+    memoryChart.resize();
+  });
+}
+
+// 更新流量趋势图
+function updateTrafficChart(data) {
+  const trafficChart = echarts.getInstanceByDom(document.getElementById('traffic-chart'));
+  if (!trafficChart) return;
+  
+  trafficChart.setOption({
+    xAxis: {
+      data: data.labels || ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00']
+    },
+    series: [
+      {
+        name: '入站流量',
+        data: data.inbound || [120, 132, 101, 134, 90, 230, 210, 250]
+      },
+      {
+        name: '出站流量',
+        data: data.outbound || [820, 932, 901, 934, 1290, 1330, 1320, 1400]
+      }
+    ]
+  });
+}
+
+// 更新协议分布图
+function updateProtocolChart(data) {
+  const protocolChart = echarts.getInstanceByDom(document.getElementById('protocol-chart'));
+  if (!protocolChart) return;
+  
+  protocolChart.setOption({
+    series: [
+      {
+        data: data.data || [
+          {value: 45, name: 'HTTP'},
+          {value: 25, name: 'HTTPS'},
+          {value: 15, name: 'TCP'},
+          {value: 10, name: 'UDP'},
+          {value: 5, name: '其他'}
+        ]
+      }
+    ]
+  });
+}
+
+// 更新 CPU 使用趋势图
+function updateCpuChart(data) {
+  const cpuChart = echarts.getInstanceByDom(document.getElementById('cpu-chart'));
+  if (!cpuChart) return;
+  
+  cpuChart.setOption({
+    xAxis: {
+      data: data.labels || ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00']
+    },
+    series: [
+      {
+        data: data.values || [30, 40, 25, 50, 60, 45, 70, 55]
+      }
+    ]
+  });
+}
+
+// 更新内存使用趋势图
+function updateMemoryChart(data) {
+  const memoryChart = echarts.getInstanceByDom(document.getElementById('memory-chart'));
+  if (!memoryChart) return;
+  
+  memoryChart.setOption({
+    xAxis: {
+      data: data.labels || ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00']
+    },
+    series: [
+      {
+        data: data.values || [60, 65, 55, 70, 75, 68, 80, 72]
+      }
+    ]
+  });
+}
+
+// 加载数据
+async function loadData() {
+  try {
+    const overview = await fetch('/api/overview').then(r=>r.json());
+    document.getElementById('nodes').textContent = overview.nodes || 0;
+    document.getElementById('days').textContent = overview.days || 0;
+    document.getElementById('today').textContent = overview.today || 0;
+    document.getElementById('status').textContent = overview.status || 'unknown';
+  } catch(e) {
+    document.getElementById('status').textContent = '异常';
+    document.getElementById('status').style.color = '#ef4444';
+  }
+
+  try {
+    const nodes = await fetch('/api/nodes').then(r=>r.json());
+    const tbody = document.getElementById('node-list');
+    if (!nodes || nodes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#64748b">暂无探针</td></tr>';
+      return;
+    }
+    tbody.innerHTML = nodes.map(n => {
+      const probes = (n.probes || []).map(p =>
+        `<tr>
+          <td>${p.probe_id||'-'}</td>
+          <td>${p.hostname||'-'}</td>
+          <td>${p.host_ip||'-'}</td>
+          <td><span class="badge ${p.status==='online'?'badge-green':'badge-gray'}">${p.status||'unknown'}</span></td>
+          <td>${p.version||'-'}</td>
+        </tr>`
+      ).join('');
+      return probes || '';
+    }).join('');
+  } catch(e) {
+    document.getElementById('node-list').innerHTML =
+      '<tr><td colspan="5" style="text-align:center;color:#64748b">加载失败</td></tr>';
+  }
+
+  // 加载流量数据
+  try {
+    const trafficData = await fetch('/api/traffic').then(r=>r.json());
+    updateTrafficChart(trafficData);
+  } catch(e) {
+    console.error('加载流量数据失败:', e);
+  }
+
+  // 加载协议数据
+  try {
+    const protocolData = await fetch('/api/protocol').then(r=>r.json());
+    updateProtocolChart(protocolData);
+  } catch(e) {
+    console.error('加载协议数据失败:', e);
+  }
+
+  // 加载 CPU 数据
+  try {
+    const cpuData = await fetch('/api/cpu').then(r=>r.json());
+    updateCpuChart(cpuData);
+  } catch(e) {
+    console.error('加载 CPU 数据失败:', e);
+  }
+
+  // 加载内存数据
+  try {
+    const memoryData = await fetch('/api/memory').then(r=>r.json());
+    updateMemoryChart(memoryData);
+  } catch(e) {
+    console.error('加载内存数据失败:', e);
+  }
+}
+
+// 初始化协议分析图表
+function initProtocolCharts() {
+  // 协议分布图
+  const protocolDistributionChart = echarts.init(document.getElementById('protocol-distribution-chart'));
+  protocolDistributionChart.setOption({
+    tooltip: {
+      trigger: 'item'
+    },
+    legend: {
+      orient: 'vertical',
+      left: 'left',
+      textStyle: {
+        color: '#e2e8f0'
+      }
+    },
+    series: [
+      {
+        name: '协议分布',
+        type: 'pie',
+        radius: '70%',
+        data: [
+          {value: 45, name: 'HTTP'},
+          {value: 25, name: 'HTTPS'},
+          {value: 15, name: 'TCP'},
+          {value: 10, name: 'UDP'},
+          {value: 3, name: 'DNS'},
+          {value: 2, name: 'ICMP'}
+        ],
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
+          }
+        },
+        itemStyle: {
+          color: function(params) {
+            const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+            return colors[params.dataIndex];
+          }
+        },
+        label: {
+          color: '#e2e8f0'
+        },
+        labelLine: {
+          lineStyle: {
+            color: '#94a3b8'
+          }
+        }
+      }
+    ],
+    backgroundColor: 'transparent'
+  });
+  
+  // 协议流量趋势图
+  const protocolTrendChart = echarts.init(document.getElementById('protocol-trend-chart'));
+  protocolTrendChart.setOption({
+    tooltip: {
+      trigger: 'axis'
+    },
+    legend: {
+      data: ['HTTP', 'HTTPS', 'TCP', 'UDP', 'DNS', 'ICMP'],
+      textStyle: {
+        color: '#e2e8f0'
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'],
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      }
+    },
+    yAxis: {
+      type: 'value',
+      name: '流量 (MB)',
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#334155'
+        }
+      }
+    },
+    series: [
+      {
+        name: 'HTTP',
+        type: 'line',
+        data: [120, 132, 101, 134, 90, 230, 210, 250],
+        smooth: true,
+        itemStyle: { color: '#3b82f6' }
+      },
+      {
+        name: 'HTTPS',
+        type: 'line',
+        data: [820, 932, 901, 934, 1290, 1330, 1320, 1400],
+        smooth: true,
+        itemStyle: { color: '#10b981' }
+      },
+      {
+        name: 'TCP',
+        type: 'line',
+        data: [320, 332, 301, 334, 390, 430, 420, 450],
+        smooth: true,
+        itemStyle: { color: '#f59e0b' }
+      },
+      {
+        name: 'UDP',
+        type: 'line',
+        data: [120, 132, 101, 134, 90, 230, 210, 250],
+        smooth: true,
+        itemStyle: { color: '#ef4444' }
+      },
+      {
+        name: 'DNS',
+        type: 'line',
+        data: [60, 72, 51, 74, 40, 130, 110, 150],
+        smooth: true,
+        itemStyle: { color: '#8b5cf6' }
+      },
+      {
+        name: 'ICMP',
+        type: 'line',
+        data: [20, 32, 11, 34, 10, 30, 21, 25],
+        smooth: true,
+        itemStyle: { color: '#ec4899' }
+      }
+    ],
+    backgroundColor: 'transparent',
+    textStyle: {
+      color: '#e2e8f0'
+    },
+    grid: {
+      borderColor: '#334155'
+    }
+  });
+  
+  // 协议详情图
+  const protocolDetailsChart = echarts.init(document.getElementById('protocol-details-chart'));
+  protocolDetailsChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow'
+      }
+    },
+    legend: {
+      data: ['流量 (MB)', '连接数'],
+      textStyle: {
+        color: '#e2e8f0'
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: ['HTTP', 'HTTPS', 'TCP', 'UDP', 'DNS', 'ICMP'],
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: '流量 (MB)',
+        axisLine: {
+          lineStyle: {
+            color: '#3b82f6'
+          }
+        },
+        axisLabel: {
+          color: '#94a3b8'
+        },
+        splitLine: {
+          lineStyle: {
+            color: '#334155'
+          }
+        }
+      },
+      {
+        type: 'value',
+        name: '连接数',
+        axisLine: {
+          lineStyle: {
+            color: '#10b981'
+          }
+        },
+        axisLabel: {
+          color: '#94a3b8'
+        },
+        splitLine: {
+          lineStyle: {
+            color: '#334155'
+          }
+        }
+      }
+    ],
+    series: [
+      {
+        name: '流量 (MB)',
+        type: 'bar',
+        data: [1200, 3500, 800, 400, 200, 50],
+        itemStyle: { color: '#3b82f6' }
+      },
+      {
+        name: '连接数',
+        type: 'line',
+        yAxisIndex: 1,
+        data: [12000, 35000, 8000, 4000, 2000, 500],
+        smooth: true,
+        itemStyle: { color: '#10b981' }
+      }
+    ],
+    backgroundColor: 'transparent',
+    textStyle: {
+      color: '#e2e8f0'
+    },
+    grid: {
+      borderColor: '#334155'
+    }
+  });
+  
+  // 窗口大小变化时，重新调整图表大小
+  window.addEventListener('resize', function() {
+    protocolDistributionChart.resize();
+    protocolTrendChart.resize();
+    protocolDetailsChart.resize();
+  });
+}
+
+// 加载告警数据
+async function loadAlerts() {
+  try {
+    const alerts = await fetch('/api/alerts').then(r=>r.json());
+    const tbody = document.getElementById('alerts-list');
+    if (!alerts || alerts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b">暂无告警</td></tr>';
+      return;
+    }
+    tbody.innerHTML = alerts.map(alert => {
+      const severityClass = {
+        'info': 'badge-gray',
+        'warning': 'badge-yellow',
+        'error': 'badge-red',
+        'critical': 'badge-red'
+      }[alert.severity] || 'badge-gray';
+      return `
+        <tr>
+          <td>${alert.id||'-'}</td>
+          <td>${alert.rule_name||'-'}</td>
+          <td><span class="badge ${severityClass}">${alert.severity||'unknown'}</span></td>
+          <td>${alert.message||'-'}</td>
+          <td>${alert.timestamp||'-'}</td>
+          <td><span class="badge ${alert.status==='active'?'badge-red':'badge-green'}">${alert.status||'unknown'}</span></td>
+        </tr>
+      `;
+    }).join('');
+  } catch(e) {
+    document.getElementById('alerts-list').innerHTML = 
+      '<tr><td colspan="6" style="text-align:center;color:#64748b">加载失败</td></tr>';
+  }
+  
+  // 初始化告警状态图表
+  const alertsStatusChart = echarts.init(document.getElementById('alerts-status-chart'));
+  alertsStatusChart.setOption({
+    tooltip: {
+      trigger: 'item'
+    },
+    legend: {
+      orient: 'vertical',
+      left: 'left',
+      textStyle: {
+        color: '#e2e8f0'
+      }
+    },
+    series: [
+      {
+        name: '告警状态',
+        type: 'pie',
+        radius: '70%',
+        data: [
+          {value: 12, name: '活跃'},
+          {value: 34, name: '已解决'},
+          {value: 8, name: '已忽略'}
+        ],
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.5)'
+          }
+        },
+        itemStyle: {
+          color: function(params) {
+            const colors = ['#ef4444', '#10b981', '#f59e0b'];
+            return colors[params.dataIndex];
+          }
+        },
+        label: {
+          color: '#e2e8f0'
+        },
+        labelLine: {
+          lineStyle: {
+            color: '#94a3b8'
+          }
+        }
+      }
+    ],
+    backgroundColor: 'transparent'
+  });
+  
+  // 初始化告警趋势图表
+  const alertsTrendChart = echarts.init(document.getElementById('alerts-trend-chart'));
+  alertsTrendChart.setOption({
+    tooltip: {
+      trigger: 'axis'
+    },
+    legend: {
+      data: ['警告', '错误', '严重'],
+      textStyle: {
+        color: '#e2e8f0'
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'],
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      }
+    },
+    yAxis: {
+      type: 'value',
+      name: '告警数量',
+      axisLine: {
+        lineStyle: {
+          color: '#64748b'
+        }
+      },
+      axisLabel: {
+        color: '#94a3b8'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#334155'
+        }
+      }
+    },
+    series: [
+      {
+        name: '警告',
+        type: 'line',
+        data: [5, 3, 2, 4, 6, 8, 5, 3],
+        smooth: true,
+        itemStyle: { color: '#f59e0b' }
+      },
+      {
+        name: '错误',
+        type: 'line',
+        data: [2, 1, 0, 3, 2, 4, 1, 0],
+        smooth: true,
+        itemStyle: { color: '#ef4444' }
+      },
+      {
+        name: '严重',
+        type: 'line',
+        data: [1, 0, 0, 1, 0, 2, 0, 0],
+        smooth: true,
+        itemStyle: { color: '#dc2626' }
+      }
+    ],
+    backgroundColor: 'transparent',
+    textStyle: {
+      color: '#e2e8f0'
+    },
+    grid: {
+      borderColor: '#334155'
+    }
+  });
+  
+  // 窗口大小变化时，重新调整图表大小
+  window.addEventListener('resize', function() {
+    alertsStatusChart.resize();
+    alertsTrendChart.resize();
+  });
+}
+
+// 页面加载完成后初始化
+window.onload = function() {
+  loadData();
+  initCharts();
+  setInterval(loadData, 30000);
+};
+</script>
+</body>
+</html>

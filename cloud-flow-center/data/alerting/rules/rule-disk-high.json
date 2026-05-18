@@ -1,0 +1,21 @@
+{
+  "id": "rule-disk-high",
+  "name": "磁盘 IO 异常",
+  "description": "当磁盘 IO 操作次数超过 10000/s 时触发告警",
+  "type": "disk",
+  "enabled": true,
+  "condition": {
+    "metric": "disk_ops",
+    "operator": "\u003e",
+    "threshold": 10000
+  },
+  "threshold": 10000,
+  "duration": 60000000000,
+  "severity": "info",
+  "labels": {
+    "category": "storage",
+    "service": "cloud-flow"
+  },
+  "created_at": "2026-04-13T13:53:42.985581681Z",
+  "updated_at": "2026-04-13T13:53:42.98578367Z"
+}

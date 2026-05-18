@@ -1,0 +1,21 @@
+{
+  "id": "rule-cpu-high",
+  "name": "CPU 使用率过高",
+  "description": "当 CPU 使用率超过 80% 时触发告警",
+  "type": "cpu",
+  "enabled": true,
+  "condition": {
+    "metric": "cpu_percent",
+    "operator": "\u003e",
+    "threshold": 80
+  },
+  "threshold": 80,
+  "duration": 120000000000,
+  "severity": "warning",
+  "labels": {
+    "category": "system",
+    "service": "cloud-flow"
+  },
+  "created_at": "2026-04-13T13:53:42.985581151Z",
+  "updated_at": "2026-04-13T13:53:42.98558414Z"
+}

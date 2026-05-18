@@ -1,0 +1,47 @@
+# 依赖
+node_modules/
+vendor/
+
+# 构建产物
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+obj/
+
+# 环境变量（包含密钥，绝不能提交）
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+*.prof
+coverage.out
+
+# eBPF 编译产物
+*.o
+*.bpf.o
+
+# 日志
+*.log
+
+# 临时文件
+/tmp/
+*.tmp
+*.bak

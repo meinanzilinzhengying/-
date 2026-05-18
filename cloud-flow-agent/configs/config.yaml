@@ -1,0 +1,47 @@
+# 探针配置
+#
+# ⚠️ 安全警告：API Key 安全加载方式（按优先级排序）
+# 1. CLOUD_FLOW_API_KEY_FILE - 从文件读取（推荐用于 Docker Secrets / K8s Secrets）
+#    示例: export CLOUD_FLOW_API_KEY_FILE=/run/secrets/api-key
+# 2. CLOUD_FLOW_API_KEY - 直接环境变量（适合 CI/CD）
+#    示例: export CLOUD_FLOW_API_KEY=your-secret-key
+# 3. 本配置文件 - 仅用于开发环境，生产环境请勿在配置文件中写入明文 API Key
+# 4. 空值 - 如果以上都未配置，系统会尝试连接，但可能因认证失败被拒绝
+
+probe_id: ""                  # 留空则自动生成
+edge_addr: "edge:50051"
+metrics_port: "9090"           # Prometheus 指标端口（可通过 METRICS_PORT 环境变量覆盖）
+health_port: "8080"            # 健康检查端口
+collect_interval: 10          # 采集间隔（秒）
+batch_size: 10                # 批量发送阈值（降低以减少首次发送等待时间）
+
+# ⚠️ 安全警告：以下 API Key 配置仅用于开发环境
+# 生产环境请使用环境变量加载
+# 详见文件顶部注释
+
+# API Key 认证（必须与边缘节点配置的 api_key 一致）
+# 建议通过 CLOUD_FLOW_API_KEY_FILE 或 CLOUD_FLOW_API_KEY 环境变量设置
+api_key: ""
+
+# TLS 配置（默认关闭，生产环境建议启用；留空证书路径则自动使用内置自签名证书）
+tls:
+  enabled: false
+  server_name: ""
+  ca_cert: ""
+  client_cert: ""
+  client_key: ""
+
+# 连接配置
+#max_retries: 3              # 最大重试次数（0 = 无限重试，默认 0）
+#connect_timeout: 30         # 连接超时时间（秒，默认 30）
+
+# 采集开关
+collect:
+  cpu: true
+  memory: true
+  network: true
+  disk: false
+
+log:
+  level: info
+  format: json

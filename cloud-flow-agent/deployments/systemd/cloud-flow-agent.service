@@ -1,0 +1,100 @@
+[Unit]
+Description=Cloud Flow Agent - 云内流量监测探针
+Documentation=https://github.com/cloud-flow/cloud-flow-agent
+After=network-online.target systemd-tmpfiles-setup.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=cloud-flow
+Group=cloud-flow
+WorkingDirectory=/opt/cloud-flow-agent
+
+# 启动命令
+ExecStart=/opt/cloud-flow-agent/bin/cloud-flow-agent -config /etc/cloud-flow-agent/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 重启策略
+Restart=on-failure
+RestartSec=5
+
+# ============================================================================
+# 资源限制
+# ============================================================================
+
+# 文件描述符限制
+LimitNOFILE=65536
+
+# 进程数限制
+LimitNPROC=4096
+
+# 内存限制（512MB）
+MemoryMax=512M
+MemoryHigh=384M
+
+# CPU 配额（最多使用 50% CPU）
+CPUQuota=50%
+
+# 临时文件大小限制
+TempFSInodesMax=100000
+TempFSSizeMax=100M
+
+# ============================================================================
+# 安全加固
+# ============================================================================
+
+# 禁止获取新权限
+NoNewPrivileges=true
+
+# 文件系统保护
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# 可读写路径
+ReadWritePaths=/var/log/cloud-flow-agent /var/lib/cloud-flow-agent /sys/fs/bpf
+
+# 只读路径
+ReadOnlyPaths=/opt/cloud-flow-agent/bin /opt/cloud-flow-agent/bpf /etc/cloud-flow-agent
+
+# /proc 访问控制（需要读取 /proc 进行指标采集）
+ProtectProc=invisible
+
+# 私有 /tmp
+PrivateTmp=true
+
+# 挂载命名空间隔离
+PrivateDevices=true
+
+# 禁止创建 SUID/SGID 文件
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+
+# 允许的系统调用集合（最小化）
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @swap @reboot @debug
+
+# ============================================================================
+# 环境变量
+# ============================================================================
+
+Environment=HOME=/opt/cloud-flow-agent
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# ============================================================================
+# 日志配置
+# ============================================================================
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloud-flow-agent
+
+# 日志速率限制
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=10000
+
+[Install]
+WantedBy=multi-user.target

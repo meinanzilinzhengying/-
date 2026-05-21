@@ -244,6 +244,22 @@ type TopologyConfig struct {
 	EnableAlertIntegration bool `yaml:"enable_alert_integration" json:"enable_alert_integration"`
 }
 
+// TenantConfig 租户配置
+type TenantConfig struct {
+	Enabled       bool `yaml:"enabled" json:"enabled"`
+	MultiTenant   bool `yaml:"multi_tenant" json:"multi_tenant"`
+	MaxTenants    int  `yaml:"max_tenants" json:"max_tenants"`
+	MaxUsersPerTenant int `yaml:"max_users_per_tenant" json:"max_users_per_tenant"`
+}
+
+// DashboardConfig 仪表盘配置
+type DashboardConfig struct {
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	RefreshInterval   time.Duration `yaml:"refresh_interval" json:"refresh_interval"`
+	EnableDrillDown   bool          `yaml:"enable_drill_down" json:"enable_drill_down"`
+	MaxAssetsPerPage  int           `yaml:"max_assets_per_page" json:"max_assets_per_page"`
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -278,6 +294,8 @@ type Config struct {
 	Storage         StorageConfig // 历史数据存储配置
 	Alert           AlertConfig   // 告警配置
 	Topology        TopologyConfig // 拓扑配置
+	Tenant          TenantConfig   // 租户配置
+	Dashboard       DashboardConfig // 仪表盘配置
 }
 
 func Load() (*Config, error) {
@@ -430,6 +448,18 @@ func Load() (*Config, error) {
 	viper.SetDefault("topology.include_vms", true)
 	viper.SetDefault("topology.include_physical", true)
 	viper.SetDefault("topology.enable_alert_integration", true)
+
+	// 租户配置默认值
+	viper.SetDefault("tenant.enabled", false)
+	viper.SetDefault("tenant.multi_tenant", false)
+	viper.SetDefault("tenant.max_tenants", 100)
+	viper.SetDefault("tenant.max_users_per_tenant", 50)
+
+	// 仪表盘配置默认值
+	viper.SetDefault("dashboard.enabled", true)
+	viper.SetDefault("dashboard.refresh_interval", "30s")
+	viper.SetDefault("dashboard.enable_drill_down", true)
+	viper.SetDefault("dashboard.max_assets_per_page", 100)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -624,6 +654,18 @@ func Load() (*Config, error) {
 		IncludeVMs:             viper.GetBool("topology.include_vms"),
 		IncludePhysical:        viper.GetBool("topology.include_physical"),
 		EnableAlertIntegration: viper.GetBool("topology.enable_alert_integration"),
+	},
+	Tenant: TenantConfig{
+		Enabled:           viper.GetBool("tenant.enabled"),
+		MultiTenant:       viper.GetBool("tenant.multi_tenant"),
+		MaxTenants:        viper.GetInt("tenant.max_tenants"),
+		MaxUsersPerTenant: viper.GetInt("tenant.max_users_per_tenant"),
+	},
+	Dashboard: DashboardConfig{
+		Enabled:          viper.GetBool("dashboard.enabled"),
+		RefreshInterval:  viper.GetDuration("dashboard.refresh_interval"),
+		EnableDrillDown:  viper.GetBool("dashboard.enable_drill_down"),
+		MaxAssetsPerPage: viper.GetInt("dashboard.max_assets_per_page"),
 	},
 }
 

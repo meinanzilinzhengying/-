@@ -257,6 +257,22 @@ topology:
   # 告警集成
   enable_alert_integration: true  # 启用告警高亮
 
+# 多租户配置
+# 管理员/租户视图：汇总资产数、告警数；单资产下钻网络/应用指标
+tenant:
+  enabled: false              # 启用多租户（默认关闭）
+  multi_tenant: false         # 多租户模式
+  max_tenants: 100            # 最大租户数
+  max_users_per_tenant: 50    # 每租户最大用户数
+
+# 仪表盘配置
+# 管理员视图汇总所有资产和告警；租户视图仅显示所属资产
+dashboard:
+  enabled: true               # 启用仪表盘
+  refresh_interval: "30s"     # 刷新间隔
+  enable_drill_down: true     # 启用资产下钻
+  max_assets_per_page: 100    # 每页最大资产数
+
 # 采集开关
 collect:
   cpu: true

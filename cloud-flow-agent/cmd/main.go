@@ -120,13 +120,26 @@ func main() {
 	})
 
 	// 初始化 EBPF 采集器（如果可用）
-	ebpfCollector, err := ebpfcollector.NewWithFallback()
-	if err != nil {
-		log.Warnf("EBPF 采集器不可用: %v，将只使用传统采集器", err)
+	var ebpfCollector *ebpfcollector.Collector
+	if cfg.EBPF.Enabled {
+		ebpfOpts := &ebpfcollector.CollectorOptions{
+			EnableTCPMetrics: cfg.EBPF.TCPMetrics.Enabled,
+			MgmtIface:        cfg.Network.MgmtIface,
+		}
+		
+		ebpfCollector, err = ebpfcollector.NewWithOptions(ebpfOpts)
+		if err != nil {
+			log.Warnf("EBPF 采集器初始化失败: %v，将只使用传统采集器", err)
+		} else {
+			log.Info("EBPF 采集器初始化成功，开始采集网络流量")
+			if ebpfCollector.IsTCPMetricsAvailable() {
+				log.Info("TCP深度指标采集已启用: 建连时延、重传率、零窗口、队列溢出、连接失败")
+			}
+			ebpfCollector.Start()
+			defer ebpfCollector.Stop()
+		}
 	} else {
-		log.Info("EBPF 采集器初始化成功，开始采集网络流量")
-		ebpfCollector.Start()
-		defer ebpfCollector.Stop()
+		log.Info("EBPF 采集已禁用，使用传统采集器")
 	}
 
 	stopCh := make(chan struct{})

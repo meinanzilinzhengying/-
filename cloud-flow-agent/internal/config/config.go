@@ -66,12 +66,43 @@ type TLSConfig struct {
 	ClientKey  string
 }
 
+// NetworkConfig 网络配置
+type NetworkConfig struct {
+	MgmtIface            string // 管理网卡接口名称
+	LocalAddr            string // 本地绑定地址
+	PreferredSourceIface string // 优先使用的源网卡
+}
+
+// TCPMetricsConfig TCP深度指标配置
+type TCPMetricsConfig struct {
+	Enabled          bool // 启用TCP深度指标
+	ConnectLatency   bool // TCP建连时延
+	Retransmit       bool // TCP重传率
+	ZeroWindow       bool // 零窗口事件
+	QueueOverflow    bool // 队列溢出
+	ConnectionFail   bool // 连接失败
+}
+
+// BaseTrafficConfig 基础流量采集配置
+type BaseTrafficConfig struct {
+	Enabled        bool // 启用基础流量采集
+	CollectBytes   bool // 采集字节数
+	CollectPackets bool // 采集包数
+}
+
+// EBPFConfig eBPF采集配置
+type EBPFConfig struct {
+	Enabled      bool              // 启用eBPF采集
+	TCPMetrics   TCPMetricsConfig  // TCP深度指标配置
+	BaseTraffic  BaseTrafficConfig // 基础流量采集配置
+}
+
 type Config struct {
-	ProbeID      string
-	EdgeAddr     string
-	MetricsPort  string
-	HealthPort   string
-	MaxRetries   int
+	ProbeID         string
+	EdgeAddr        string
+	MetricsPort     string
+	HealthPort      string
+	MaxRetries      int
 	ConnectTimeout  int
 	// TODO(AE-L01): ConnectTimeout 当前未被使用。grpcclient.NewClient 使用内部 rpcTimeout 常量。
 	// 应将 cfg.ConnectTimeout 传递给 NewClient 以支持配置化超时。
@@ -81,6 +112,8 @@ type Config struct {
 	TLS             TLSConfig
 	Collect         CollectConfig
 	Log             LogConfig
+	Network         NetworkConfig   // 网络配置
+	EBPF            EBPFConfig      // eBPF配置
 }
 
 func Load() (*Config, error) {
@@ -108,6 +141,23 @@ func Load() (*Config, error) {
 	viper.SetDefault("collect.disk", false)
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
+	
+	// 网络配置默认值
+	viper.SetDefault("network.mgmt_iface", "")
+	viper.SetDefault("network.local_addr", "")
+	viper.SetDefault("network.preferred_source_iface", "")
+	
+	// eBPF配置默认值
+	viper.SetDefault("ebpf.enabled", true)
+	viper.SetDefault("ebpf.tcp_metrics.enabled", true)
+	viper.SetDefault("ebpf.tcp_metrics.connect_latency", true)
+	viper.SetDefault("ebpf.tcp_metrics.retransmit", true)
+	viper.SetDefault("ebpf.tcp_metrics.zero_window", true)
+	viper.SetDefault("ebpf.tcp_metrics.queue_overflow", true)
+	viper.SetDefault("ebpf.tcp_metrics.connection_fail", true)
+	viper.SetDefault("ebpf.base_traffic.enabled", true)
+	viper.SetDefault("ebpf.base_traffic.collect_bytes", true)
+	viper.SetDefault("ebpf.base_traffic.collect_packets", true)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -146,7 +196,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ProbeID:         viper.GetString("probe_id"),
 		EdgeAddr:        viper.GetString("edge_addr"),
-		MetricsPort:      viper.GetString("metrics_port"),
+		MetricsPort:     viper.GetString("metrics_port"),
 		HealthPort:      viper.GetString("health_port"),
 		MaxRetries:      viper.GetInt("max_retries"),
 		ConnectTimeout:  viper.GetInt("connect_timeout"),
@@ -170,6 +220,27 @@ func Load() (*Config, error) {
 			Level:  viper.GetString("log.level"),
 			Format: viper.GetString("log.format"),
 		},
+		Network: NetworkConfig{
+			MgmtIface:            viper.GetString("network.mgmt_iface"),
+			LocalAddr:            viper.GetString("network.local_addr"),
+			PreferredSourceIface: viper.GetString("network.preferred_source_iface"),
+		},
+		EBPF: EBPFConfig{
+			Enabled: viper.GetBool("ebpf.enabled"),
+			TCPMetrics: TCPMetricsConfig{
+				Enabled:        viper.GetBool("ebpf.tcp_metrics.enabled"),
+				ConnectLatency: viper.GetBool("ebpf.tcp_metrics.connect_latency"),
+				Retransmit:     viper.GetBool("ebpf.tcp_metrics.retransmit"),
+				ZeroWindow:     viper.GetBool("ebpf.tcp_metrics.zero_window"),
+				QueueOverflow:  viper.GetBool("ebpf.tcp_metrics.queue_overflow"),
+				ConnectionFail: viper.GetBool("ebpf.tcp_metrics.connection_fail"),
+			},
+			BaseTraffic: BaseTrafficConfig{
+				Enabled:        viper.GetBool("ebpf.base_traffic.enabled"),
+				CollectBytes:   viper.GetBool("ebpf.base_traffic.collect_bytes"),
+				CollectPackets: viper.GetBool("ebpf.base_traffic.collect_packets"),
+			},
+		},
 	}
 
 	if cfg.ProbeID == "" {
@@ -189,14 +260,12 @@ func (c *Config) Summary() string {
 	// API Key 脱敏处理
 	apiKeyMasked := maskSecret(c.APIKey)
 	
-	return fmt.Sprintf("ProbeID=%s, EdgeAddr=%s, Interval=%ds, BatchSize=%d, APIKey=%s, CPU=%v, Mem=%v, Net=%v",
+	return fmt.Sprintf("ProbeID=%s, EdgeAddr=%s, Interval=%ds, BatchSize=%d, APIKey=%s, CPU=%v, Mem=%v, Net=%v, MgmtIface=%s, EBPF=%v",
 		c.ProbeID, c.EdgeAddr, c.CollectInterval, c.BatchSize, apiKeyMasked,
-		c.Collect.CPU, c.Collect.Memory, c.Collect.Network)
+		c.Collect.CPU, c.Collect.Memory, c.Collect.Network, c.Network.MgmtIface, c.EBPF.Enabled)
 }
 
 // maskSecret 对敏感字符串进行脱敏处理，委托给 pkg/utils.MaskSecret 统一实现
 func maskSecret(s string) string {
 	return utils.MaskSecret(s)
 }
-
-

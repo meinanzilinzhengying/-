@@ -27,14 +27,37 @@ import (
 
 // Collector eBPF 采集器
 type Collector struct {
-	objs      *bpf.Objects
-	links     []link.Link
-	stopCh    chan struct{}
-	collectCh chan []*edge.MetricData
+	objs          *bpf.Objects
+	tcpMetricsObjs *bpf.TCPMetricsObjects
+	links         []link.Link
+	tcpLinks      []link.Link
+	stopCh        chan struct{}
+	collectCh     chan []*edge.MetricData
+	enableTCPMetrics bool
+	mgmtIface     string // 管理网卡接口
+}
+
+// CollectorOptions 采集器配置选项
+type CollectorOptions struct {
+	EnableTCPMetrics bool   // 启用TCP深度指标采集
+	MgmtIface        string // 管理网卡接口名称
 }
 
 // New 创建 eBPF 采集器
 func New() (*Collector, error) {
+	return NewWithOptions(&CollectorOptions{
+		EnableTCPMetrics: true,
+	})
+}
+
+// NewWithOptions 使用选项创建 eBPF 采集器
+func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
+	if opts == nil {
+		opts = &CollectorOptions{
+			EnableTCPMetrics: true,
+		}
+	}
+
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("移除内存限制失败: %w", err)
 	}
@@ -44,10 +67,31 @@ func New() (*Collector, error) {
 		return nil, fmt.Errorf("加载 eBPF 对象失败: %w", err)
 	}
 
-	links, err := attachProgram(objs.TCProg)
+	links, err := attachProgram(objs.TCProg, opts.MgmtIface)
 	if err != nil {
 		objs.Close()
 		return nil, fmt.Errorf("附加 eBPF 程序失败: %w", err)
+	}
+
+	collector := &Collector{
+		objs:             objs,
+		links:            links,
+		stopCh:           make(chan struct{}),
+		collectCh:        make(chan []*edge.MetricData, 10),
+		enableTCPMetrics: opts.EnableTCPMetrics,
+		mgmtIface:        opts.MgmtIface,
+	}
+
+	// 加载TCP指标eBPF程序
+	if opts.EnableTCPMetrics {
+		tcpObjs, tcpLinks, err := loadTCPMetricsObjects()
+		if err != nil {
+			log.Printf("警告: 加载TCP指标eBPF程序失败: %v，将继续使用基础流量采集", err)
+		} else {
+			collector.tcpMetricsObjs = tcpObjs
+			collector.tcpLinks = tcpLinks
+			log.Printf("成功加载TCP指标eBPF程序")
+		}
 	}
 
 	// 降权为普通用户运行
@@ -55,12 +99,25 @@ func New() (*Collector, error) {
 		log.Printf("警告: 无法降权: %v，将继续以当前权限运行", err)
 	}
 
-	return &Collector{
-		objs:      objs,
-		links:     links,
-		stopCh:    make(chan struct{}),
-		collectCh: make(chan []*edge.MetricData, 10),
-	}, nil
+	return collector, nil
+}
+
+// loadTCPMetricsObjects 加载TCP指标eBPF对象
+func loadTCPMetricsObjects() (*bpf.TCPMetricsObjects, []link.Link, error) {
+	opts := &ebpf.CollectionOptions{}
+	
+	tcpObjs, err := bpf.LoadTCPMetrics(opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("加载TCP指标eBPF对象失败: %w", err)
+	}
+
+	tcpLinks, err := bpf.AttachTCPMetricsProbes(tcpObjs)
+	if err != nil {
+		tcpObjs.Close()
+		return nil, nil, fmt.Errorf("附加TCP指标kprobe失败: %w", err)
+	}
+
+	return tcpObjs, tcpLinks, nil
 }
 
 // dropPrivileges 降权为普通用户
@@ -133,6 +190,11 @@ func (c *Collector) IsAvailable() bool {
 	return c != nil && c.objs != nil && c.objs.NetworkMap != nil
 }
 
+// IsTCPMetricsAvailable 检查TCP指标采集是否可用
+func (c *Collector) IsTCPMetricsAvailable() bool {
+	return c != nil && c.tcpMetricsObjs != nil
+}
+
 // Start 启动采集器
 func (c *Collector) Start() {
 	go c.collectLoop()
@@ -143,6 +205,12 @@ func (c *Collector) Stop() {
 	close(c.stopCh)
 	for _, l := range c.links {
 		l.Close()
+	}
+	for _, l := range c.tcpLinks {
+		l.Close()
+	}
+	if c.tcpMetricsObjs != nil {
+		c.tcpMetricsObjs.Close()
 	}
 	c.objs.Close()
 }
@@ -183,6 +251,7 @@ func (c *Collector) collectData() []*edge.MetricData {
 	var metrics []*edge.MetricData
 	now := time.Now().Unix()
 
+	// 采集基础流量数据
 	iter := c.objs.NetworkMap.Iterate()
 	var key, value []byte
 	for iter.Next(&key, &value) {
@@ -209,7 +278,161 @@ func (c *Collector) collectData() []*edge.MetricData {
 		c.objs.NetworkMap.Delete(key)
 	}
 
+	// 采集TCP深度指标
+	if c.tcpMetricsObjs != nil {
+		tcpMetrics := c.collectTCPMetrics(now)
+		metrics = append(metrics, tcpMetrics...)
+	}
+
 	return metrics
+}
+
+// collectTCPMetrics 采集TCP深度指标
+func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
+	var metrics []*edge.MetricData
+
+	// 1. 采集全局TCP指标
+	globalMetrics, err := c.tcpMetricsObjs.GetGlobalTCPMetrics()
+	if err == nil && globalMetrics != nil {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			Protocol:  "tcp_summary",
+			Tags: map[string]string{
+				"metric_type":            "global_tcp_metrics",
+				"total_connections":      fmt.Sprintf("%d", globalMetrics.TotalConnections),
+				"failed_connections":     fmt.Sprintf("%d", globalMetrics.FailedConnections),
+				"total_retrans":          fmt.Sprintf("%d", globalMetrics.TotalRetrans),
+				"zero_window_events":     fmt.Sprintf("%d", globalMetrics.ZeroWindowEvents),
+				"queue_overflow_events":  fmt.Sprintf("%d", globalMetrics.QueueOverflowEvents),
+				"avg_latency_ns":         fmt.Sprintf("%d", globalMetrics.AvgLatencyNs),
+				"max_latency_ns":         fmt.Sprintf("%d", globalMetrics.MaxLatencyNs),
+				"min_latency_ns":         fmt.Sprintf("%d", globalMetrics.MinLatencyNs),
+				"latency_samples":        fmt.Sprintf("%d", globalMetrics.LatencySamples),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 2. 采集TCP时延数据
+	latencyIter := c.tcpMetricsObjs.IterateTcpLatency()
+	var latencyKey bpf.TcpConnKey
+	var latencyValue bpf.TcpLatency
+	for latencyIter.Next(&latencyKey, &latencyValue) {
+		if latencyValue.Complete == 1 {
+			metric := &edge.MetricData{
+				Timestamp: now,
+				SrcIp:     intToIP(latencyKey.Saddr).String(),
+				DstIp:     intToIP(latencyKey.Daddr).String(),
+				SrcPort:   int32(latencyKey.Sport),
+				DstPort:   int32(latencyKey.Dport),
+				Protocol:  "tcp",
+				Latency:   int64(latencyValue.LatencyNs),
+				Tags: map[string]string{
+					"metric_type":      "tcp_connect_latency",
+					"latency_us":       fmt.Sprintf("%d", latencyValue.LatencyNs/1000),
+					"syn_sent_ns":      fmt.Sprintf("%d", latencyValue.SynSentNs),
+					"established_ns":   fmt.Sprintf("%d", latencyValue.EstablishedNs),
+					"pid":              fmt.Sprintf("%d", latencyKey.Pid),
+				},
+			}
+			metrics = append(metrics, metric)
+		}
+	}
+
+	// 3. 采集TCP统计指标(重传、零窗口等)
+	statsIter := c.tcpMetricsObjs.IterateTcpStats()
+	var statsKey bpf.TcpConnKey
+	var statsValue bpf.TcpStats
+	for statsIter.Next(&statsKey, &statsValue) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(statsKey.Saddr).String(),
+			DstIp:     intToIP(statsKey.Daddr).String(),
+			SrcPort:   int32(statsKey.Sport),
+			DstPort:   int32(statsKey.Dport),
+			Protocol:  "tcp",
+			Tags: map[string]string{
+				"metric_type":          "tcp_connection_stats",
+				"retrans_count":        fmt.Sprintf("%d", statsValue.RetransCount),
+				"zero_window_count":    fmt.Sprintf("%d", statsValue.ZeroWindowCount),
+				"queue_overflow_count": fmt.Sprintf("%d", statsValue.QueueOverflowCount),
+				"conn_fail_count":      fmt.Sprintf("%d", statsValue.ConnFailCount),
+				"bytes_sent":           fmt.Sprintf("%d", statsValue.BytesSent),
+				"bytes_recv":           fmt.Sprintf("%d", statsValue.BytesRecv),
+				"pid":                  fmt.Sprintf("%d", statsKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 4. 采集零窗口事件
+	zwIter := c.tcpMetricsObjs.IterateZeroWindow()
+	var zwKey bpf.TcpConnKey
+	var zwCount uint64
+	for zwIter.Next(&zwKey, &zwCount) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(zwKey.Saddr).String(),
+			DstIp:     intToIP(zwKey.Daddr).String(),
+			SrcPort:   int32(zwKey.Sport),
+			DstPort:   int32(zwKey.Dport),
+			Protocol:  "tcp",
+			Tags: map[string]string{
+				"metric_type":      "zero_window_event",
+				"event_count":      fmt.Sprintf("%d", zwCount),
+				"pid":              fmt.Sprintf("%d", zwKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 5. 采集队列溢出事件
+	qoIter := c.tcpMetricsObjs.IterateQueueOverflow()
+	var qoPort uint16
+	var qoCount uint64
+	for qoIter.Next(&qoPort, &qoCount) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			DstPort:   int32(qoPort),
+			Protocol:  "tcp",
+			Tags: map[string]string{
+				"metric_type":      "queue_overflow_event",
+				"listen_port":      fmt.Sprintf("%d", qoPort),
+				"overflow_count":   fmt.Sprintf("%d", qoCount),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 6. 采集连接失败事件
+	cfIter := c.tcpMetricsObjs.IterateConnFail()
+	var cfKey bpf.TcpConnKey
+	var cfCount uint64
+	for cfIter.Next(&cfKey, &cfCount) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(cfKey.Saddr).String(),
+			DstIp:     intToIP(cfKey.Daddr).String(),
+			SrcPort:   int32(cfKey.Sport),
+			DstPort:   int32(cfKey.Dport),
+			Protocol:  "tcp",
+			Tags: map[string]string{
+				"metric_type":      "connection_fail_event",
+				"fail_count":       fmt.Sprintf("%d", cfCount),
+				"pid":              fmt.Sprintf("%d", cfKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	return metrics
+}
+
+// intToIP 将uint32转换为net.IP
+func intToIP(ipInt uint32) net.IP {
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, ipInt)
+	return ip
 }
 
 // NetworkFlow 网络流量数据
@@ -360,7 +583,7 @@ func findEBPFFile() string {
 }
 
 // attachProgram 附加 eBPF 程序到网络设备
-func attachProgram(prog *ebpf.Program) ([]link.Link, error) {
+func attachProgram(prog *ebpf.Program, mgmtIface string) ([]link.Link, error) {
 	devices, err := net.Interfaces()
 	if err != nil {
 		return nil, fmt.Errorf("获取网络设备失败: %w", err)
@@ -368,7 +591,14 @@ func attachProgram(prog *ebpf.Program) ([]link.Link, error) {
 
 	var links []link.Link
 	for _, dev := range devices {
+		// 跳过回环接口
 		if dev.Name == "lo" {
+			continue
+		}
+
+		// 如果指定了管理网卡,只附加到管理网卡
+		if mgmtIface != "" && dev.Name != mgmtIface {
+			log.Printf("跳过非管理网卡 %s", dev.Name)
 			continue
 		}
 
@@ -415,7 +645,23 @@ func (c *Collector) GetMap(name string) *ebpf.Map {
 	switch name {
 	case "network_map":
 		return c.objs.NetworkMap
-	default:
-		return nil
+	case "tcp_latency_map":
+		if c.tcpMetricsObjs != nil {
+			return c.tcpMetricsObjs.TcpLatencyMap
+		}
+	case "tcp_stats_map":
+		if c.tcpMetricsObjs != nil {
+			return c.tcpMetricsObjs.TcpStatsMap
+		}
+	case "global_tcp_metrics_map":
+		if c.tcpMetricsObjs != nil {
+			return c.tcpMetricsObjs.GlobalTcpMetricsMap
+		}
 	}
+	return nil
+}
+
+// GetTCPMetrics 获取TCP指标采集器对象
+func (c *Collector) GetTCPMetrics() *bpf.TCPMetricsObjects {
+	return c.tcpMetricsObjs
 }

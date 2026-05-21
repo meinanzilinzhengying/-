@@ -35,6 +35,56 @@ tls:
 #max_retries: 3              # 最大重试次数（0 = 无限重试，默认 0）
 #connect_timeout: 30         # 连接超时时间（秒，默认 30）
 
+# 网络配置
+network:
+  # 管理网卡配置 - 指定用于数据传输的管理网卡，确保数据走管理网，不占业务网
+  # 留空则采集所有网卡流量，但建议生产环境明确指定管理网卡
+  # 示例: mgmt_iface: "eth0" 或 mgmt_iface: "ens192"
+  mgmt_iface: ""
+  
+  # 本地地址绑定 - 指定gRPC客户端绑定的本地IP地址，确保使用管理网IP连接Edge
+  # 示例: local_addr: "192.168.1.100:0" (0表示让系统自动选择端口)
+  local_addr: ""
+  
+  # 数据发送网卡优先级（多网卡环境下）
+  # 如果系统有多张网卡，优先使用此网卡发送监控数据
+  preferred_source_iface: ""
+
+# eBPF 采集配置
+ebpf:
+  enabled: true               # 启用eBPF采集
+  
+  # TCP深度指标采集配置
+  tcp_metrics:
+    enabled: true             # 启用TCP深度指标采集
+    
+    # TCP建连时延采集
+    # 跟踪TCP三次握手过程，计算建连时延
+    connect_latency: true
+    
+    # TCP重传率采集
+    # 跟踪tcp_retransmit_skb内核函数，统计重传次数
+    retransmit: true
+    
+    # 零窗口事件采集
+    # 检测TCP零窗口通告事件
+    zero_window: true
+    
+    # 队列溢出事件采集
+    # 检测SYN队列/Accept队列溢出
+    queue_overflow: true
+    
+    # 连接失败次数采集
+    # 统计TCP连接失败事件
+    connection_fail: true
+  
+  # 保留的基础流量采集（吞吐量、带宽占用）
+  # 这些指标通过TC类型eBPF程序采集
+  base_traffic:
+    enabled: true             # 启用基础流量采集
+    collect_bytes: true       # 采集字节数（带宽占用）
+    collect_packets: true     # 采集包数
+
 # 采集开关
 collect:
   cpu: true

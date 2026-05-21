@@ -45,12 +45,13 @@ func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector,
 
 // HealthResponse 健康检查响应
 type HealthResponse struct {
-	Status        string    `json:"status"`
-	Timestamp     time.Time `json:"timestamp"`
-	Uptime        string    `json:"uptime"`
-	EdgeConnected bool      `json:"edge_connected"`
-	EBPFAvailable bool      `json:"ebpf_available"`
-	Version       string    `json:"version"`
+	Status            string            `json:"status"`
+	Timestamp         time.Time         `json:"timestamp"`
+	Uptime            string            `json:"uptime"`
+	EdgeConnected     bool              `json:"edge_connected"`
+	EBPFAvailable     bool              `json:"ebpf_available"`
+	TCPMetricsEnabled bool              `json:"tcp_metrics_enabled"`
+	Version           string            `json:"version"`
 }
 
 // HandleHealth 处理健康检查请求
@@ -68,14 +69,21 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	// 检查EBPF采集器状态
 	ebpfAvailable := h.ebpfCollector != nil
 
+	// 检查TCP指标采集状态
+	tcpMetricsEnabled := false
+	if h.ebpfCollector != nil {
+		tcpMetricsEnabled = h.ebpfCollector.IsTCPMetricsAvailable()
+	}
+
 	// 构建健康检查响应
 	response := HealthResponse{
-		Status:        "healthy",
-		Timestamp:     time.Now(),
-		Uptime:        time.Since(h.startTime).String(),
-		EdgeConnected: edgeConnected,
-		EBPFAvailable: ebpfAvailable,
-		Version:       Version,
+		Status:            "healthy",
+		Timestamp:         time.Now(),
+		Uptime:            time.Since(h.startTime).String(),
+		EdgeConnected:     edgeConnected,
+		EBPFAvailable:     ebpfAvailable,
+		TCPMetricsEnabled: tcpMetricsEnabled,
+		Version:           Version,
 	}
 
 	// 设置响应头

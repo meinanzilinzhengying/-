@@ -201,6 +201,45 @@ storage:
   write_rate_min: 50000       # 写入速率目标(≥5万条/秒)
   query_latency_max_ms: 1000  # 查询延迟目标(1亿行≤1秒)
 
+# 告警配置
+# 内置时延/丢包/重传模板；支持自定义规则（指标/等级/阈值）；Kafka/API推送、自动消警
+alert:
+  enabled: false              # 启用告警系统（默认关闭）
+  evaluation_interval: "1m"   # 评估间隔
+  resolve_timeout: "5m"       # 自动消警超时
+  enable_auto_resolve: true   # 启用自动消警
+  max_active_alerts: 1000     # 最大活跃告警数
+  
+  # 内置模板开关
+  enable_latency_alert: true     # 时延告警
+  enable_packet_loss_alert: true # 丢包告警
+  enable_retransmit_alert: true  # 重传告警
+  enable_cpu_alert: true         # CPU告警
+  enable_memory_alert: true      # 内存告警
+  enable_error_rate_alert: true  # 错误率告警
+  
+  # Kafka推送配置
+  notify_kafka:
+    enabled: false
+    brokers:
+      - "localhost:9092"
+    topic: "alerts"
+  
+  # API推送配置
+  notify_api:
+    enabled: false
+    url: ""
+    headers: {}
+    auth_type: ""      # none, basic, bearer, apikey
+    auth_token: ""
+  
+  # Webhook推送配置
+  notify_webhook:
+    enabled: false
+    url: ""
+    secret: ""
+    headers: {}
+
 # 采集开关
 collect:
   cpu: true

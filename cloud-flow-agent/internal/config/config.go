@@ -181,6 +181,52 @@ type StorageConfig struct {
 	QueryLatencyMaxMs    int // 查询延迟目标(毫秒)
 }
 
+// AlertConfig 告警配置
+type AlertConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	EvaluationInterval time.Duration `yaml:"evaluation_interval" json:"evaluation_interval"`
+	ResolveTimeout     time.Duration `yaml:"resolve_timeout" json:"resolve_timeout"`
+	EnableAutoResolve  bool          `yaml:"enable_auto_resolve" json:"enable_auto_resolve"`
+	MaxActiveAlerts    int           `yaml:"max_active_alerts" json:"max_active_alerts"`
+	
+	// 内置模板开关
+	EnableLatencyAlert    bool `yaml:"enable_latency_alert" json:"enable_latency_alert"`
+	EnablePacketLossAlert bool `yaml:"enable_packet_loss_alert" json:"enable_packet_loss_alert"`
+	EnableRetransmitAlert bool `yaml:"enable_retransmit_alert" json:"enable_retransmit_alert"`
+	EnableCPUAlert        bool `yaml:"enable_cpu_alert" json:"enable_cpu_alert"`
+	EnableMemoryAlert     bool `yaml:"enable_memory_alert" json:"enable_memory_alert"`
+	EnableErrorRateAlert  bool `yaml:"enable_error_rate_alert" json:"enable_error_rate_alert"`
+	
+	// 通知配置
+	NotifyKafka   KafkaNotifyConfig   `yaml:"notify_kafka" json:"notify_kafka"`
+	NotifyAPI     APINotifyConfig     `yaml:"notify_api" json:"notify_api"`
+	NotifyWebhook WebhookNotifyConfig `yaml:"notify_webhook" json:"notify_webhook"`
+}
+
+// KafkaNotifyConfig Kafka通知配置
+type KafkaNotifyConfig struct {
+	Enabled bool     `yaml:"enabled" json:"enabled"`
+	Brokers []string `yaml:"brokers" json:"brokers"`
+	Topic   string   `yaml:"topic" json:"topic"`
+}
+
+// APINotifyConfig API通知配置
+type APINotifyConfig struct {
+	Enabled  bool              `yaml:"enabled" json:"enabled"`
+	URL      string            `yaml:"url" json:"url"`
+	Headers  map[string]string `yaml:"headers" json:"headers"`
+	AuthType string            `yaml:"auth_type" json:"auth_type"`
+	AuthToken string           `yaml:"auth_token" json:"auth_token"`
+}
+
+// WebhookNotifyConfig Webhook通知配置
+type WebhookNotifyConfig struct {
+	Enabled bool              `yaml:"enabled" json:"enabled"`
+	URL     string            `yaml:"url" json:"url"`
+	Secret  string            `yaml:"secret" json:"secret"`
+	Headers map[string]string `yaml:"headers" json:"headers"`
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -213,6 +259,7 @@ type Config struct {
 	Network         NetworkConfig // 网络配置
 	EBPF            EBPFConfig    // eBPF配置
 	Storage         StorageConfig // 历史数据存储配置
+	Alert           AlertConfig   // 告警配置
 }
 
 func Load() (*Config, error) {
@@ -325,6 +372,35 @@ func Load() (*Config, error) {
 	viper.SetDefault("storage.event_retention_days", 90)
 	viper.SetDefault("storage.write_rate_min", 50000)      // 写入≥5万条/秒
 	viper.SetDefault("storage.query_latency_max_ms", 1000) // 1亿行查询≤1秒
+
+	// 告警配置默认值
+	viper.SetDefault("alert.enabled", false)
+	viper.SetDefault("alert.evaluation_interval", "1m")
+	viper.SetDefault("alert.resolve_timeout", "5m")
+	viper.SetDefault("alert.enable_auto_resolve", true)
+	viper.SetDefault("alert.max_active_alerts", 1000)
+	
+	// 内置模板开关
+	viper.SetDefault("alert.enable_latency_alert", true)
+	viper.SetDefault("alert.enable_packet_loss_alert", true)
+	viper.SetDefault("alert.enable_retransmit_alert", true)
+	viper.SetDefault("alert.enable_cpu_alert", true)
+	viper.SetDefault("alert.enable_memory_alert", true)
+	viper.SetDefault("alert.enable_error_rate_alert", true)
+	
+	// Kafka通知配置
+	viper.SetDefault("alert.notify_kafka.enabled", false)
+	viper.SetDefault("alert.notify_kafka.brokers", []string{"localhost:9092"})
+	viper.SetDefault("alert.notify_kafka.topic", "alerts")
+	
+	// API通知配置
+	viper.SetDefault("alert.notify_api.enabled", false)
+	viper.SetDefault("alert.notify_api.url", "")
+	viper.SetDefault("alert.notify_api.auth_type", "")
+	
+	// Webhook通知配置
+	viper.SetDefault("alert.notify_webhook.enabled", false)
+	viper.SetDefault("alert.notify_webhook.url", "")
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -477,6 +553,37 @@ func Load() (*Config, error) {
 			EventRetentionDays:    viper.GetInt("storage.event_retention_days"),
 			WriteRateMin:          viper.GetInt("storage.write_rate_min"),
 			QueryLatencyMaxMs:     viper.GetInt("storage.query_latency_max_ms"),
+		},
+		Alert: AlertConfig{
+			Enabled:              viper.GetBool("alert.enabled"),
+			EvaluationInterval:   viper.GetDuration("alert.evaluation_interval"),
+			ResolveTimeout:       viper.GetDuration("alert.resolve_timeout"),
+			EnableAutoResolve:    viper.GetBool("alert.enable_auto_resolve"),
+			MaxActiveAlerts:      viper.GetInt("alert.max_active_alerts"),
+			EnableLatencyAlert:    viper.GetBool("alert.enable_latency_alert"),
+			EnablePacketLossAlert: viper.GetBool("alert.enable_packet_loss_alert"),
+			EnableRetransmitAlert: viper.GetBool("alert.enable_retransmit_alert"),
+			EnableCPUAlert:        viper.GetBool("alert.enable_cpu_alert"),
+			EnableMemoryAlert:     viper.GetBool("alert.enable_memory_alert"),
+			EnableErrorRateAlert:  viper.GetBool("alert.enable_error_rate_alert"),
+			NotifyKafka: KafkaNotifyConfig{
+				Enabled: viper.GetBool("alert.notify_kafka.enabled"),
+				Brokers: viper.GetStringSlice("alert.notify_kafka.brokers"),
+				Topic:   viper.GetString("alert.notify_kafka.topic"),
+			},
+			NotifyAPI: APINotifyConfig{
+				Enabled:   viper.GetBool("alert.notify_api.enabled"),
+				URL:       viper.GetString("alert.notify_api.url"),
+				Headers:   viper.GetStringMapString("alert.notify_api.headers"),
+				AuthType:  viper.GetString("alert.notify_api.auth_type"),
+				AuthToken: viper.GetString("alert.notify_api.auth_token"),
+			},
+			NotifyWebhook: WebhookNotifyConfig{
+				Enabled: viper.GetBool("alert.notify_webhook.enabled"),
+				URL:     viper.GetString("alert.notify_webhook.url"),
+				Secret:  viper.GetString("alert.notify_webhook.secret"),
+				Headers: viper.GetStringMapString("alert.notify_webhook.headers"),
+			},
 		},
 	}
 

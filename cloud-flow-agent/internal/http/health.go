@@ -28,16 +28,18 @@ type HealthHandler struct {
 	clientGetter  ClientGetter
 	collector     *collector.Collector
 	ebpfCollector *ebpfcollector.Collector
+	cpuProfiler   interface{ IsEnabled() bool } // ON-CPU剖析器接口
 	logger        *logger.Logger
 	startTime     time.Time
 }
 
 // NewHealthHandler 创建健康检查处理器
-func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector, ebpfCollector *ebpfcollector.Collector, log *logger.Logger) *HealthHandler {
+func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector, ebpfCollector *ebpfcollector.Collector, cpuProfiler interface{ IsEnabled() bool }, log *logger.Logger) *HealthHandler {
 	return &HealthHandler{
 		clientGetter:  clientGetter,
 		collector:     collector,
 		ebpfCollector: ebpfCollector,
+		cpuProfiler:   cpuProfiler,
 		logger:        log,
 		startTime:     time.Now(),
 	}
@@ -45,17 +47,18 @@ func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector,
 
 // HealthResponse 健康检查响应
 type HealthResponse struct {
-	Status             string            `json:"status"`
-	Timestamp          time.Time         `json:"timestamp"`
-	Uptime             string            `json:"uptime"`
-	EdgeConnected      bool              `json:"edge_connected"`
-	EBPFAvailable      bool              `json:"ebpf_available"`
-	TCPMetricsEnabled  bool              `json:"tcp_metrics_enabled"`
-	HTTPMetricsEnabled bool              `json:"http_metrics_enabled"`
-	HTTPFullEnabled    bool              `json:"http_full_enabled"`
-	DNSFullEnabled     bool              `json:"dns_full_enabled"`
-	MySQLFullEnabled   bool              `json:"mysql_full_enabled"`
-	Version            string            `json:"version"`
+	Status              string            `json:"status"`
+	Timestamp           time.Time         `json:"timestamp"`
+	Uptime              string            `json:"uptime"`
+	EdgeConnected       bool              `json:"edge_connected"`
+	EBPFAvailable       bool              `json:"ebpf_available"`
+	TCPMetricsEnabled   bool              `json:"tcp_metrics_enabled"`
+	HTTPMetricsEnabled  bool              `json:"http_metrics_enabled"`
+	HTTPFullEnabled     bool              `json:"http_full_enabled"`
+	DNSFullEnabled      bool              `json:"dns_full_enabled"`
+	MySQLFullEnabled    bool              `json:"mysql_full_enabled"`
+	CPUProfilerEnabled  bool              `json:"cpu_profiler_enabled"`
+	Version             string            `json:"version"`
 }
 
 // HandleHealth 处理健康检查请求
@@ -95,19 +98,23 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		mysqlFullEnabled = h.ebpfCollector.IsMySQLFullAvailable()
 	}
 
+	// 检查ON-CPU剖析器状态
+	cpuProfilerEnabled := h.cpuProfiler != nil
+
 	// 构建健康检查响应
 	response := HealthResponse{
-		Status:             "healthy",
-		Timestamp:          time.Now(),
-		Uptime:             time.Since(h.startTime).String(),
-		EdgeConnected:      edgeConnected,
-		EBPFAvailable:      ebpfAvailable,
-		TCPMetricsEnabled:  tcpMetricsEnabled,
-		HTTPMetricsEnabled: httpMetricsEnabled,
-		HTTPFullEnabled:    httpFullEnabled,
-		DNSFullEnabled:     dnsFullEnabled,
-		MySQLFullEnabled:   mysqlFullEnabled,
-		Version:            Version,
+		Status:              "healthy",
+		Timestamp:           time.Now(),
+		Uptime:              time.Since(h.startTime).String(),
+		EdgeConnected:       edgeConnected,
+		EBPFAvailable:       ebpfAvailable,
+		TCPMetricsEnabled:   tcpMetricsEnabled,
+		HTTPMetricsEnabled:  httpMetricsEnabled,
+		HTTPFullEnabled:     httpFullEnabled,
+		DNSFullEnabled:      dnsFullEnabled,
+		MySQLFullEnabled:    mysqlFullEnabled,
+		CPUProfilerEnabled:  cpuProfilerEnabled,
+		Version:             Version,
 	}
 
 	// 设置响应头

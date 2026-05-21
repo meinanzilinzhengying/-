@@ -153,6 +153,18 @@ ebpf:
     high_load_mode: false     # 高负载模式(700Mbps, RPS1400)
     enable_adaptive: true     # 启用自适应采样
 
+  # ON-CPU剖析配置
+  # 基于perf_event实现无侵入、无需重启的连续性能剖析
+  # 支持C/C++/Golang/Java多语言符号解析，输出火焰图+热点函数
+  cpu_profiler:
+    enabled: false            # 启用ON-CPU剖析（默认关闭）
+    sample_freq: 99           # 采样频率(Hz)，推荐99或199
+    target_pid: 0             # 目标进程ID，0=全部进程
+    max_stack_depth: 127      # 最大栈深度
+    duration_sec: 0           # 单次剖析持续时间(秒)，0=连续模式
+    output_dir: "/var/log/cloud-flow-agent/profiler"  # 火焰图输出目录
+    auto_detect: true         # 自动检测进程语言类型
+
 # 采集开关
 collect:
   cpu: true

@@ -135,6 +135,17 @@ type PerfOptimizerConfig struct {
 	EnableAdaptive  bool    // 启用自适应采样
 }
 
+// CPUProfilerConfig ON-CPU剖析配置
+type CPUProfilerConfig struct {
+	Enabled      bool   // 启用ON-CPU剖析
+	SampleFreq   int    // 采样频率(Hz), 默认99
+	TargetPID    uint32 // 目标进程ID, 0=全部进程
+	MaxStackDepth int   // 最大栈深度, 默认127
+	DurationSec  int    // 单次剖析持续时间(秒), 0=连续模式
+	OutputDir    string // 火焰图输出目录
+	AutoDetect   bool   // 自动检测进程语言类型
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -145,6 +156,7 @@ type EBPFConfig struct {
 	ResourceLimit   ResourceLimitConfig   // 资源限制配置
 	CircuitBreaker  CircuitBreakerConfig  // 熔断配置
 	PerfOptimizer   PerfOptimizerConfig   // 性能优化配置
+	CPUProfiler     CPUProfilerConfig     // ON-CPU剖析配置
 }
 
 type Config struct {
@@ -240,6 +252,15 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.perf_optimizer.max_events_per_sec", 10000)
 	viper.SetDefault("ebpf.perf_optimizer.high_load_mode", false)
 	viper.SetDefault("ebpf.perf_optimizer.enable_adaptive", true)
+
+	// ON-CPU剖析配置默认值
+	viper.SetDefault("ebpf.cpu_profiler.enabled", false)
+	viper.SetDefault("ebpf.cpu_profiler.sample_freq", 99)
+	viper.SetDefault("ebpf.cpu_profiler.target_pid", 0)
+	viper.SetDefault("ebpf.cpu_profiler.max_stack_depth", 127)
+	viper.SetDefault("ebpf.cpu_profiler.duration_sec", 0)
+	viper.SetDefault("ebpf.cpu_profiler.output_dir", "/var/log/cloud-flow-agent/profiler")
+	viper.SetDefault("ebpf.cpu_profiler.auto_detect", true)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -355,6 +376,15 @@ func Load() (*Config, error) {
 				MaxEventsPerSec: viper.GetInt("ebpf.perf_optimizer.max_events_per_sec"),
 				HighLoadMode:    viper.GetBool("ebpf.perf_optimizer.high_load_mode"),
 				EnableAdaptive:  viper.GetBool("ebpf.perf_optimizer.enable_adaptive"),
+			},
+			CPUProfiler: CPUProfilerConfig{
+				Enabled:       viper.GetBool("ebpf.cpu_profiler.enabled"),
+				SampleFreq:    viper.GetInt("ebpf.cpu_profiler.sample_freq"),
+				TargetPID:     uint32(viper.GetInt("ebpf.cpu_profiler.target_pid")),
+				MaxStackDepth: viper.GetInt("ebpf.cpu_profiler.max_stack_depth"),
+				DurationSec:   viper.GetInt("ebpf.cpu_profiler.duration_sec"),
+				OutputDir:     viper.GetString("ebpf.cpu_profiler.output_dir"),
+				AutoDetect:    viper.GetBool("ebpf.cpu_profiler.auto_detect"),
 			},
 		},
 	}

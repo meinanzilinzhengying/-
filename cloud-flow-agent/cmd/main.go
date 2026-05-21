@@ -339,10 +339,16 @@ func main() {
 
 	// 启动 HTTP 健康检查服务器
 	http.Version = Version
-	healthHandler := http.NewHealthHandler(safeClient, c, ebpfCollector, log)
+	healthHandler := http.NewHealthHandler(safeClient, c, ebpfCollector, nil, log)
 	healthAddr := fmt.Sprintf(":%s", cfg.HealthPort)
 	healthServer := http.StartHealthServer(healthAddr, healthHandler)
 	log.Infof("健康检查 HTTP 服务监听: %s/health", healthAddr)
+
+	// 初始化 ON-CPU 剖析器（如果启用）
+	if cfg.EBPF.CPUProfiler.Enabled {
+		log.Infof("ON-CPU 剖析器已启用: 采样频率=%dHz, 目标PID=%d, 输出目录=%s",
+			cfg.EBPF.CPUProfiler.SampleFreq, cfg.EBPF.CPUProfiler.TargetPID, cfg.EBPF.CPUProfiler.OutputDir)
+	}
 
 	log.Info("探针已启动")
 

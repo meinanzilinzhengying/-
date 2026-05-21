@@ -1,0 +1,196 @@
+syntax = "proto3";
+
+package cloudflow.agent.v1;
+
+option go_package = "github.com/meinanzilinzhengying/cloud-flow-agent/pkg/api;api";
+
+// Agent 服务定义
+service AgentService {
+    // 心跳
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+    // 上报网络流量
+    rpc ReportNetworkFlow(stream NetworkFlowRequest) returns (ReportResponse);
+
+    // 上报系统指标
+    rpc ReportSystemMetrics(SystemMetricsRequest) returns (ReportResponse);
+
+    // 上报进程事件
+    rpc ReportProcessEvents(stream ProcessEventRequest) returns (ReportResponse);
+
+    // 获取配置
+    rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+
+    // 更新配置（热配置）
+    rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+}
+
+// 心跳请求
+message HeartbeatRequest {
+    string agent_id = 1;
+    string hostname = 2;
+    string host_ip = 3;
+    string version = 4;
+    int64 uptime = 5;
+    AgentStatus status = 6;
+}
+
+// 心跳响应
+message HeartbeatResponse {
+    int64 timestamp = 1;
+    bool config_updated = 2;
+    string config_hash = 3;
+}
+
+// Agent 状态
+message AgentStatus {
+    repeated CollectorStatus collectors = 1;
+    ResourceUsage resource_usage = 2;
+}
+
+// 采集器状态
+message CollectorStatus {
+    string name = 1;
+    string type = 2;
+    bool running = 3;
+    int64 events_count = 4;
+    int64 drop_count = 5;
+    string last_error = 6;
+}
+
+// 资源使用
+message ResourceUsage {
+    double cpu_percent = 1;
+    int64 memory_bytes = 2;
+    int64 goroutines = 3;
+}
+
+// 网络流量请求
+message NetworkFlowRequest {
+    repeated NetworkFlow flows = 1;
+}
+
+// 网络流量
+message NetworkFlow {
+    int64 timestamp = 1;
+    string protocol = 2;
+    string source_ip = 3;
+    uint32 source_port = 4;
+    string dest_ip = 5;
+    uint32 dest_port = 6;
+    string process_name = 7;
+    uint32 process_pid = 8;
+    uint64 bytes_sent = 9;
+    uint64 bytes_recv = 10;
+    uint64 packets_sent = 11;
+    uint64 packets_recv = 12;
+    uint64 duration_ns = 13;
+    string tcp_state = 14;
+    string collector_type = 15;
+}
+
+// 系统指标请求
+message SystemMetricsRequest {
+    repeated SystemMetric metrics = 1;
+}
+
+// 系统指标
+message SystemMetric {
+    int64 timestamp = 1;
+    string host_ip = 2;
+    string hostname = 3;
+
+    // CPU
+    double cpu_usage = 4;
+    double cpu_user = 5;
+    double cpu_system = 6;
+    double cpu_idle = 7;
+    double cpu_steal = 8;
+    double load_1 = 9;
+    double load_5 = 10;
+    double load_15 = 11;
+
+    // 内存
+    uint64 mem_total = 12;
+    uint64 mem_used = 13;
+    uint64 mem_free = 14;
+    uint64 mem_buffers = 15;
+    uint64 mem_cached = 16;
+    double mem_usage = 17;
+    uint64 swap_total = 18;
+    uint64 swap_used = 19;
+    double swap_usage = 20;
+
+    // 磁盘
+    uint64 disk_total = 21;
+    uint64 disk_used = 22;
+    uint64 disk_free = 23;
+    double disk_usage = 24;
+    uint64 disk_read_bytes = 25;
+    uint64 disk_write_bytes = 26;
+    uint64 disk_read_ops = 27;
+    uint64 disk_write_ops = 28;
+
+    // 网络
+    uint64 net_bytes_sent = 29;
+    uint64 net_bytes_recv = 30;
+    uint64 net_packets_sent = 31;
+    uint64 net_packets_recv = 32;
+    uint64 net_tcp_conns = 33;
+    uint64 net_udp_conns = 34;
+}
+
+// 进程事件请求
+message ProcessEventRequest {
+    repeated ProcessEvent events = 1;
+}
+
+// 进程事件
+message ProcessEvent {
+    int64 timestamp = 1;
+    string event_type = 2;
+    uint32 pid = 3;
+    uint32 ppid = 4;
+    uint32 tid = 5;
+    string comm = 6;
+    string exe = 7;
+    string cmdline = 8;
+    string cwd = 9;
+    uint32 uid = 10;
+    uint32 gid = 11;
+    int32 exit_code = 12;
+    uint32 signal = 13;
+}
+
+// 上报响应
+message ReportResponse {
+    bool success = 1;
+    string message = 2;
+    int64 received_count = 3;
+}
+
+// 获取配置请求
+message GetConfigRequest {
+    string agent_id = 1;
+    string current_config_hash = 2;
+}
+
+// 获取配置响应
+message GetConfigResponse {
+    bool updated = 1;
+    string config_hash = 2;
+    bytes config_data = 3;
+}
+
+// 更新配置请求
+message UpdateConfigRequest {
+    string agent_id = 1;
+    bytes config_data = 2;
+}
+
+// 更新配置响应
+message UpdateConfigResponse {
+    bool success = 1;
+    string message = 2;
+    string new_config_hash = 3;
+}

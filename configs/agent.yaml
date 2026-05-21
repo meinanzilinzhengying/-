@@ -1,0 +1,154 @@
+# Cloud Flow Agent 配置文件
+
+# Agent 配置
+agent:
+  hostname: ""  # 留空自动获取
+  host_ip: ""   # 留空自动获取
+  interval: 10  # 采集间隔（秒）
+
+# Edge 连接配置
+edge:
+  address: "edge.example.com"
+  port: 9090
+  tls_enabled: false
+  ca_file: "/etc/cloud-flow/ca.crt"
+  cert_file: "/etc/cloud-flow/agent.crt"
+  key_file: "/etc/cloud-flow/agent.key"
+  timeout: 10      # 连接超时（秒）
+  retry_max: 5     # 最大重试次数
+  retry_delay: 5   # 重试间隔（秒）
+
+# 采集器配置
+collectors:
+  # eBPF 采集器（高内核 >= 4.4）
+  ebpf:
+    enabled: true
+    events:
+      - tcp_connect
+      - tcp_accept
+      - tcp_close
+      - tcp_sendmsg
+      - tcp_recvmsg
+    filter_ports: []   # 过滤端口，空表示全部
+    filter_ips: []     # 过滤 IP，空表示全部
+    sample_rate: 100   # 采样率 (1-100)
+    buffer_size: 4096  # Perf buffer 大小
+
+  # 传统采集器（低内核降级）
+  traditional:
+    enabled: true
+    proc_path: "/proc"
+    netlink_groups: []  # netlink 组
+
+  # 系统指标采集器
+  metrics:
+    enabled: true
+    interval: 10      # 采集间隔（秒）
+    cpu: true
+    memory: true
+    disk: true
+    disk_paths:
+      - "/"
+    network: true
+    network_ifaces: []  # 空表示全部接口
+
+  # 进程事件采集器
+  process:
+    enabled: true
+    events:
+      - exec
+      - fork
+      - exit
+    filter_users: []   # 过滤用户 ID
+    filter_comms: []   # 过滤进程名
+
+# 资源限制
+resources:
+  cpu_quota: 1.0        # CPU 配额（核心数）
+  memory_limit: 512     # 内存限制（MB）
+  buffer_max_size: 100  # 缓冲区最大大小（MB）
+  max_goroutines: 100   # 最大协程数
+
+# 日志配置
+logging:
+  level: "info"       # debug, info, warn, error
+  format: "json"      # json, text
+  output: "stdout"    # stdout, file
+  path: "/var/log/cloud-flow/agent.log"
+  max_size: 100       # 单个日志文件最大大小（MB）
+  max_backups: 5      # 最大备份文件数
+  max_age: 30         # 最大保留天数
+  compress: true      # 是否压缩
+
+# ============================================================
+# 双中心数据同步配置
+# 支持双中心数据同步；单中心故障时，另一中心无缝接管
+# ============================================================
+dual_center:
+  enabled: false              # 启用双中心同步（默认关闭）
+  local_center_id: ""         # 本地中心ID
+  local_center_name: ""       # 本地中心名称
+  local_role: "primary"       # 本地角色: primary/secondary
+  local_address: "0.0.0.0"    # 本地绑定地址
+  local_port: 7947            # 本地同步端口
+  region: "default"           # 区域
+
+  # 对端中心列表
+  peer_centers:
+    # - id: "center-bj-02"
+    #   name: "北京中心-备"
+    #   role: "secondary"
+    #   address: "192.168.1.200"
+    #   port: 7947
+    #   region: "beijing"
+    #   tls_enabled: false
+
+  # 同步配置
+  sync_mode: "async"          # 同步模式: sync(同步)/async(异步)/semi_sync(半同步)
+  batch_size: 500             # 批量大小
+  flush_interval: 5           # 刷新间隔（秒）
+  compress_enabled: true      # 启用压缩
+  max_retries: 3              # 最大重试次数
+  retry_delay: 2              # 重试间隔（秒）
+  queue_size: 10000           # 队列大小
+  queue_overflow: "drop_oldest" # 队列溢出策略: drop_latest/drop_oldest/block
+
+# ============================================================
+# 故障切换配置
+# 单中心故障时，另一中心自动检测并无缝接管
+# ============================================================
+failover:
+  enabled: false              # 启用故障切换（默认关闭）
+  mode: "auto"                # 切换模式: auto(自动)/manual(手动)/semi_auto(半自动)
+
+  # 故障检测
+  heartbeat_interval: 3       # 心跳间隔（秒）
+  heartbeat_timeout: 2        # 心跳超时（秒）
+  failure_threshold: 3        # 连续失败次数触发切换
+  success_threshold: 5        # 连续成功次数确认恢复
+
+  # 切换配置
+  switch_timeout: 30          # 切换超时（秒）
+  pre_switch_delay: 2         # 切换前延迟（秒）
+  graceful_shutdown: true     # 优雅关闭
+  drain_timeout: 60           # 连接排空超时（秒）
+
+  # 恢复配置
+  auto_recover: true          # 自动恢复
+  recover_delay: 30           # 恢复延迟（秒）
+  data_repair_on_recover: true # 恢复时执行数据补偿
+
+  # 防脑裂
+  fence_enabled: true         # 启用围栏令牌
+  fence_timeout: 10           # 围栏超时（秒）
+  quorum_required: true       # 需要仲裁
+
+# ============================================================
+# 虚拟IP配置（可选）
+# 用于故障切换时的流量重定向
+# ============================================================
+vip:
+  enabled: false              # 启用虚拟IP（默认关闭）
+  virtual_ip: ""              # 虚拟IP地址
+  interface: ""               # 网络接口
+  netmask: ""                 # 子网掩码

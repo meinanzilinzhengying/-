@@ -240,6 +240,23 @@ alert:
     secret: ""
     headers: {}
 
+# 网络全栈拓扑配置
+# Pod/Node/VM/物理设备层级；告警高亮、下钻指标；横向/纵向布局、业务分组
+topology:
+  enabled: false              # 启用拓扑（默认关闭）
+  refresh_interval: "5m"      # 刷新间隔
+  auto_discovery: true        # 自动发现
+  default_layout: "vertical"  # 默认布局: vertical, horizontal, radial
+  max_nodes: 1000             # 最大节点数
+  
+  # 层级开关
+  include_pods: true          # 包含Pod层
+  include_vms: true           # 包含VM层
+  include_physical: true      # 包含物理设备层
+  
+  # 告警集成
+  enable_alert_integration: true  # 启用告警高亮
+
 # 采集开关
 collect:
   cpu: true

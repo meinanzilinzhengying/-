@@ -227,6 +227,23 @@ type WebhookNotifyConfig struct {
 	Headers map[string]string `yaml:"headers" json:"headers"`
 }
 
+// TopologyConfig 拓扑配置
+type TopologyConfig struct {
+	Enabled         bool          `yaml:"enabled" json:"enabled"`
+	RefreshInterval time.Duration `yaml:"refresh_interval" json:"refresh_interval"`
+	AutoDiscovery   bool          `yaml:"auto_discovery" json:"auto_discovery"`
+	DefaultLayout   string        `yaml:"default_layout" json:"default_layout"`
+	MaxNodes        int           `yaml:"max_nodes" json:"max_nodes"`
+	
+	// 层级开关
+	IncludePods     bool `yaml:"include_pods" json:"include_pods"`
+	IncludeVMs      bool `yaml:"include_vms" json:"include_vms"`
+	IncludePhysical bool `yaml:"include_physical" json:"include_physical"`
+	
+	// 告警集成
+	EnableAlertIntegration bool `yaml:"enable_alert_integration" json:"enable_alert_integration"`
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -260,6 +277,7 @@ type Config struct {
 	EBPF            EBPFConfig    // eBPF配置
 	Storage         StorageConfig // 历史数据存储配置
 	Alert           AlertConfig   // 告警配置
+	Topology        TopologyConfig // 拓扑配置
 }
 
 func Load() (*Config, error) {
@@ -401,6 +419,17 @@ func Load() (*Config, error) {
 	// Webhook通知配置
 	viper.SetDefault("alert.notify_webhook.enabled", false)
 	viper.SetDefault("alert.notify_webhook.url", "")
+	
+	// 拓扑配置默认值
+	viper.SetDefault("topology.enabled", false)
+	viper.SetDefault("topology.refresh_interval", "5m")
+	viper.SetDefault("topology.auto_discovery", true)
+	viper.SetDefault("topology.default_layout", "vertical")
+	viper.SetDefault("topology.max_nodes", 1000)
+	viper.SetDefault("topology.include_pods", true)
+	viper.SetDefault("topology.include_vms", true)
+	viper.SetDefault("topology.include_physical", true)
+	viper.SetDefault("topology.enable_alert_integration", true)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -579,13 +608,24 @@ func Load() (*Config, error) {
 				AuthToken: viper.GetString("alert.notify_api.auth_token"),
 			},
 			NotifyWebhook: WebhookNotifyConfig{
-				Enabled: viper.GetBool("alert.notify_webhook.enabled"),
-				URL:     viper.GetString("alert.notify_webhook.url"),
-				Secret:  viper.GetString("alert.notify_webhook.secret"),
-				Headers: viper.GetStringMapString("alert.notify_webhook.headers"),
-			},
+			Enabled: viper.GetBool("alert.notify_webhook.enabled"),
+			URL:     viper.GetString("alert.notify_webhook.url"),
+			Secret:  viper.GetString("alert.notify_webhook.secret"),
+			Headers: viper.GetStringMapString("alert.notify_webhook.headers"),
 		},
-	}
+	},
+	Topology: TopologyConfig{
+		Enabled:                viper.GetBool("topology.enabled"),
+		RefreshInterval:        viper.GetDuration("topology.refresh_interval"),
+		AutoDiscovery:          viper.GetBool("topology.auto_discovery"),
+		DefaultLayout:          viper.GetString("topology.default_layout"),
+		MaxNodes:               viper.GetInt("topology.max_nodes"),
+		IncludePods:            viper.GetBool("topology.include_pods"),
+		IncludeVMs:             viper.GetBool("topology.include_vms"),
+		IncludePhysical:        viper.GetBool("topology.include_physical"),
+		EnableAlertIntegration: viper.GetBool("topology.enable_alert_integration"),
+	},
+}
 
 	if cfg.ProbeID == "" {
 		hostname, _ := os.Hostname()

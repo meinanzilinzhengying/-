@@ -109,6 +109,23 @@ ebpf:
     collect_bytes: true       # 采集字节数（带宽占用）
     collect_packets: true     # 采集包数
 
+  # 协议全字段解析配置
+  # 启用后可采集HTTP/DNS/MySQL等协议的完整字段信息
+  protocol_parsing:
+    enabled: false            # 启用协议全字段解析（默认关闭，需要较高性能开销）
+    
+    # HTTP全字段解析
+    # 采集HTTP请求的方法、路径、Host、Cookie、User-Agent、状态码等完整信息
+    http_full: false
+    
+    # DNS全字段解析
+    # 采集DNS查询的域名、记录类型、TTL、响应码等完整信息
+    dns_full: false
+    
+    # MySQL全字段解析
+    # 采集MySQL命令、SQL语句、错误码、影响行数等完整信息
+    mysql_full: false
+
 # 采集开关
 collect:
   cpu: true

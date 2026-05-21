@@ -125,9 +125,12 @@ func main() {
 		ebpfOpts := &ebpfcollector.CollectorOptions{
 			EnableTCPMetrics:  cfg.EBPF.TCPMetrics.Enabled,
 			EnableHTTPMetrics: cfg.EBPF.HTTPMetrics.Enabled,
+			EnableHTTPFull:    cfg.EBPF.ProtocolParsing.Enabled && cfg.EBPF.ProtocolParsing.HTTPFull,
+			EnableDNSFull:     cfg.EBPF.ProtocolParsing.Enabled && cfg.EBPF.ProtocolParsing.DNSFull,
+			EnableMySQLFull:   cfg.EBPF.ProtocolParsing.Enabled && cfg.EBPF.ProtocolParsing.MySQLFull,
 			MgmtIface:         cfg.Network.MgmtIface,
 		}
-		
+
 		ebpfCollector, err = ebpfcollector.NewWithOptions(ebpfOpts)
 		if err != nil {
 			log.Warnf("EBPF 采集器初始化失败: %v，将只使用传统采集器", err)
@@ -138,6 +141,15 @@ func main() {
 			}
 			if ebpfCollector.IsHTTPMetricsAvailable() {
 				log.Info("HTTP应用层指标采集已启用: 请求成功率、响应时延、异常比例、请求数、响应数")
+			}
+			if ebpfCollector.IsHTTPFullAvailable() {
+				log.Info("HTTP全字段解析已启用: 方法、路径、Host、Cookie、User-Agent、状态码等")
+			}
+			if ebpfCollector.IsDNSFullAvailable() {
+				log.Info("DNS全字段解析已启用: 域名、记录类型、TTL、响应码等")
+			}
+			if ebpfCollector.IsMySQLFullAvailable() {
+				log.Info("MySQL全字段解析已启用: 命令、SQL语句、错误码、影响行数等")
 			}
 			ebpfCollector.Start()
 			defer ebpfCollector.Stop()

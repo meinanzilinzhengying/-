@@ -52,6 +52,9 @@ type HealthResponse struct {
 	EBPFAvailable      bool              `json:"ebpf_available"`
 	TCPMetricsEnabled  bool              `json:"tcp_metrics_enabled"`
 	HTTPMetricsEnabled bool              `json:"http_metrics_enabled"`
+	HTTPFullEnabled    bool              `json:"http_full_enabled"`
+	DNSFullEnabled     bool              `json:"dns_full_enabled"`
+	MySQLFullEnabled   bool              `json:"mysql_full_enabled"`
 	Version            string            `json:"version"`
 }
 
@@ -82,6 +85,16 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		httpMetricsEnabled = h.ebpfCollector.IsHTTPMetricsAvailable()
 	}
 
+	// 检查协议全字段解析状态
+	httpFullEnabled := false
+	dnsFullEnabled := false
+	mysqlFullEnabled := false
+	if h.ebpfCollector != nil {
+		httpFullEnabled = h.ebpfCollector.IsHTTPFullAvailable()
+		dnsFullEnabled = h.ebpfCollector.IsDNSFullAvailable()
+		mysqlFullEnabled = h.ebpfCollector.IsMySQLFullAvailable()
+	}
+
 	// 构建健康检查响应
 	response := HealthResponse{
 		Status:             "healthy",
@@ -91,6 +104,9 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		EBPFAvailable:      ebpfAvailable,
 		TCPMetricsEnabled:  tcpMetricsEnabled,
 		HTTPMetricsEnabled: httpMetricsEnabled,
+		HTTPFullEnabled:    httpFullEnabled,
+		DNSFullEnabled:     dnsFullEnabled,
+		MySQLFullEnabled:   mysqlFullEnabled,
 		Version:            Version,
 	}
 

@@ -100,12 +100,21 @@ type BaseTrafficConfig struct {
 	CollectPackets bool // 采集包数
 }
 
+// ProtocolParsingConfig 协议全字段解析配置
+type ProtocolParsingConfig struct {
+	Enabled     bool // 启用协议全字段解析
+	HTTPFull    bool // 启用HTTP全字段解析
+	DNSFull     bool // 启用DNS全字段解析
+	MySQLFull   bool // 启用MySQL全字段解析
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
-	Enabled      bool              // 启用eBPF采集
-	TCPMetrics   TCPMetricsConfig  // TCP深度指标配置
-	HTTPMetrics  HTTPMetricsConfig // HTTP应用层指标配置
-	BaseTraffic  BaseTrafficConfig // 基础流量采集配置
+	Enabled           bool                  // 启用eBPF采集
+	TCPMetrics        TCPMetricsConfig      // TCP深度指标配置
+	HTTPMetrics       HTTPMetricsConfig     // HTTP应用层指标配置
+	BaseTraffic       BaseTrafficConfig     // 基础流量采集配置
+	ProtocolParsing   ProtocolParsingConfig // 协议全字段解析配置
 }
 
 type Config struct {
@@ -175,6 +184,12 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.base_traffic.enabled", true)
 	viper.SetDefault("ebpf.base_traffic.collect_bytes", true)
 	viper.SetDefault("ebpf.base_traffic.collect_packets", true)
+
+	// 协议全字段解析配置默认值
+	viper.SetDefault("ebpf.protocol_parsing.enabled", false)
+	viper.SetDefault("ebpf.protocol_parsing.http_full", false)
+	viper.SetDefault("ebpf.protocol_parsing.dns_full", false)
+	viper.SetDefault("ebpf.protocol_parsing.mysql_full", false)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -261,11 +276,17 @@ func Load() (*Config, error) {
 				ResponseCount:   viper.GetBool("ebpf.http_metrics.response_count"),
 			},
 			BaseTraffic: BaseTrafficConfig{
-				Enabled:        viper.GetBool("ebpf.base_traffic.enabled"),
-				CollectBytes:   viper.GetBool("ebpf.base_traffic.collect_bytes"),
-				CollectPackets: viper.GetBool("ebpf.base_traffic.collect_packets"),
-			},
+			Enabled:        viper.GetBool("ebpf.base_traffic.enabled"),
+			CollectBytes:   viper.GetBool("ebpf.base_traffic.collect_bytes"),
+			CollectPackets: viper.GetBool("ebpf.base_traffic.collect_packets"),
 		},
+		ProtocolParsing: ProtocolParsingConfig{
+			Enabled:   viper.GetBool("ebpf.protocol_parsing.enabled"),
+			HTTPFull:  viper.GetBool("ebpf.protocol_parsing.http_full"),
+			DNSFull:   viper.GetBool("ebpf.protocol_parsing.dns_full"),
+			MySQLFull: viper.GetBool("ebpf.protocol_parsing.mysql_full"),
+		},
+	},
 	}
 
 	if cfg.ProbeID == "" {

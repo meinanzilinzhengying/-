@@ -30,20 +30,32 @@ type Collector struct {
 	objs            *bpf.Objects
 	tcpMetricsObjs  *bpf.TCPMetricsObjects
 	httpMetricsObjs *bpf.HTTPMetricsObjects
+	httpFullObjs    *bpf.HTTPFullObjects
+	dnsFullObjs     *bpf.DNSFullObjects
+	mysqlFullObjs   *bpf.MySQLFullObjects
 	links           []link.Link
 	tcpLinks        []link.Link
 	httpLinks       []link.Link
+	httpFullLinks   []link.Link
+	dnsFullLinks    []link.Link
+	mysqlFullLinks  []link.Link
 	stopCh          chan struct{}
 	collectCh       chan []*edge.MetricData
 	enableTCPMetrics  bool
 	enableHTTPMetrics bool
+	enableHTTPFull    bool
+	enableDNSFull     bool
+	enableMySQLFull   bool
 	mgmtIface       string // 管理网卡接口
 }
 
 // CollectorOptions 采集器配置选项
 type CollectorOptions struct {
 	EnableTCPMetrics  bool   // 启用TCP深度指标采集
-	EnableHTTPMetrics bool  // 启用HTTP请求指标采集
+	EnableHTTPMetrics bool   // 启用HTTP请求指标采集
+	EnableHTTPFull    bool   // 启用HTTP全字段解析
+	EnableDNSFull     bool   // 启用DNS全字段解析
+	EnableMySQLFull   bool   // 启用MySQL全字段解析
 	MgmtIface        string // 管理网卡接口名称
 }
 
@@ -52,6 +64,9 @@ func New() (*Collector, error) {
 	return NewWithOptions(&CollectorOptions{
 		EnableTCPMetrics:  true,
 		EnableHTTPMetrics: true,
+		EnableHTTPFull:    false,
+		EnableDNSFull:     false,
+		EnableMySQLFull:   false,
 	})
 }
 
@@ -61,6 +76,9 @@ func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 		opts = &CollectorOptions{
 			EnableTCPMetrics:  true,
 			EnableHTTPMetrics: true,
+			EnableHTTPFull:    false,
+			EnableDNSFull:     false,
+			EnableMySQLFull:   false,
 		}
 	}
 
@@ -86,6 +104,9 @@ func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 		collectCh:        make(chan []*edge.MetricData, 10),
 		enableTCPMetrics:  opts.EnableTCPMetrics,
 		enableHTTPMetrics: opts.EnableHTTPMetrics,
+		enableHTTPFull:    opts.EnableHTTPFull,
+		enableDNSFull:     opts.EnableDNSFull,
+		enableMySQLFull:   opts.EnableMySQLFull,
 		mgmtIface:        opts.MgmtIface,
 	}
 
@@ -110,6 +131,42 @@ func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 			collector.httpMetricsObjs = httpObjs
 			collector.httpLinks = httpLinks
 			log.Printf("成功加载HTTP指标eBPF程序")
+		}
+	}
+
+	// 加载HTTP全字段解析eBPF程序
+	if opts.EnableHTTPFull {
+		httpFullObjs, httpFullLinks, err := loadHTTPFullObjects()
+		if err != nil {
+			log.Printf("警告: 加载HTTP全字段解析eBPF程序失败: %v，将继续使用基础流量采集", err)
+		} else {
+			collector.httpFullObjs = httpFullObjs
+			collector.httpFullLinks = httpFullLinks
+			log.Printf("成功加载HTTP全字段解析eBPF程序")
+		}
+	}
+
+	// 加载DNS全字段解析eBPF程序
+	if opts.EnableDNSFull {
+		dnsFullObjs, dnsFullLinks, err := loadDNSFullObjects()
+		if err != nil {
+			log.Printf("警告: 加载DNS全字段解析eBPF程序失败: %v，将继续使用基础流量采集", err)
+		} else {
+			collector.dnsFullObjs = dnsFullObjs
+			collector.dnsFullLinks = dnsFullLinks
+			log.Printf("成功加载DNS全字段解析eBPF程序")
+		}
+	}
+
+	// 加载MySQL全字段解析eBPF程序
+	if opts.EnableMySQLFull {
+		mysqlFullObjs, mysqlFullLinks, err := loadMySQLFullObjects()
+		if err != nil {
+			log.Printf("警告: 加载MySQL全字段解析eBPF程序失败: %v，将继续使用基础流量采集", err)
+		} else {
+			collector.mysqlFullObjs = mysqlFullObjs
+			collector.mysqlFullLinks = mysqlFullLinks
+			log.Printf("成功加载MySQL全字段解析eBPF程序")
 		}
 	}
 
@@ -155,6 +212,60 @@ func loadHTTPMetricsObjects() (*bpf.HTTPMetricsObjects, []link.Link, error) {
 	}
 
 	return httpObjs, httpLinks, nil
+}
+
+// loadHTTPFullObjects 加载HTTP全字段解析eBPF对象
+func loadHTTPFullObjects() (*bpf.HTTPFullObjects, []link.Link, error) {
+	opts := &ebpf.CollectionOptions{}
+
+	httpFullObjs, err := bpf.LoadHTTPFull(opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("加载HTTP全字段解析eBPF对象失败: %w", err)
+	}
+
+	httpFullLinks, err := bpf.AttachHTTPFullProbes(httpFullObjs)
+	if err != nil {
+		httpFullObjs.Close()
+		return nil, nil, fmt.Errorf("附加HTTP全字段解析kprobe失败: %w", err)
+	}
+
+	return httpFullObjs, httpFullLinks, nil
+}
+
+// loadDNSFullObjects 加载DNS全字段解析eBPF对象
+func loadDNSFullObjects() (*bpf.DNSFullObjects, []link.Link, error) {
+	opts := &ebpf.CollectionOptions{}
+
+	dnsFullObjs, err := bpf.LoadDNSFull(opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("加载DNS全字段解析eBPF对象失败: %w", err)
+	}
+
+	dnsFullLinks, err := bpf.AttachDNSFullProbes(dnsFullObjs)
+	if err != nil {
+		dnsFullObjs.Close()
+		return nil, nil, fmt.Errorf("附加DNS全字段解析kprobe失败: %w", err)
+	}
+
+	return dnsFullObjs, dnsFullLinks, nil
+}
+
+// loadMySQLFullObjects 加载MySQL全字段解析eBPF对象
+func loadMySQLFullObjects() (*bpf.MySQLFullObjects, []link.Link, error) {
+	opts := &ebpf.CollectionOptions{}
+
+	mysqlFullObjs, err := bpf.LoadMySQLFull(opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("加载MySQL全字段解析eBPF对象失败: %w", err)
+	}
+
+	mysqlFullLinks, err := bpf.AttachMySQLFullProbes(mysqlFullObjs)
+	if err != nil {
+		mysqlFullObjs.Close()
+		return nil, nil, fmt.Errorf("附加MySQL全字段解析kprobe失败: %w", err)
+	}
+
+	return mysqlFullObjs, mysqlFullLinks, nil
 }
 
 // dropPrivileges 降权为普通用户
@@ -237,6 +348,21 @@ func (c *Collector) IsHTTPMetricsAvailable() bool {
 	return c != nil && c.httpMetricsObjs != nil
 }
 
+// IsHTTPFullAvailable 检查HTTP全字段解析是否可用
+func (c *Collector) IsHTTPFullAvailable() bool {
+	return c != nil && c.httpFullObjs != nil
+}
+
+// IsDNSFullAvailable 检查DNS全字段解析是否可用
+func (c *Collector) IsDNSFullAvailable() bool {
+	return c != nil && c.dnsFullObjs != nil
+}
+
+// IsMySQLFullAvailable 检查MySQL全字段解析是否可用
+func (c *Collector) IsMySQLFullAvailable() bool {
+	return c != nil && c.mysqlFullObjs != nil
+}
+
 // Start 启动采集器
 func (c *Collector) Start() {
 	go c.collectLoop()
@@ -254,11 +380,29 @@ func (c *Collector) Stop() {
 	for _, l := range c.httpLinks {
 		l.Close()
 	}
+	for _, l := range c.httpFullLinks {
+		l.Close()
+	}
+	for _, l := range c.dnsFullLinks {
+		l.Close()
+	}
+	for _, l := range c.mysqlFullLinks {
+		l.Close()
+	}
 	if c.tcpMetricsObjs != nil {
 		c.tcpMetricsObjs.Close()
 	}
 	if c.httpMetricsObjs != nil {
 		c.httpMetricsObjs.Close()
+	}
+	if c.httpFullObjs != nil {
+		c.httpFullObjs.Close()
+	}
+	if c.dnsFullObjs != nil {
+		c.dnsFullObjs.Close()
+	}
+	if c.mysqlFullObjs != nil {
+		c.mysqlFullObjs.Close()
 	}
 	c.objs.Close()
 }
@@ -336,6 +480,24 @@ func (c *Collector) collectData() []*edge.MetricData {
 	if c.httpMetricsObjs != nil {
 		httpMetrics := c.collectHTTPMetrics(now)
 		metrics = append(metrics, httpMetrics...)
+	}
+
+	// 采集HTTP全字段解析数据
+	if c.httpFullObjs != nil {
+		httpFullMetrics := c.collectHTTPFullMetrics(now)
+		metrics = append(metrics, httpFullMetrics...)
+	}
+
+	// 采集DNS全字段解析数据
+	if c.dnsFullObjs != nil {
+		dnsFullMetrics := c.collectDNSFullMetrics(now)
+		metrics = append(metrics, dnsFullMetrics...)
+	}
+
+	// 采集MySQL全字段解析数据
+	if c.mysqlFullObjs != nil {
+		mysqlFullMetrics := c.collectMySQLFullMetrics(now)
+		metrics = append(metrics, mysqlFullMetrics...)
 	}
 
 	return metrics
@@ -585,6 +747,248 @@ func (c *Collector) collectHTTPMetrics(now int64) []*edge.MetricData {
 			},
 		}
 		metrics = append(metrics, metric)
+	}
+
+	return metrics
+}
+
+// collectHTTPFullMetrics 采集HTTP全字段解析数据
+func (c *Collector) collectHTTPFullMetrics(now int64) []*edge.MetricData {
+	var metrics []*edge.MetricData
+
+	// 1. 采集HTTP统计信息
+	httpStats, err := c.httpFullObjs.GetHTTPStats()
+	if err == nil && httpStats != nil {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			Protocol:  "http_full",
+			Tags: map[string]string{
+				"metric_type":     "http_full_stats",
+				"total_requests":  fmt.Sprintf("%d", httpStats.TotalRequests),
+				"total_responses": fmt.Sprintf("%d", httpStats.TotalResponses),
+				"success_count":   fmt.Sprintf("%d", httpStats.SuccessCount),
+				"error_count":     fmt.Sprintf("%d", httpStats.ErrorCount),
+				"avg_latency_ns":  fmt.Sprintf("%d", httpStats.AvgLatencyNs),
+				"max_latency_ns":  fmt.Sprintf("%d", httpStats.MaxLatencyNs),
+				"min_latency_ns":  fmt.Sprintf("%d", httpStats.MinLatencyNs),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 2. 采集HTTP事务数据
+	txnIter := c.httpFullObjs.IterateHTTPTransactions()
+	var txnKey bpf.HTTPConnKey
+	var txnValue bpf.HTTPTransaction
+	for txnIter.Next(&txnKey, &txnValue) {
+		if txnValue.Complete == 0 {
+			continue
+		}
+
+		req := &txnValue.Request
+		resp := &txnValue.Response
+
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(txnKey.Saddr).String(),
+			DstIp:     intToIP(txnKey.Daddr).String(),
+			SrcPort:   int32(txnKey.Sport),
+			DstPort:   int32(txnKey.Dport),
+			Protocol:  "http_full",
+			Latency:   int64(resp.LatencyNs),
+			Tags: map[string]string{
+				"metric_type":       "http_full_transaction",
+				"request_id":        fmt.Sprintf("%d", req.RequestId),
+				"method":            req.Method.GetMethodName(),
+				"path":              req.GetPath(),
+				"host":              req.GetHost(),
+				"user_agent":        req.GetUserAgent(),
+				"referer":           req.GetReferer(),
+				"content_type":      req.GetContentType(),
+				"content_length":    fmt.Sprintf("%d", req.ContentLength),
+				"http_version":      req.GetHttpVersion(),
+				"is_https":          fmt.Sprintf("%v", req.IsHttps == 1),
+				"status_code":       fmt.Sprintf("%d", resp.StatusCode),
+				"status_text":       resp.GetStatusText(),
+				"response_content_type": resp.GetResponseContentType(),
+				"response_content_length": fmt.Sprintf("%d", resp.ContentLength),
+				"server":            resp.GetServer(),
+				"is_chunked":        fmt.Sprintf("%v", resp.IsChunked == 1),
+				"is_gzipped":        fmt.Sprintf("%v", resp.IsGzipped == 1),
+				"is_cached":         fmt.Sprintf("%v", resp.IsCached == 1),
+				"latency_us":        fmt.Sprintf("%d", resp.LatencyNs/1000),
+				"pid":               fmt.Sprintf("%d", txnKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+
+		// 从map中删除已处理的事务
+		c.httpFullObjs.HttpTransactionsMap.Delete(txnKey)
+	}
+
+	return metrics
+}
+
+// collectDNSFullMetrics 采集DNS全字段解析数据
+func (c *Collector) collectDNSFullMetrics(now int64) []*edge.MetricData {
+	var metrics []*edge.MetricData
+
+	// 1. 采集DNS统计信息
+	// 查询总数
+	queryCount, _ := c.dnsFullObjs.GetDNSStats(0)
+	metric := &edge.MetricData{
+		Timestamp: now,
+		Protocol:  "dns_full",
+		Tags: map[string]string{
+			"metric_type":  "dns_full_stats",
+			"query_count":  fmt.Sprintf("%d", queryCount),
+		},
+	}
+	metrics = append(metrics, metric)
+
+	// 2. 采集各响应码统计
+	for rcode := uint8(0); rcode <= 5; rcode++ {
+		count, err := c.dnsFullObjs.GetDNSStats(uint32(rcode + 1))
+		if err == nil && count > 0 {
+			metric := &edge.MetricData{
+				Timestamp: now,
+				Protocol:  "dns_full",
+				Tags: map[string]string{
+					"metric_type": "dns_rcode_stats",
+					"rcode":       bpf.GetRcodeName(rcode),
+					"rcode_value": fmt.Sprintf("%d", rcode),
+					"count":       fmt.Sprintf("%d", count),
+				},
+			}
+			metrics = append(metrics, metric)
+		}
+	}
+
+	// 3. 采集DNS查询数据
+	queryIter := c.dnsFullObjs.IterateDNSQueries()
+	var queryKey bpf.DNSConnKey
+	var queryValue bpf.DNSRequestFull
+	for queryIter.Next(&queryKey, &queryValue) {
+		// 获取主查询问题
+		primaryQuestion := queryValue.GetPrimaryQuestion()
+		queryName := ""
+		queryType := ""
+		if primaryQuestion != nil {
+			queryName = primaryQuestion.GetQName()
+			queryType = bpf.GetRecordTypeName(primaryQuestion.Qtype)
+		}
+
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(queryKey.Saddr).String(),
+			DstIp:     intToIP(queryKey.Daddr).String(),
+			SrcPort:   int32(queryKey.Sport),
+			DstPort:   int32(queryKey.Dport),
+			Protocol:  "dns_full",
+			Tags: map[string]string{
+				"metric_type":       "dns_query",
+				"transaction_id":    fmt.Sprintf("%d", queryValue.TransactionId),
+				"query_name":        queryName,
+				"query_type":        queryType,
+				"query_class":       fmt.Sprintf("%d", primaryQuestion.Qclass),
+				"opcode":            fmt.Sprintf("%d", queryValue.Opcode),
+				"recursion_desired": fmt.Sprintf("%v", queryValue.RecursionDesired == 1),
+				"question_count":    fmt.Sprintf("%d", queryValue.QuestionCount),
+				"pid":               fmt.Sprintf("%d", queryKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	return metrics
+}
+
+// collectMySQLFullMetrics 采集MySQL全字段解析数据
+func (c *Collector) collectMySQLFullMetrics(now int64) []*edge.MetricData {
+	var metrics []*edge.MetricData
+
+	// 1. 采集MySQL命令统计
+	for cmd := uint8(0); cmd < 29; cmd++ {
+		count, err := c.mysqlFullObjs.GetCommandStats(uint32(cmd))
+		if err == nil && count > 0 {
+			metric := &edge.MetricData{
+				Timestamp: now,
+				Protocol:  "mysql_full",
+				Tags: map[string]string{
+					"metric_type":  "mysql_cmd_stats",
+					"command":      bpf.GetCommandName(cmd),
+					"command_code": fmt.Sprintf("%d", cmd),
+					"count":        fmt.Sprintf("%d", count),
+				},
+			}
+			metrics = append(metrics, metric)
+		}
+	}
+
+	// 2. 采集MySQL错误统计
+	errIter := c.mysqlFullObjs.IterateErrorStats()
+	var errCode uint16
+	var errCount uint64
+	for errIter.Next(&errCode, &errCount) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			Protocol:  "mysql_full",
+			Tags: map[string]string{
+				"metric_type": "mysql_error_stats",
+				"error_code":  fmt.Sprintf("%d", errCode),
+				"error_name":  bpf.GetErrorName(errCode),
+				"count":       fmt.Sprintf("%d", errCount),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 3. 采集MySQL连接数据
+	connIter := c.mysqlFullObjs.IterateMySQLConnections()
+	var connKey bpf.MySQLConnKey
+	var connValue bpf.MySQLTransaction
+	for connIter.Next(&connKey, &connValue) {
+		if connValue.Complete == 0 {
+			continue
+		}
+
+		cmd := &connValue.Command
+		resp := &connValue.Response
+		auth := &connValue.Auth
+
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(connKey.Saddr).String(),
+			DstIp:     intToIP(connKey.Daddr).String(),
+			SrcPort:   int32(connKey.Sport),
+			DstPort:   int32(connKey.Dport),
+			Protocol:  "mysql_full",
+			Latency:   int64(resp.LatencyNs),
+			Tags: map[string]string{
+				"metric_type":      "mysql_transaction",
+				"command":          bpf.GetCommandName(cmd.Command),
+				"sql_type":         cmd.GetSQLType(),
+				"sql_preview":      cmd.GetSQL(),
+				"database":         auth.GetDatabase(),
+				"username":         auth.GetUsername(),
+				"server_version":   connValue.Handshake.GetServerVersion(),
+				"packet_type":      bpf.GetPacketTypeName(resp.PacketType),
+				"is_error":         fmt.Sprintf("%v", resp.IsErrorResponse()),
+				"error_code":       fmt.Sprintf("%d", resp.ErrorCode),
+				"error_message":    resp.GetErrorMessage(),
+				"affected_rows":    fmt.Sprintf("%d", resp.AffectedRows),
+				"last_insert_id":   fmt.Sprintf("%d", resp.LastInsertId),
+				"field_count":      fmt.Sprintf("%d", resp.FieldCount),
+				"row_count":        fmt.Sprintf("%d", resp.RowCount),
+				"warnings":         fmt.Sprintf("%d", resp.Warnings),
+				"latency_us":       fmt.Sprintf("%d", resp.LatencyNs/1000),
+				"pid":              fmt.Sprintf("%d", connKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+
+		// 从map中删除已处理的连接
+		c.mysqlFullObjs.MySQLConnectionsMap.Delete(connKey)
 	}
 
 	return metrics

@@ -126,6 +126,33 @@ ebpf:
     # 采集MySQL命令、SQL语句、错误码、影响行数等完整信息
     mysql_full: false
 
+  # 资源限制配置
+  # 用于控制Agent的资源使用，确保在峰值700Mbps、RPS1400下
+  # CPU≤1核、内存≤1G
+  resource_limit:
+    enabled: true             # 启用资源限制
+    max_cpu_core: 1.0         # 最大CPU核心数
+    max_memory_mb: 1024       # 最大内存使用(MB)
+    max_goroutines: 10000     # 最大协程数
+
+  # 熔断配置
+  # 资源超限时自动静默，保护系统稳定性
+  circuit_breaker:
+    enabled: true             # 启用熔断
+    max_failures: 3           # 最大连续失败次数
+    reset_timeout: 30         # 熔断恢复超时(秒)
+    silent_duration: 60       # 静默持续时间(秒)
+
+  # 性能优化配置
+  # 针对高负载场景(700Mbps, RPS1400)的性能优化
+  perf_optimizer:
+    enabled: true             # 启用性能优化
+    sample_rate: 1.0          # 采样率(0.0-1.0, 1.0表示全量)
+    batch_size: 100           # 批处理大小
+    max_events_per_sec: 10000 # 每秒最大事件数
+    high_load_mode: false     # 高负载模式(700Mbps, RPS1400)
+    enable_adaptive: true     # 启用自适应采样
+
 # 采集开关
 collect:
   cpu: true

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 
@@ -85,12 +86,12 @@ type TCPMetricsConfig struct {
 
 // HTTPMetricsConfig HTTP应用层指标配置
 type HTTPMetricsConfig struct {
-	Enabled          bool // 启用HTTP指标采集
-	SuccessRate      bool // 请求成功率
-	ResponseLatency  bool // 响应时延
-	ErrorRate        bool // 异常比例
-	RequestCount     bool // 请求数
-	ResponseCount    bool // 响应数
+	Enabled         bool // 启用HTTP指标采集
+	SuccessRate     bool // 请求成功率
+	ResponseLatency bool // 响应时延
+	ErrorRate       bool // 异常比例
+	RequestCount    bool // 请求数
+	ResponseCount   bool // 响应数
 }
 
 // BaseTrafficConfig 基础流量采集配置
@@ -102,19 +103,48 @@ type BaseTrafficConfig struct {
 
 // ProtocolParsingConfig 协议全字段解析配置
 type ProtocolParsingConfig struct {
-	Enabled     bool // 启用协议全字段解析
-	HTTPFull    bool // 启用HTTP全字段解析
-	DNSFull     bool // 启用DNS全字段解析
-	MySQLFull   bool // 启用MySQL全字段解析
+	Enabled   bool // 启用协议全字段解析
+	HTTPFull  bool // 启用HTTP全字段解析
+	DNSFull   bool // 启用DNS全字段解析
+	MySQLFull bool // 启用MySQL全字段解析
+}
+
+// ResourceLimitConfig 资源限制配置
+type ResourceLimitConfig struct {
+	Enabled       bool    // 启用资源限制
+	MaxCPUCore    float64 // 最大CPU核心数
+	MaxMemoryMB   float64 // 最大内存使用(MB)
+	MaxGoroutines int     // 最大协程数
+}
+
+// CircuitBreakerConfig 熔断配置
+type CircuitBreakerConfig struct {
+	Enabled        bool          // 启用熔断
+	MaxFailures    int           // 最大连续失败次数
+	ResetTimeout   time.Duration // 熔断恢复超时
+	SilentDuration time.Duration // 静默持续时间
+}
+
+// PerfOptimizerConfig 性能优化配置
+type PerfOptimizerConfig struct {
+	Enabled         bool    // 启用性能优化
+	SampleRate      float64 // 采样率(0.0-1.0)
+	BatchSize       int     // 批处理大小
+	MaxEventsPerSec int     // 每秒最大事件数
+	HighLoadMode    bool    // 高负载模式(700Mbps, RPS1400)
+	EnableAdaptive  bool    // 启用自适应采样
 }
 
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
-	Enabled           bool                  // 启用eBPF采集
-	TCPMetrics        TCPMetricsConfig      // TCP深度指标配置
-	HTTPMetrics       HTTPMetricsConfig     // HTTP应用层指标配置
-	BaseTraffic       BaseTrafficConfig     // 基础流量采集配置
-	ProtocolParsing   ProtocolParsingConfig // 协议全字段解析配置
+	Enabled         bool                  // 启用eBPF采集
+	TCPMetrics      TCPMetricsConfig      // TCP深度指标配置
+	HTTPMetrics     HTTPMetricsConfig     // HTTP应用层指标配置
+	BaseTraffic     BaseTrafficConfig     // 基础流量采集配置
+	ProtocolParsing ProtocolParsingConfig // 协议全字段解析配置
+	ResourceLimit   ResourceLimitConfig   // 资源限制配置
+	CircuitBreaker  CircuitBreakerConfig  // 熔断配置
+	PerfOptimizer   PerfOptimizerConfig   // 性能优化配置
 }
 
 type Config struct {
@@ -190,6 +220,26 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.protocol_parsing.http_full", false)
 	viper.SetDefault("ebpf.protocol_parsing.dns_full", false)
 	viper.SetDefault("ebpf.protocol_parsing.mysql_full", false)
+
+	// 资源限制配置默认值
+	viper.SetDefault("ebpf.resource_limit.enabled", true)
+	viper.SetDefault("ebpf.resource_limit.max_cpu_core", 1.0)
+	viper.SetDefault("ebpf.resource_limit.max_memory_mb", 1024)
+	viper.SetDefault("ebpf.resource_limit.max_goroutines", 10000)
+
+	// 熔断配置默认值
+	viper.SetDefault("ebpf.circuit_breaker.enabled", true)
+	viper.SetDefault("ebpf.circuit_breaker.max_failures", 3)
+	viper.SetDefault("ebpf.circuit_breaker.reset_timeout", 30)
+	viper.SetDefault("ebpf.circuit_breaker.silent_duration", 60)
+
+	// 性能优化配置默认值
+	viper.SetDefault("ebpf.perf_optimizer.enabled", true)
+	viper.SetDefault("ebpf.perf_optimizer.sample_rate", 1.0)
+	viper.SetDefault("ebpf.perf_optimizer.batch_size", 100)
+	viper.SetDefault("ebpf.perf_optimizer.max_events_per_sec", 10000)
+	viper.SetDefault("ebpf.perf_optimizer.high_load_mode", false)
+	viper.SetDefault("ebpf.perf_optimizer.enable_adaptive", true)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -276,17 +326,37 @@ func Load() (*Config, error) {
 				ResponseCount:   viper.GetBool("ebpf.http_metrics.response_count"),
 			},
 			BaseTraffic: BaseTrafficConfig{
-			Enabled:        viper.GetBool("ebpf.base_traffic.enabled"),
-			CollectBytes:   viper.GetBool("ebpf.base_traffic.collect_bytes"),
-			CollectPackets: viper.GetBool("ebpf.base_traffic.collect_packets"),
+				Enabled:        viper.GetBool("ebpf.base_traffic.enabled"),
+				CollectBytes:   viper.GetBool("ebpf.base_traffic.collect_bytes"),
+				CollectPackets: viper.GetBool("ebpf.base_traffic.collect_packets"),
+			},
+			ProtocolParsing: ProtocolParsingConfig{
+				Enabled:   viper.GetBool("ebpf.protocol_parsing.enabled"),
+				HTTPFull:  viper.GetBool("ebpf.protocol_parsing.http_full"),
+				DNSFull:   viper.GetBool("ebpf.protocol_parsing.dns_full"),
+				MySQLFull: viper.GetBool("ebpf.protocol_parsing.mysql_full"),
+			},
+			ResourceLimit: ResourceLimitConfig{
+				Enabled:       viper.GetBool("ebpf.resource_limit.enabled"),
+				MaxCPUCore:    viper.GetFloat64("ebpf.resource_limit.max_cpu_core"),
+				MaxMemoryMB:   viper.GetFloat64("ebpf.resource_limit.max_memory_mb"),
+				MaxGoroutines: viper.GetInt("ebpf.resource_limit.max_goroutines"),
+			},
+			CircuitBreaker: CircuitBreakerConfig{
+				Enabled:        viper.GetBool("ebpf.circuit_breaker.enabled"),
+				MaxFailures:    viper.GetInt("ebpf.circuit_breaker.max_failures"),
+				ResetTimeout:   viper.GetDuration("ebpf.circuit_breaker.reset_timeout") * time.Second,
+				SilentDuration: viper.GetDuration("ebpf.circuit_breaker.silent_duration") * time.Second,
+			},
+			PerfOptimizer: PerfOptimizerConfig{
+				Enabled:         viper.GetBool("ebpf.perf_optimizer.enabled"),
+				SampleRate:      viper.GetFloat64("ebpf.perf_optimizer.sample_rate"),
+				BatchSize:       viper.GetInt("ebpf.perf_optimizer.batch_size"),
+				MaxEventsPerSec: viper.GetInt("ebpf.perf_optimizer.max_events_per_sec"),
+				HighLoadMode:    viper.GetBool("ebpf.perf_optimizer.high_load_mode"),
+				EnableAdaptive:  viper.GetBool("ebpf.perf_optimizer.enable_adaptive"),
+			},
 		},
-		ProtocolParsing: ProtocolParsingConfig{
-			Enabled:   viper.GetBool("ebpf.protocol_parsing.enabled"),
-			HTTPFull:  viper.GetBool("ebpf.protocol_parsing.http_full"),
-			DNSFull:   viper.GetBool("ebpf.protocol_parsing.dns_full"),
-			MySQLFull: viper.GetBool("ebpf.protocol_parsing.mysql_full"),
-		},
-	},
 	}
 
 	if cfg.ProbeID == "" {
@@ -306,9 +376,9 @@ func (c *Config) Summary() string {
 	// API Key 脱敏处理
 	apiKeyMasked := maskSecret(c.APIKey)
 
-	return fmt.Sprintf("ProbeID=%s, EdgeAddr=%s, Interval=%ds, BatchSize=%d, APIKey=%s, CPU=%v, Mem=%v, Net=%v, MgmtIface=%s, EBPF=%v, HTTP=%v",
+	return fmt.Sprintf("ProbeID=%s, EdgeAddr=%s, Interval=%ds, BatchSize=%d, APIKey=%s, CPU=%v, Mem=%v, Net=%v, MgmtIface=%s, EBPF=%v, ResourceLimit=%v",
 		c.ProbeID, c.EdgeAddr, c.CollectInterval, c.BatchSize, apiKeyMasked,
-		c.Collect.CPU, c.Collect.Memory, c.Collect.Network, c.Network.MgmtIface, c.EBPF.Enabled, c.EBPF.HTTPMetrics.Enabled)
+		c.Collect.CPU, c.Collect.Memory, c.Collect.Network, c.Network.MgmtIface, c.EBPF.Enabled, c.EBPF.ResourceLimit.Enabled)
 }
 
 // maskSecret 对敏感字符串进行脱敏处理，委托给 pkg/utils.MaskSecret 统一实现

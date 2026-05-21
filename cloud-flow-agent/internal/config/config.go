@@ -159,6 +159,28 @@ type SQLAggregatorConfig struct {
 	ConnMax              uint64  // 连接数告警阈值
 }
 
+// StorageConfig 历史数据存储配置
+type StorageConfig struct {
+	Enabled             bool    // 启用历史数据存储
+	BaseDir             string  // 存储目录
+	RetentionDays       int     // 默认保留天数(默认60天)
+	ChunkSize           int     // 数据块大小(条数)
+	WriteBufferSize     int     // 写缓冲区大小
+	CompressionType     string  // 压缩类型: zstd, lz4, delta
+	EnableIndex         bool    // 启用索引
+	RetentionIntervalMin int    // 保留期检查间隔(分钟)
+	
+	// 自定义类型保留天数
+	MetricRetentionDays  int // 指标数据保留天数
+	LogRetentionDays     int // 日志数据保留天数
+	TraceRetentionDays   int // 追踪数据保留天数
+	EventRetentionDays   int // 事件数据保留天数
+	
+	// 性能目标
+	WriteRateMin         int // 写入速率目标(条/秒)
+	QueryLatencyMaxMs    int // 查询延迟目标(毫秒)
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -190,6 +212,7 @@ type Config struct {
 	Log             LogConfig
 	Network         NetworkConfig // 网络配置
 	EBPF            EBPFConfig    // eBPF配置
+	Storage         StorageConfig // 历史数据存储配置
 }
 
 func Load() (*Config, error) {
@@ -286,6 +309,22 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.sql_aggregator.latency_max_ms", 1000.0)
 	viper.SetDefault("ebpf.sql_aggregator.slow_query_max", 10)
 	viper.SetDefault("ebpf.sql_aggregator.conn_max", 100)
+
+	// 历史数据存储配置默认值
+	viper.SetDefault("storage.enabled", false)
+	viper.SetDefault("storage.base_dir", "/var/lib/cloud-flow-agent/storage")
+	viper.SetDefault("storage.retention_days", 60)        // 默认60天
+	viper.SetDefault("storage.chunk_size", 10000)
+	viper.SetDefault("storage.write_buffer_size", 50000)
+	viper.SetDefault("storage.compression_type", "zstd")   // 高压缩率
+	viper.SetDefault("storage.enable_index", true)
+	viper.SetDefault("storage.retention_interval_min", 60)
+	viper.SetDefault("storage.metric_retention_days", 60)
+	viper.SetDefault("storage.log_retention_days", 30)
+	viper.SetDefault("storage.trace_retention_days", 7)
+	viper.SetDefault("storage.event_retention_days", 90)
+	viper.SetDefault("storage.write_rate_min", 50000)      // 写入≥5万条/秒
+	viper.SetDefault("storage.query_latency_max_ms", 1000) // 1亿行查询≤1秒
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -422,6 +461,22 @@ func Load() (*Config, error) {
 				SlowQueryMax:         viper.GetUint64("ebpf.sql_aggregator.slow_query_max"),
 				ConnMax:              viper.GetUint64("ebpf.sql_aggregator.conn_max"),
 			},
+		},
+		Storage: StorageConfig{
+			Enabled:              viper.GetBool("storage.enabled"),
+			BaseDir:              viper.GetString("storage.base_dir"),
+			RetentionDays:        viper.GetInt("storage.retention_days"),
+			ChunkSize:            viper.GetInt("storage.chunk_size"),
+			WriteBufferSize:      viper.GetInt("storage.write_buffer_size"),
+			CompressionType:       viper.GetString("storage.compression_type"),
+			EnableIndex:           viper.GetBool("storage.enable_index"),
+			RetentionIntervalMin:  viper.GetInt("storage.retention_interval_min"),
+			MetricRetentionDays:   viper.GetInt("storage.metric_retention_days"),
+			LogRetentionDays:      viper.GetInt("storage.log_retention_days"),
+			TraceRetentionDays:    viper.GetInt("storage.trace_retention_days"),
+			EventRetentionDays:    viper.GetInt("storage.event_retention_days"),
+			WriteRateMin:          viper.GetInt("storage.write_rate_min"),
+			QueryLatencyMaxMs:     viper.GetInt("storage.query_latency_max_ms"),
 		},
 	}
 

@@ -179,6 +179,28 @@ ebpf:
     slow_query_max: 10       # 慢查询告警阈值
     conn_max: 100             # 连接数告警阈值
 
+# 历史数据存储配置
+# 支持: 历史数据默认存60天, 结构化压缩≥20:1, 日志≥6:1, 写入≥5万条/秒, 1亿行查询≤1秒
+storage:
+  enabled: false              # 启用历史数据存储（默认关闭）
+  base_dir: "/var/lib/cloud-flow-agent/storage"  # 存储目录
+  retention_days: 60          # 默认保留天数(60天)
+  chunk_size: 10000          # 数据块大小(条数)
+  write_buffer_size: 50000    # 写缓冲区大小
+  compression_type: "zstd"    # 压缩类型: zstd(高压缩率), lz4(高速度), delta(增量)
+  enable_index: true         # 启用索引加速查询
+  retention_interval_min: 60 # 保留期检查间隔(分钟)
+  
+  # 自定义数据类型保留天数
+  metric_retention_days: 60   # 指标数据: 60天
+  log_retention_days: 30      # 日志数据: 30天
+  trace_retention_days: 7     # 追踪数据: 7天
+  event_retention_days: 90    # 事件数据: 90天
+  
+  # 性能目标
+  write_rate_min: 50000       # 写入速率目标(≥5万条/秒)
+  query_latency_max_ms: 1000  # 查询延迟目标(1亿行≤1秒)
+
 # 采集开关
 collect:
   cpu: true

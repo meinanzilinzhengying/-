@@ -78,6 +78,30 @@ ebpf:
     # 统计TCP连接失败事件
     connection_fail: true
   
+  # HTTP应用层指标采集配置
+  http_metrics:
+    enabled: true             # 启用HTTP应用层指标采集
+    
+    # 请求成功率采集
+    # 统计HTTP 2xx响应占总响应的比例
+    success_rate: true
+    
+    # 响应时延采集
+    # 跟踪HTTP请求-响应时间，计算平均时延和最大时延
+    response_latency: true
+    
+    # 异常比例采集
+    # 统计HTTP 4xx/5xx响应占总响应的比例
+    error_rate: true
+    
+    # 请求数采集
+    # 保留：统计HTTP请求总数
+    request_count: true
+    
+    # 响应数采集
+    # 保留：统计HTTP响应总数
+    response_count: true
+  
   # 保留的基础流量采集（吞吐量、带宽占用）
   # 这些指标通过TC类型eBPF程序采集
   base_traffic:

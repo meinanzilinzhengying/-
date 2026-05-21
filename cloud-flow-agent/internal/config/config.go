@@ -75,12 +75,22 @@ type NetworkConfig struct {
 
 // TCPMetricsConfig TCP深度指标配置
 type TCPMetricsConfig struct {
-	Enabled          bool // 启用TCP深度指标
-	ConnectLatency   bool // TCP建连时延
-	Retransmit       bool // TCP重传率
-	ZeroWindow       bool // 零窗口事件
-	QueueOverflow    bool // 队列溢出
-	ConnectionFail   bool // 连接失败
+	Enabled        bool // 启用TCP深度指标
+	ConnectLatency bool // TCP建连时延
+	Retransmit     bool // TCP重传率
+	ZeroWindow     bool // 零窗口事件
+	QueueOverflow  bool // 队列溢出
+	ConnectionFail bool // 连接失败
+}
+
+// HTTPMetricsConfig HTTP应用层指标配置
+type HTTPMetricsConfig struct {
+	Enabled          bool // 启用HTTP指标采集
+	SuccessRate      bool // 请求成功率
+	ResponseLatency  bool // 响应时延
+	ErrorRate        bool // 异常比例
+	RequestCount     bool // 请求数
+	ResponseCount    bool // 响应数
 }
 
 // BaseTrafficConfig 基础流量采集配置
@@ -94,6 +104,7 @@ type BaseTrafficConfig struct {
 type EBPFConfig struct {
 	Enabled      bool              // 启用eBPF采集
 	TCPMetrics   TCPMetricsConfig  // TCP深度指标配置
+	HTTPMetrics  HTTPMetricsConfig // HTTP应用层指标配置
 	BaseTraffic  BaseTrafficConfig // 基础流量采集配置
 }
 
@@ -112,8 +123,8 @@ type Config struct {
 	TLS             TLSConfig
 	Collect         CollectConfig
 	Log             LogConfig
-	Network         NetworkConfig   // 网络配置
-	EBPF            EBPFConfig      // eBPF配置
+	Network         NetworkConfig // 网络配置
+	EBPF            EBPFConfig    // eBPF配置
 }
 
 func Load() (*Config, error) {
@@ -141,12 +152,12 @@ func Load() (*Config, error) {
 	viper.SetDefault("collect.disk", false)
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
-	
+
 	// 网络配置默认值
 	viper.SetDefault("network.mgmt_iface", "")
 	viper.SetDefault("network.local_addr", "")
 	viper.SetDefault("network.preferred_source_iface", "")
-	
+
 	// eBPF配置默认值
 	viper.SetDefault("ebpf.enabled", true)
 	viper.SetDefault("ebpf.tcp_metrics.enabled", true)
@@ -155,6 +166,12 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.tcp_metrics.zero_window", true)
 	viper.SetDefault("ebpf.tcp_metrics.queue_overflow", true)
 	viper.SetDefault("ebpf.tcp_metrics.connection_fail", true)
+	viper.SetDefault("ebpf.http_metrics.enabled", true)
+	viper.SetDefault("ebpf.http_metrics.success_rate", true)
+	viper.SetDefault("ebpf.http_metrics.response_latency", true)
+	viper.SetDefault("ebpf.http_metrics.error_rate", true)
+	viper.SetDefault("ebpf.http_metrics.request_count", true)
+	viper.SetDefault("ebpf.http_metrics.response_count", true)
 	viper.SetDefault("ebpf.base_traffic.enabled", true)
 	viper.SetDefault("ebpf.base_traffic.collect_bytes", true)
 	viper.SetDefault("ebpf.base_traffic.collect_packets", true)
@@ -235,6 +252,14 @@ func Load() (*Config, error) {
 				QueueOverflow:  viper.GetBool("ebpf.tcp_metrics.queue_overflow"),
 				ConnectionFail: viper.GetBool("ebpf.tcp_metrics.connection_fail"),
 			},
+			HTTPMetrics: HTTPMetricsConfig{
+				Enabled:         viper.GetBool("ebpf.http_metrics.enabled"),
+				SuccessRate:     viper.GetBool("ebpf.http_metrics.success_rate"),
+				ResponseLatency: viper.GetBool("ebpf.http_metrics.response_latency"),
+				ErrorRate:       viper.GetBool("ebpf.http_metrics.error_rate"),
+				RequestCount:    viper.GetBool("ebpf.http_metrics.request_count"),
+				ResponseCount:   viper.GetBool("ebpf.http_metrics.response_count"),
+			},
 			BaseTraffic: BaseTrafficConfig{
 				Enabled:        viper.GetBool("ebpf.base_traffic.enabled"),
 				CollectBytes:   viper.GetBool("ebpf.base_traffic.collect_bytes"),
@@ -259,10 +284,10 @@ func Load() (*Config, error) {
 func (c *Config) Summary() string {
 	// API Key 脱敏处理
 	apiKeyMasked := maskSecret(c.APIKey)
-	
-	return fmt.Sprintf("ProbeID=%s, EdgeAddr=%s, Interval=%ds, BatchSize=%d, APIKey=%s, CPU=%v, Mem=%v, Net=%v, MgmtIface=%s, EBPF=%v",
+
+	return fmt.Sprintf("ProbeID=%s, EdgeAddr=%s, Interval=%ds, BatchSize=%d, APIKey=%s, CPU=%v, Mem=%v, Net=%v, MgmtIface=%s, EBPF=%v, HTTP=%v",
 		c.ProbeID, c.EdgeAddr, c.CollectInterval, c.BatchSize, apiKeyMasked,
-		c.Collect.CPU, c.Collect.Memory, c.Collect.Network, c.Network.MgmtIface, c.EBPF.Enabled)
+		c.Collect.CPU, c.Collect.Memory, c.Collect.Network, c.Network.MgmtIface, c.EBPF.Enabled, c.EBPF.HTTPMetrics.Enabled)
 }
 
 // maskSecret 对敏感字符串进行脱敏处理，委托给 pkg/utils.MaskSecret 统一实现

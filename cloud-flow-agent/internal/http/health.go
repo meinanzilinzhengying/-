@@ -45,13 +45,14 @@ func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector,
 
 // HealthResponse 健康检查响应
 type HealthResponse struct {
-	Status            string            `json:"status"`
-	Timestamp         time.Time         `json:"timestamp"`
-	Uptime            string            `json:"uptime"`
-	EdgeConnected     bool              `json:"edge_connected"`
-	EBPFAvailable     bool              `json:"ebpf_available"`
-	TCPMetricsEnabled bool              `json:"tcp_metrics_enabled"`
-	Version           string            `json:"version"`
+	Status             string            `json:"status"`
+	Timestamp          time.Time         `json:"timestamp"`
+	Uptime             string            `json:"uptime"`
+	EdgeConnected      bool              `json:"edge_connected"`
+	EBPFAvailable      bool              `json:"ebpf_available"`
+	TCPMetricsEnabled  bool              `json:"tcp_metrics_enabled"`
+	HTTPMetricsEnabled bool              `json:"http_metrics_enabled"`
+	Version            string            `json:"version"`
 }
 
 // HandleHealth 处理健康检查请求
@@ -75,15 +76,22 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		tcpMetricsEnabled = h.ebpfCollector.IsTCPMetricsAvailable()
 	}
 
+	// 检查HTTP指标采集状态
+	httpMetricsEnabled := false
+	if h.ebpfCollector != nil {
+		httpMetricsEnabled = h.ebpfCollector.IsHTTPMetricsAvailable()
+	}
+
 	// 构建健康检查响应
 	response := HealthResponse{
-		Status:            "healthy",
-		Timestamp:         time.Now(),
-		Uptime:            time.Since(h.startTime).String(),
-		EdgeConnected:     edgeConnected,
-		EBPFAvailable:     ebpfAvailable,
-		TCPMetricsEnabled: tcpMetricsEnabled,
-		Version:           Version,
+		Status:             "healthy",
+		Timestamp:          time.Now(),
+		Uptime:             time.Since(h.startTime).String(),
+		EdgeConnected:      edgeConnected,
+		EBPFAvailable:      ebpfAvailable,
+		TCPMetricsEnabled:  tcpMetricsEnabled,
+		HTTPMetricsEnabled: httpMetricsEnabled,
+		Version:            Version,
 	}
 
 	// 设置响应头

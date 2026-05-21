@@ -27,26 +27,31 @@ import (
 
 // Collector eBPF 采集器
 type Collector struct {
-	objs          *bpf.Objects
-	tcpMetricsObjs *bpf.TCPMetricsObjects
-	links         []link.Link
-	tcpLinks      []link.Link
-	stopCh        chan struct{}
-	collectCh     chan []*edge.MetricData
-	enableTCPMetrics bool
-	mgmtIface     string // 管理网卡接口
+	objs            *bpf.Objects
+	tcpMetricsObjs  *bpf.TCPMetricsObjects
+	httpMetricsObjs *bpf.HTTPMetricsObjects
+	links           []link.Link
+	tcpLinks        []link.Link
+	httpLinks       []link.Link
+	stopCh          chan struct{}
+	collectCh       chan []*edge.MetricData
+	enableTCPMetrics  bool
+	enableHTTPMetrics bool
+	mgmtIface       string // 管理网卡接口
 }
 
 // CollectorOptions 采集器配置选项
 type CollectorOptions struct {
-	EnableTCPMetrics bool   // 启用TCP深度指标采集
+	EnableTCPMetrics  bool   // 启用TCP深度指标采集
+	EnableHTTPMetrics bool  // 启用HTTP请求指标采集
 	MgmtIface        string // 管理网卡接口名称
 }
 
 // New 创建 eBPF 采集器
 func New() (*Collector, error) {
 	return NewWithOptions(&CollectorOptions{
-		EnableTCPMetrics: true,
+		EnableTCPMetrics:  true,
+		EnableHTTPMetrics: true,
 	})
 }
 
@@ -54,7 +59,8 @@ func New() (*Collector, error) {
 func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 	if opts == nil {
 		opts = &CollectorOptions{
-			EnableTCPMetrics: true,
+			EnableTCPMetrics:  true,
+			EnableHTTPMetrics: true,
 		}
 	}
 
@@ -78,7 +84,8 @@ func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 		links:            links,
 		stopCh:           make(chan struct{}),
 		collectCh:        make(chan []*edge.MetricData, 10),
-		enableTCPMetrics: opts.EnableTCPMetrics,
+		enableTCPMetrics:  opts.EnableTCPMetrics,
+		enableHTTPMetrics: opts.EnableHTTPMetrics,
 		mgmtIface:        opts.MgmtIface,
 	}
 
@@ -94,6 +101,18 @@ func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 		}
 	}
 
+	// 加载HTTP指标eBPF程序
+	if opts.EnableHTTPMetrics {
+		httpObjs, httpLinks, err := loadHTTPMetricsObjects()
+		if err != nil {
+			log.Printf("警告: 加载HTTP指标eBPF程序失败: %v，将继续使用基础流量采集", err)
+		} else {
+			collector.httpMetricsObjs = httpObjs
+			collector.httpLinks = httpLinks
+			log.Printf("成功加载HTTP指标eBPF程序")
+		}
+	}
+
 	// 降权为普通用户运行
 	if err := dropPrivileges(); err != nil {
 		log.Printf("警告: 无法降权: %v，将继续以当前权限运行", err)
@@ -105,7 +124,7 @@ func NewWithOptions(opts *CollectorOptions) (*Collector, error) {
 // loadTCPMetricsObjects 加载TCP指标eBPF对象
 func loadTCPMetricsObjects() (*bpf.TCPMetricsObjects, []link.Link, error) {
 	opts := &ebpf.CollectionOptions{}
-	
+
 	tcpObjs, err := bpf.LoadTCPMetrics(opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("加载TCP指标eBPF对象失败: %w", err)
@@ -118,6 +137,24 @@ func loadTCPMetricsObjects() (*bpf.TCPMetricsObjects, []link.Link, error) {
 	}
 
 	return tcpObjs, tcpLinks, nil
+}
+
+// loadHTTPMetricsObjects 加载HTTP指标eBPF对象
+func loadHTTPMetricsObjects() (*bpf.HTTPMetricsObjects, []link.Link, error) {
+	opts := &ebpf.CollectionOptions{}
+
+	httpObjs, err := bpf.LoadHTTPMetrics(opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("加载HTTP指标eBPF对象失败: %w", err)
+	}
+
+	httpLinks, err := bpf.AttachHTTPMetricsProbes(httpObjs)
+	if err != nil {
+		httpObjs.Close()
+		return nil, nil, fmt.Errorf("附加HTTP指标kprobe失败: %w", err)
+	}
+
+	return httpObjs, httpLinks, nil
 }
 
 // dropPrivileges 降权为普通用户
@@ -195,6 +232,11 @@ func (c *Collector) IsTCPMetricsAvailable() bool {
 	return c != nil && c.tcpMetricsObjs != nil
 }
 
+// IsHTTPMetricsAvailable 检查HTTP指标采集是否可用
+func (c *Collector) IsHTTPMetricsAvailable() bool {
+	return c != nil && c.httpMetricsObjs != nil
+}
+
 // Start 启动采集器
 func (c *Collector) Start() {
 	go c.collectLoop()
@@ -209,8 +251,14 @@ func (c *Collector) Stop() {
 	for _, l := range c.tcpLinks {
 		l.Close()
 	}
+	for _, l := range c.httpLinks {
+		l.Close()
+	}
 	if c.tcpMetricsObjs != nil {
 		c.tcpMetricsObjs.Close()
+	}
+	if c.httpMetricsObjs != nil {
+		c.httpMetricsObjs.Close()
 	}
 	c.objs.Close()
 }
@@ -284,6 +332,12 @@ func (c *Collector) collectData() []*edge.MetricData {
 		metrics = append(metrics, tcpMetrics...)
 	}
 
+	// 采集HTTP请求指标
+	if c.httpMetricsObjs != nil {
+		httpMetrics := c.collectHTTPMetrics(now)
+		metrics = append(metrics, httpMetrics...)
+	}
+
 	return metrics
 }
 
@@ -328,11 +382,11 @@ func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
 				Protocol:  "tcp",
 				Latency:   int64(latencyValue.LatencyNs),
 				Tags: map[string]string{
-					"metric_type":      "tcp_connect_latency",
-					"latency_us":       fmt.Sprintf("%d", latencyValue.LatencyNs/1000),
-					"syn_sent_ns":      fmt.Sprintf("%d", latencyValue.SynSentNs),
+					"metric_type":    "tcp_connect_latency",
+					"latency_us":      fmt.Sprintf("%d", latencyValue.LatencyNs/1000),
+					"syn_sent_ns":     fmt.Sprintf("%d", latencyValue.SynSentNs),
 					"established_ns":   fmt.Sprintf("%d", latencyValue.EstablishedNs),
-					"pid":              fmt.Sprintf("%d", latencyKey.Pid),
+					"pid":             fmt.Sprintf("%d", latencyKey.Pid),
 				},
 			}
 			metrics = append(metrics, metric)
@@ -352,14 +406,14 @@ func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
 			DstPort:   int32(statsKey.Dport),
 			Protocol:  "tcp",
 			Tags: map[string]string{
-				"metric_type":          "tcp_connection_stats",
-				"retrans_count":        fmt.Sprintf("%d", statsValue.RetransCount),
-				"zero_window_count":    fmt.Sprintf("%d", statsValue.ZeroWindowCount),
-				"queue_overflow_count": fmt.Sprintf("%d", statsValue.QueueOverflowCount),
-				"conn_fail_count":      fmt.Sprintf("%d", statsValue.ConnFailCount),
-				"bytes_sent":           fmt.Sprintf("%d", statsValue.BytesSent),
-				"bytes_recv":           fmt.Sprintf("%d", statsValue.BytesRecv),
-				"pid":                  fmt.Sprintf("%d", statsKey.Pid),
+				"metric_type":           "tcp_connection_stats",
+				"retrans_count":         fmt.Sprintf("%d", statsValue.RetransCount),
+				"zero_window_count":     fmt.Sprintf("%d", statsValue.ZeroWindowCount),
+				"queue_overflow_count":  fmt.Sprintf("%d", statsValue.QueueOverflowCount),
+				"conn_fail_count":       fmt.Sprintf("%d", statsValue.ConnFailCount),
+				"bytes_sent":            fmt.Sprintf("%d", statsValue.BytesSent),
+				"bytes_recv":            fmt.Sprintf("%d", statsValue.BytesRecv),
+				"pid":                   fmt.Sprintf("%d", statsKey.Pid),
 			},
 		}
 		metrics = append(metrics, metric)
@@ -378,9 +432,9 @@ func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
 			DstPort:   int32(zwKey.Dport),
 			Protocol:  "tcp",
 			Tags: map[string]string{
-				"metric_type":      "zero_window_event",
-				"event_count":      fmt.Sprintf("%d", zwCount),
-				"pid":              fmt.Sprintf("%d", zwKey.Pid),
+				"metric_type": "zero_window_event",
+				"event_count":  fmt.Sprintf("%d", zwCount),
+				"pid":          fmt.Sprintf("%d", zwKey.Pid),
 			},
 		}
 		metrics = append(metrics, metric)
@@ -396,9 +450,9 @@ func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
 			DstPort:   int32(qoPort),
 			Protocol:  "tcp",
 			Tags: map[string]string{
-				"metric_type":      "queue_overflow_event",
-				"listen_port":      fmt.Sprintf("%d", qoPort),
-				"overflow_count":   fmt.Sprintf("%d", qoCount),
+				"metric_type":    "queue_overflow_event",
+				"listen_port":    fmt.Sprintf("%d", qoPort),
+				"overflow_count":  fmt.Sprintf("%d", qoCount),
 			},
 		}
 		metrics = append(metrics, metric)
@@ -417,9 +471,117 @@ func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
 			DstPort:   int32(cfKey.Dport),
 			Protocol:  "tcp",
 			Tags: map[string]string{
-				"metric_type":      "connection_fail_event",
-				"fail_count":       fmt.Sprintf("%d", cfCount),
-				"pid":              fmt.Sprintf("%d", cfKey.Pid),
+				"metric_type": "connection_fail_event",
+				"fail_count":  fmt.Sprintf("%d", cfCount),
+				"pid":         fmt.Sprintf("%d", cfKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	return metrics
+}
+
+// collectHTTPMetrics 采集HTTP请求指标
+func (c *Collector) collectHTTPMetrics(now int64) []*edge.MetricData {
+	var metrics []*edge.MetricData
+
+	// 1. 采集全局HTTP指标(请求成功率、响应时延、异常比例)
+	globalMetrics, err := c.httpMetricsObjs.GetGlobalHTTPMetrics()
+	if err == nil && globalMetrics != nil {
+		// 计算成功率
+		successRate := float64(0)
+		if globalMetrics.TotalResponses > 0 {
+			successRate = float64(globalMetrics.SuccessResponses) / float64(globalMetrics.TotalResponses) * 100
+		}
+
+		// 计算异常比例
+		errorRate := float64(0)
+		if globalMetrics.TotalResponses > 0 {
+			errorRate = float64(globalMetrics.ErrorResponses) / float64(globalMetrics.TotalResponses) * 100
+		}
+
+		metric := &edge.MetricData{
+			Timestamp: now,
+			Protocol:  "http",
+			Tags: map[string]string{
+				"metric_type":            "global_http_metrics",
+				"total_requests":          fmt.Sprintf("%d", globalMetrics.TotalRequests),
+				"total_responses":        fmt.Sprintf("%d", globalMetrics.TotalResponses),
+				"success_count":          fmt.Sprintf("%d", globalMetrics.SuccessResponses),
+				"error_count":            fmt.Sprintf("%d", globalMetrics.ErrorResponses),
+				"success_rate":           fmt.Sprintf("%.2f", successRate),
+				"error_rate":             fmt.Sprintf("%.2f", errorRate),
+				"avg_latency_ns":         fmt.Sprintf("%d", globalMetrics.AvgLatencyNs),
+				"avg_latency_us":         fmt.Sprintf("%.2f", float64(globalMetrics.AvgLatencyNs)/1000),
+				"max_latency_ns":         fmt.Sprintf("%d", globalMetrics.MaxLatencyNs),
+				"max_latency_us":         fmt.Sprintf("%.2f", float64(globalMetrics.MaxLatencyNs)/1000),
+				"min_latency_ns":         fmt.Sprintf("%d", globalMetrics.MinLatencyNs),
+				"min_latency_us":         fmt.Sprintf("%.2f", float64(globalMetrics.MinLatencyNs)/1000),
+				"latency_samples":        fmt.Sprintf("%d", globalMetrics.LatencySamples),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 2. 采集HTTP统计指标(按连接维度)
+	statsIter := c.httpMetricsObjs.IterateHttpStats()
+	var statsKey bpf.HttpFlowKey
+	var statsValue bpf.HttpStats
+	for statsIter.Next(&statsKey, &statsValue) {
+		// 计算成功率
+		successRate := float64(0)
+		if statsValue.ResponseCount > 0 {
+			successRate = float64(statsValue.SuccessCount) / float64(statsValue.ResponseCount) * 100
+		}
+
+		// 计算异常比例
+		errorRate := float64(0)
+		if statsValue.ResponseCount > 0 {
+			errorRate = float64(statsValue.ErrorCount) / float64(statsValue.ResponseCount) * 100
+		}
+
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(statsKey.Saddr).String(),
+			DstIp:     intToIP(statsKey.Daddr).String(),
+			SrcPort:   int32(statsKey.Sport),
+			DstPort:   int32(statsKey.Dport),
+			Protocol:  "http",
+			Tags: map[string]string{
+				"metric_type":   "http_connection_stats",
+				"request_count":  fmt.Sprintf("%d", statsValue.RequestCount),
+				"response_count": fmt.Sprintf("%d", statsValue.ResponseCount),
+				"success_count":  fmt.Sprintf("%d", statsValue.SuccessCount),
+				"error_count":    fmt.Sprintf("%d", statsValue.ErrorCount),
+				"success_rate":   fmt.Sprintf("%.2f", successRate),
+				"error_rate":     fmt.Sprintf("%.2f", errorRate),
+				"avg_latency_ns": fmt.Sprintf("%d", statsValue.AvgLatencyNs),
+				"avg_latency_us": fmt.Sprintf("%.2f", float64(statsValue.AvgLatencyNs)/1000),
+				"max_latency_ns": fmt.Sprintf("%d", statsValue.MaxLatencyNs),
+				"max_latency_us": fmt.Sprintf("%.2f", float64(statsValue.MaxLatencyNs)/1000),
+				"min_latency_ns": fmt.Sprintf("%d", statsValue.MinLatencyNs),
+				"min_latency_us": fmt.Sprintf("%.2f", float64(statsValue.MinLatencyNs)/1000),
+				"total_request_bytes":  fmt.Sprintf("%d", statsValue.TotalRequestBytes),
+				"total_response_bytes": fmt.Sprintf("%d", statsValue.TotalResponseBytes),
+				"pid":           fmt.Sprintf("%d", statsKey.Pid),
+			},
+		}
+		metrics = append(metrics, metric)
+	}
+
+	// 3. 采集异常状态码统计
+	errorIter := c.httpMetricsObjs.IterateErrorStats()
+	var statusCode uint16
+	var errorCount uint64
+	for errorIter.Next(&statusCode, &errorCount) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			Protocol:  "http",
+			Tags: map[string]string{
+				"metric_type": "http_error_stats",
+				"status_code": fmt.Sprintf("%d", statusCode),
+				"error_count": fmt.Sprintf("%d", errorCount),
 			},
 		}
 		metrics = append(metrics, metric)
@@ -486,7 +648,7 @@ func parseNetworkData(key, value []byte) *NetworkFlow {
 	// 解析目标 IP、端口、协议和统计数据
 	dstIP = net.IP(value[:4])
 	dstPort = binary.BigEndian.Uint16(value[4:6])
-	
+
 	// 解析协议
 	protocol = "unknown"
 	switch value[6] {
@@ -543,9 +705,9 @@ func loadBPFObjects() (*bpf.Objects, error) {
 	objs := &bpf.Objects{}
 	if err := objs.Load(nil); err != nil {
 		// 检查是否是内核兼容性问题
-		if strings.Contains(err.Error(), "invalid bpf program") || 
-		   strings.Contains(err.Error(), "kernel version") ||
-		   strings.Contains(err.Error(), "BTF") {
+		if strings.Contains(err.Error(), "invalid bpf program") ||
+			strings.Contains(err.Error(), "kernel version") ||
+			strings.Contains(err.Error(), "BTF") {
 			return nil, fmt.Errorf("eBPF 程序与当前内核不兼容: %w\n"+
 				"请在目标系统上运行 'make ebpf' 重新编译 BPF 程序，确保与当前内核版本匹配", err)
 		}
@@ -657,6 +819,14 @@ func (c *Collector) GetMap(name string) *ebpf.Map {
 		if c.tcpMetricsObjs != nil {
 			return c.tcpMetricsObjs.GlobalTcpMetricsMap
 		}
+	case "http_stats_map":
+		if c.httpMetricsObjs != nil {
+			return c.httpMetricsObjs.HttpStatsMap
+		}
+	case "global_http_metrics_map":
+		if c.httpMetricsObjs != nil {
+			return c.httpMetricsObjs.GlobalHttpMetricsMap
+		}
 	}
 	return nil
 }
@@ -664,4 +834,9 @@ func (c *Collector) GetMap(name string) *ebpf.Map {
 // GetTCPMetrics 获取TCP指标采集器对象
 func (c *Collector) GetTCPMetrics() *bpf.TCPMetricsObjects {
 	return c.tcpMetricsObjs
+}
+
+// GetHTTPMetrics 获取HTTP指标采集器对象
+func (c *Collector) GetHTTPMetrics() *bpf.HTTPMetricsObjects {
+	return c.httpMetricsObjs
 }

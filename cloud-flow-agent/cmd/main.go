@@ -123,8 +123,9 @@ func main() {
 	var ebpfCollector *ebpfcollector.Collector
 	if cfg.EBPF.Enabled {
 		ebpfOpts := &ebpfcollector.CollectorOptions{
-			EnableTCPMetrics: cfg.EBPF.TCPMetrics.Enabled,
-			MgmtIface:        cfg.Network.MgmtIface,
+			EnableTCPMetrics:  cfg.EBPF.TCPMetrics.Enabled,
+			EnableHTTPMetrics: cfg.EBPF.HTTPMetrics.Enabled,
+			MgmtIface:         cfg.Network.MgmtIface,
 		}
 		
 		ebpfCollector, err = ebpfcollector.NewWithOptions(ebpfOpts)
@@ -134,6 +135,9 @@ func main() {
 			log.Info("EBPF 采集器初始化成功，开始采集网络流量")
 			if ebpfCollector.IsTCPMetricsAvailable() {
 				log.Info("TCP深度指标采集已启用: 建连时延、重传率、零窗口、队列溢出、连接失败")
+			}
+			if ebpfCollector.IsHTTPMetricsAvailable() {
+				log.Info("HTTP应用层指标采集已启用: 请求成功率、响应时延、异常比例、请求数、响应数")
 			}
 			ebpfCollector.Start()
 			defer ebpfCollector.Stop()

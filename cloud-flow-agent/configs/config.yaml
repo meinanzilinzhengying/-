@@ -304,6 +304,22 @@ cmdb:
   timeout: "30s"              # 请求超时
   batch_size: 100             # 批量查询大小
 
+# 追踪和火焰图配置
+# TraceID双向关联；支持火焰图集成
+trace:
+  enabled: false              # 启用追踪（默认关闭）
+  sample_rate: 1.0            # 采样率(0.0-1.0, 1.0=全量)
+  max_traces: 10000           # 最大存储追踪数
+  max_spans_per_trace: 1000   # 每追踪最大Span数
+  retention_time: "24h"       # 追踪保留时间
+  enable_correlation: true    # 启用关联(追踪↔指标/日志/告警)
+  flamegraph_enabled: false   # 启用火焰图（默认关闭）
+  flame_sample_freq: 99       # 火焰图采样频率(Hz)
+  flame_max_depth: 127        # 火焰图最大栈深度
+  flame_duration_sec: 30      # 火焰图采集时长(秒)
+  flame_output_dir: "/var/log/cloud-flow-agent/flamegraph"  # 火焰图输出目录
+  flame_max_stored: 100       # 最大存储火焰图数
+
 # 采集开关
 collect:
   cpu: true

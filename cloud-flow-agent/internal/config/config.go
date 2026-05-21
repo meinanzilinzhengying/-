@@ -291,6 +291,22 @@ type CMDBConfig struct {
 	BatchSize     int           `yaml:"batch_size" json:"batch_size"`
 }
 
+// TraceConfig 追踪和火焰图配置
+type TraceConfig struct {
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	SampleRate        float64       `yaml:"sample_rate" json:"sample_rate"`
+	MaxTraces         int           `yaml:"max_traces" json:"max_traces"`
+	MaxSpansPerTrace  int           `yaml:"max_spans_per_trace" json:"max_spans_per_trace"`
+	RetentionTime     time.Duration `yaml:"retention_time" json:"retention_time"`
+	EnableCorrelation bool          `yaml:"enable_correlation" json:"enable_correlation"`
+	FlameGraphEnabled bool          `yaml:"flamegraph_enabled" json:"flamegraph_enabled"`
+	FlameSampleFreq   int           `yaml:"flame_sample_freq" json:"flame_sample_freq"`
+	FlameMaxDepth     int           `yaml:"flame_max_depth" json:"flame_max_depth"`
+	FlameDurationSec  int           `yaml:"flame_duration_sec" json:"flame_duration_sec"`
+	FlameOutputDir    string        `yaml:"flame_output_dir" json:"flame_output_dir"`
+	FlameMaxStored    int           `yaml:"flame_max_stored" json:"flame_max_stored"`
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -329,6 +345,7 @@ type Config struct {
 	Dashboard       DashboardConfig // 仪表盘配置
 	Metrics         MetricsConfig   // 指标模块配置
 	CMDB            CMDBConfig      // CMDB对接配置
+	Trace           TraceConfig     // 追踪和火焰图配置
 }
 
 func Load() (*Config, error) {
@@ -516,6 +533,20 @@ func Load() (*Config, error) {
 	viper.SetDefault("cmdb.conflict_policy", "cmdb_wins")
 	viper.SetDefault("cmdb.timeout", "30s")
 	viper.SetDefault("cmdb.batch_size", 100)
+
+	// 追踪和火焰图配置默认值
+	viper.SetDefault("trace.enabled", false)
+	viper.SetDefault("trace.sample_rate", 1.0)
+	viper.SetDefault("trace.max_traces", 10000)
+	viper.SetDefault("trace.max_spans_per_trace", 1000)
+	viper.SetDefault("trace.retention_time", "24h")
+	viper.SetDefault("trace.enable_correlation", true)
+	viper.SetDefault("trace.flamegraph_enabled", false)
+	viper.SetDefault("trace.flame_sample_freq", 99)
+	viper.SetDefault("trace.flame_max_depth", 127)
+	viper.SetDefault("trace.flame_duration_sec", 30)
+	viper.SetDefault("trace.flame_output_dir", "/var/log/cloud-flow-agent/flamegraph")
+	viper.SetDefault("trace.flame_max_stored", 100)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -749,6 +780,20 @@ func Load() (*Config, error) {
 		ConflictPolicy: viper.GetString("cmdb.conflict_policy"),
 		Timeout:        viper.GetDuration("cmdb.timeout"),
 		BatchSize:      viper.GetInt("cmdb.batch_size"),
+	},
+	Trace: TraceConfig{
+		Enabled:           viper.GetBool("trace.enabled"),
+		SampleRate:        viper.GetFloat64("trace.sample_rate"),
+		MaxTraces:         viper.GetInt("trace.max_traces"),
+		MaxSpansPerTrace:  viper.GetInt("trace.max_spans_per_trace"),
+		RetentionTime:     viper.GetDuration("trace.retention_time"),
+		EnableCorrelation: viper.GetBool("trace.enable_correlation"),
+		FlameGraphEnabled: viper.GetBool("trace.flamegraph_enabled"),
+		FlameSampleFreq:   viper.GetInt("trace.flame_sample_freq"),
+		FlameMaxDepth:     viper.GetInt("trace.flame_max_depth"),
+		FlameDurationSec:  viper.GetInt("trace.flame_duration_sec"),
+		FlameOutputDir:    viper.GetString("trace.flame_output_dir"),
+		FlameMaxStored:    viper.GetInt("trace.flame_max_stored"),
 	},
 }
 

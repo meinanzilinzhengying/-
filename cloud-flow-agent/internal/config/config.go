@@ -270,6 +270,27 @@ type MetricsConfig struct {
 	RetentionTime     time.Duration `yaml:"retention_time" json:"retention_time"`
 }
 
+// CMDBConfig CMDB对接配置
+type CMDBConfig struct {
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	Type          string        `yaml:"type" json:"type"`                   // 数据源类型: http/api
+	Endpoint      string        `yaml:"endpoint" json:"endpoint"`           // CMDB服务地址
+	AuthType      string        `yaml:"auth_type" json:"auth_type"`         // 认证方式: none/bearer/token/apikey/basic
+	AuthToken     string        `yaml:"auth_token" json:"auth_token"`
+	APIKey        string        `yaml:"api_key" json:"api_key"`
+	Username      string        `yaml:"username" json:"username"`
+	Password      string        `yaml:"password" json:"password"`
+	SyncInterval  time.Duration `yaml:"sync_interval" json:"sync_interval"`
+	FullSyncStart bool          `yaml:"full_sync_on_start" json:"full_sync_on_start"`
+	Incremental   bool          `yaml:"incremental_sync" json:"incremental_sync"`
+	LabelSync     bool          `yaml:"label_sync" json:"label_sync"`
+	ConfigSync    bool          `yaml:"config_sync" json:"config_sync"`
+	RelationSync  bool          `yaml:"relation_sync" json:"relation_sync"`
+	ConflictPolicy string       `yaml:"conflict_policy" json:"conflict_policy"` // cmdb_wins/agent_wins/merge
+	Timeout       time.Duration `yaml:"timeout" json:"timeout"`
+	BatchSize     int           `yaml:"batch_size" json:"batch_size"`
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -307,6 +328,7 @@ type Config struct {
 	Tenant          TenantConfig   // 租户配置
 	Dashboard       DashboardConfig // 仪表盘配置
 	Metrics         MetricsConfig   // 指标模块配置
+	CMDB            CMDBConfig      // CMDB对接配置
 }
 
 func Load() (*Config, error) {
@@ -479,6 +501,21 @@ func Load() (*Config, error) {
 	viper.SetDefault("metrics.sql_enabled", true)
 	viper.SetDefault("metrics.max_data_points", 1440)
 	viper.SetDefault("metrics.retention_time", "24h")
+
+	// CMDB对接配置默认值
+	viper.SetDefault("cmdb.enabled", false)
+	viper.SetDefault("cmdb.type", "http")
+	viper.SetDefault("cmdb.endpoint", "")
+	viper.SetDefault("cmdb.auth_type", "none")
+	viper.SetDefault("cmdb.sync_interval", "5m")
+	viper.SetDefault("cmdb.full_sync_on_start", true)
+	viper.SetDefault("cmdb.incremental_sync", true)
+	viper.SetDefault("cmdb.label_sync", true)
+	viper.SetDefault("cmdb.config_sync", true)
+	viper.SetDefault("cmdb.relation_sync", true)
+	viper.SetDefault("cmdb.conflict_policy", "cmdb_wins")
+	viper.SetDefault("cmdb.timeout", "30s")
+	viper.SetDefault("cmdb.batch_size", 100)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -693,6 +730,25 @@ func Load() (*Config, error) {
 		SQLEnabled:    viper.GetBool("metrics.sql_enabled"),
 		MaxDataPoints: viper.GetInt("metrics.max_data_points"),
 		RetentionTime: viper.GetDuration("metrics.retention_time"),
+	},
+	CMDB: CMDBConfig{
+		Enabled:        viper.GetBool("cmdb.enabled"),
+		Type:           viper.GetString("cmdb.type"),
+		Endpoint:       viper.GetString("cmdb.endpoint"),
+		AuthType:       viper.GetString("cmdb.auth_type"),
+		AuthToken:      viper.GetString("cmdb.auth_token"),
+		APIKey:         viper.GetString("cmdb.api_key"),
+		Username:       viper.GetString("cmdb.username"),
+		Password:       viper.GetString("cmdb.password"),
+		SyncInterval:   viper.GetDuration("cmdb.sync_interval"),
+		FullSyncStart:  viper.GetBool("cmdb.full_sync_on_start"),
+		Incremental:    viper.GetBool("cmdb.incremental_sync"),
+		LabelSync:      viper.GetBool("cmdb.label_sync"),
+		ConfigSync:     viper.GetBool("cmdb.config_sync"),
+		RelationSync:   viper.GetBool("cmdb.relation_sync"),
+		ConflictPolicy: viper.GetString("cmdb.conflict_policy"),
+		Timeout:        viper.GetDuration("cmdb.timeout"),
+		BatchSize:      viper.GetInt("cmdb.batch_size"),
 	},
 }
 

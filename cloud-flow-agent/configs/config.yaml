@@ -283,6 +283,27 @@ metrics:
   max_data_points: 1440       # 最大数据点数(默认24小时，1分钟间隔)
   retention_time: "24h"       # 数据保留时间
 
+# CMDB对接配置
+# 对接CMDB，同步配置、业务属性标签
+cmdb:
+  enabled: false              # 启用CMDB对接（默认关闭）
+  type: "http"                # 数据源类型: http/api
+  endpoint: ""                # CMDB服务地址，如 http://cmdb.internal:8080
+  auth_type: "none"           # 认证方式: none/bearer/token/apikey/basic
+  auth_token: ""              # Bearer/Token认证令牌
+  api_key: ""                 # API Key认证
+  username: ""                # Basic认证用户名
+  password: ""                # Basic认证密码
+  sync_interval: "5m"         # 同步间隔
+  full_sync_on_start: true    # 启动时执行全量同步
+  incremental_sync: true      # 启用增量同步
+  label_sync: true            # 启用标签同步
+  config_sync: true           # 启用配置同步
+  relation_sync: true         # 启用关联关系同步
+  conflict_policy: "cmdb_wins" # 冲突策略: cmdb_wins/agent_wins/merge
+  timeout: "30s"              # 请求超时
+  batch_size: 100             # 批量查询大小
+
 # 采集开关
 collect:
   cpu: true

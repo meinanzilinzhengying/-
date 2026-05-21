@@ -260,6 +260,16 @@ type DashboardConfig struct {
 	MaxAssetsPerPage  int           `yaml:"max_assets_per_page" json:"max_assets_per_page"`
 }
 
+// MetricsConfig 指标模块配置
+type MetricsConfig struct {
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	NetworkEnabled    bool          `yaml:"network_enabled" json:"network_enabled"`
+	AppEnabled        bool          `yaml:"app_enabled" json:"app_enabled"`
+	SQLEnabled        bool          `yaml:"sql_enabled" json:"sql_enabled"`
+	MaxDataPoints     int           `yaml:"max_data_points" json:"max_data_points"`
+	RetentionTime     time.Duration `yaml:"retention_time" json:"retention_time"`
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -296,6 +306,7 @@ type Config struct {
 	Topology        TopologyConfig // 拓扑配置
 	Tenant          TenantConfig   // 租户配置
 	Dashboard       DashboardConfig // 仪表盘配置
+	Metrics         MetricsConfig   // 指标模块配置
 }
 
 func Load() (*Config, error) {
@@ -460,6 +471,14 @@ func Load() (*Config, error) {
 	viper.SetDefault("dashboard.refresh_interval", "30s")
 	viper.SetDefault("dashboard.enable_drill_down", true)
 	viper.SetDefault("dashboard.max_assets_per_page", 100)
+
+	// 指标模块配置默认值
+	viper.SetDefault("metrics.enabled", true)
+	viper.SetDefault("metrics.network_enabled", true)
+	viper.SetDefault("metrics.app_enabled", true)
+	viper.SetDefault("metrics.sql_enabled", true)
+	viper.SetDefault("metrics.max_data_points", 1440)
+	viper.SetDefault("metrics.retention_time", "24h")
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -666,6 +685,14 @@ func Load() (*Config, error) {
 		RefreshInterval:  viper.GetDuration("dashboard.refresh_interval"),
 		EnableDrillDown:  viper.GetBool("dashboard.enable_drill_down"),
 		MaxAssetsPerPage: viper.GetInt("dashboard.max_assets_per_page"),
+	},
+	Metrics: MetricsConfig{
+		Enabled:       viper.GetBool("metrics.enabled"),
+		NetworkEnabled: viper.GetBool("metrics.network_enabled"),
+		AppEnabled:    viper.GetBool("metrics.app_enabled"),
+		SQLEnabled:    viper.GetBool("metrics.sql_enabled"),
+		MaxDataPoints: viper.GetInt("metrics.max_data_points"),
+		RetentionTime: viper.GetDuration("metrics.retention_time"),
 	},
 }
 

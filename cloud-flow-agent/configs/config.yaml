@@ -273,6 +273,16 @@ dashboard:
   enable_drill_down: true     # 启用资产下钻
   max_assets_per_page: 100    # 每页最大资产数
 
+# 指标模块配置
+# 网络：流量分布/时延/重传趋势；应用：请求/时延/异常环比；SQL：聚合指标检索
+metrics:
+  enabled: true               # 启用指标模块
+  network_enabled: true       # 启用网络指标
+  app_enabled: true           # 启用应用指标
+  sql_enabled: true           # 启用SQL指标
+  max_data_points: 1440       # 最大数据点数(默认24小时，1分钟间隔)
+  retention_time: "24h"       # 数据保留时间
+
 # 采集开关
 collect:
   cpu: true

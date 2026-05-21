@@ -15,6 +15,7 @@ import (
 	"cloud-flow-agent/internal/ebpfcollector"
 	"cloud-flow-agent/internal/grpcclient"
 	"cloud-flow-agent/internal/http"
+	"cloud-flow-agent/internal/sqlaggregator"
 	"cloud-flow-agent/pkg/logger"
 	"cloud-flow-agent/pkg/metrics"
 	edge "cloud-flow/proto"
@@ -121,6 +122,7 @@ func main() {
 
 	// 初始化 EBPF 采集器（如果可用）
 	var ebpfCollector *ebpfcollector.Collector
+	var sqlAggregator *sqlaggregator.SQLAggregator
 	if cfg.EBPF.Enabled {
 		ebpfOpts := &ebpfcollector.CollectorOptions{
 			EnableTCPMetrics:  cfg.EBPF.TCPMetrics.Enabled,
@@ -156,6 +158,23 @@ func main() {
 		}
 	} else {
 		log.Info("EBPF 采集已禁用，使用传统采集器")
+	}
+
+	// 初始化 SQL 聚合分析器（如果启用）
+	if cfg.EBPF.SQLAggregator.Enabled {
+		sqlAggOpts := &sqlaggregator.SQLAggregatorOptions{
+			EnableMySQLSQLAgg:     true,
+			SlowQueryThresholdMs: cfg.EBPF.SQLAggregator.SlowQueryThresholdMs,
+		}
+		sqlAggregator, err = sqlaggregator.NewWithOptions(sqlAggOpts)
+		if err != nil {
+			log.Warnf("SQL聚合分析器初始化失败: %v", err)
+		} else {
+			log.Infof("SQL聚合分析器已启用: 慢SQL阈值=%dms, 进程性能关联=%v",
+				cfg.EBPF.SQLAggregator.SlowQueryThresholdMs, cfg.EBPF.SQLAggregator.EnableCorrelation)
+			sqlAggregator.Start()
+			defer sqlAggregator.Stop()
+		}
 	}
 
 	stopCh := make(chan struct{})
@@ -286,6 +305,12 @@ func main() {
 					buf = append(buf, ebpfMetrics...)
 				}
 
+				// 采集 SQL 聚合分析数据
+				if sqlAggregator != nil {
+					sqlMetrics := sqlAggregator.GetMetrics()
+					buf = append(buf, sqlMetrics...)
+				}
+
 				if len(buf) >= cfg.BatchSize {
 					batch := &edge.MetricsBatch{
 						ProbeId: cfg.ProbeID,
@@ -339,7 +364,7 @@ func main() {
 
 	// 启动 HTTP 健康检查服务器
 	http.Version = Version
-	healthHandler := http.NewHealthHandler(safeClient, c, ebpfCollector, nil, log)
+	healthHandler := http.NewHealthHandler(safeClient, c, ebpfCollector, nil, sqlAggregator, log)
 	healthAddr := fmt.Sprintf(":%s", cfg.HealthPort)
 	healthServer := http.StartHealthServer(healthAddr, healthHandler)
 	log.Infof("健康检查 HTTP 服务监听: %s/health", healthAddr)

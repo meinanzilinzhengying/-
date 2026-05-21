@@ -12,6 +12,7 @@ import (
 	"cloud-flow-agent/internal/collector"
 	"cloud-flow-agent/internal/ebpfcollector"
 	"cloud-flow-agent/internal/grpcclient"
+	"cloud-flow-agent/internal/sqlaggregator"
 	"cloud-flow-agent/pkg/logger"
 )
 
@@ -25,21 +26,23 @@ type ClientGetter interface {
 
 // HealthHandler 健康检查处理器
 type HealthHandler struct {
-	clientGetter  ClientGetter
-	collector     *collector.Collector
-	ebpfCollector *ebpfcollector.Collector
-	cpuProfiler   interface{ IsEnabled() bool } // ON-CPU剖析器接口
-	logger        *logger.Logger
-	startTime     time.Time
+	clientGetter   ClientGetter
+	collector      *collector.Collector
+	ebpfCollector  *ebpfcollector.Collector
+	cpuProfiler    interface{ IsEnabled() bool } // ON-CPU剖析器接口
+	sqlAggregator  *sqlaggregator.SQLAggregator   // SQL聚合器
+	logger         *logger.Logger
+	startTime      time.Time
 }
 
 // NewHealthHandler 创建健康检查处理器
-func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector, ebpfCollector *ebpfcollector.Collector, cpuProfiler interface{ IsEnabled() bool }, log *logger.Logger) *HealthHandler {
+func NewHealthHandler(clientGetter ClientGetter, collector *collector.Collector, ebpfCollector *ebpfcollector.Collector, cpuProfiler interface{ IsEnabled() bool }, sqlAggregator *sqlaggregator.SQLAggregator, log *logger.Logger) *HealthHandler {
 	return &HealthHandler{
 		clientGetter:  clientGetter,
 		collector:     collector,
 		ebpfCollector: ebpfCollector,
 		cpuProfiler:   cpuProfiler,
+		sqlAggregator: sqlAggregator,
 		logger:        log,
 		startTime:     time.Now(),
 	}
@@ -57,8 +60,20 @@ type HealthResponse struct {
 	HTTPFullEnabled     bool              `json:"http_full_enabled"`
 	DNSFullEnabled      bool              `json:"dns_full_enabled"`
 	MySQLFullEnabled    bool              `json:"mysql_full_enabled"`
+	SQLAggEnabled       bool              `json:"sql_agg_enabled"`
+	SQLAggStats         *SQLAggStats      `json:"sql_agg_stats,omitempty"`
 	CPUProfilerEnabled  bool              `json:"cpu_profiler_enabled"`
 	Version             string            `json:"version"`
+}
+
+// SQLAggStats SQL聚合统计信息
+type SQLAggStats struct {
+	TotalRequests   uint64  `json:"total_requests"`
+	SuccessRate     float64 `json:"success_rate"`
+	AvgLatencyMs    float64 `json:"avg_latency_ms"`
+	SlowQueries     uint64  `json:"slow_queries"`
+	QueriesPerSec   uint64  `json:"queries_per_sec"`
+	ProcessCount    int     `json:"process_count"`
 }
 
 // HandleHealth 处理健康检查请求
@@ -101,6 +116,24 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	// 检查ON-CPU剖析器状态
 	cpuProfilerEnabled := h.cpuProfiler != nil
 
+	// 检查SQL聚合器状态
+	sqlAggEnabled := h.sqlAggregator != nil
+	var sqlAggStats *SQLAggStats
+	if sqlAggEnabled {
+		stats := h.sqlAggregator.GetStats()
+		if enabled, ok := stats["enabled"].(bool); ok && enabled {
+			globalStats := h.sqlAggregator.GetGlobalStats()
+			sqlAggStats = &SQLAggStats{
+				TotalRequests: globalStats.TotalRequests,
+				SuccessRate:   globalStats.SuccessRate(),
+				AvgLatencyMs:  globalStats.AvgLatencyMs(),
+				SlowQueries:   globalStats.SlowQueries,
+				QueriesPerSec: globalStats.Queries1s,
+				ProcessCount: len(h.sqlAggregator.GetDBProcessStats()),
+			}
+		}
+	}
+
 	// 构建健康检查响应
 	response := HealthResponse{
 		Status:              "healthy",
@@ -113,6 +146,8 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		HTTPFullEnabled:     httpFullEnabled,
 		DNSFullEnabled:      dnsFullEnabled,
 		MySQLFullEnabled:    mysqlFullEnabled,
+		SQLAggEnabled:       sqlAggEnabled,
+		SQLAggStats:         sqlAggStats,
 		CPUProfilerEnabled:  cpuProfilerEnabled,
 		Version:             Version,
 	}

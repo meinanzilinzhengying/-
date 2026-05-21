@@ -146,6 +146,19 @@ type CPUProfilerConfig struct {
 	AutoDetect   bool   // 自动检测进程语言类型
 }
 
+// SQLAggregatorConfig SQL聚合分析配置
+type SQLAggregatorConfig struct {
+	Enabled              bool    // 启用SQL聚合分析
+	SlowQueryThresholdMs uint64  // 慢SQL阈值(毫秒), 默认1000ms
+	EnableCorrelation    bool    // 启用进程性能关联分析
+	MaxSnapshots         int     // 最大性能快照数
+	CPUMaxThreshold      float64 // CPU告警阈值(%)
+	MemoryMaxMB          float64 // 内存告警阈值(MB)
+	LatencyMaxMs         float64 // 延迟告警阈值(ms)
+	SlowQueryMax         uint64  // 慢查询告警阈值
+	ConnMax              uint64  // 连接数告警阈值
+}
+
 // EBPFConfig eBPF采集配置
 type EBPFConfig struct {
 	Enabled         bool                  // 启用eBPF采集
@@ -154,9 +167,10 @@ type EBPFConfig struct {
 	BaseTraffic     BaseTrafficConfig     // 基础流量采集配置
 	ProtocolParsing ProtocolParsingConfig // 协议全字段解析配置
 	ResourceLimit   ResourceLimitConfig   // 资源限制配置
-	CircuitBreaker  CircuitBreakerConfig  // 熔断配置
-	PerfOptimizer   PerfOptimizerConfig   // 性能优化配置
-	CPUProfiler     CPUProfilerConfig     // ON-CPU剖析配置
+	CircuitBreaker  CircuitBreakerConfig // 熔断配置
+	PerfOptimizer   PerfOptimizerConfig  // 性能优化配置
+	CPUProfiler     CPUProfilerConfig    // ON-CPU剖析配置
+	SQLAggregator   SQLAggregatorConfig  // SQL聚合分析配置
 }
 
 type Config struct {
@@ -261,6 +275,17 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.cpu_profiler.duration_sec", 0)
 	viper.SetDefault("ebpf.cpu_profiler.output_dir", "/var/log/cloud-flow-agent/profiler")
 	viper.SetDefault("ebpf.cpu_profiler.auto_detect", true)
+
+	// SQL聚合分析配置默认值
+	viper.SetDefault("ebpf.sql_aggregator.enabled", false)
+	viper.SetDefault("ebpf.sql_aggregator.slow_query_threshold_ms", 1000)
+	viper.SetDefault("ebpf.sql_aggregator.enable_correlation", true)
+	viper.SetDefault("ebpf.sql_aggregator.max_snapshots", 60)
+	viper.SetDefault("ebpf.sql_aggregator.cpu_max_threshold", 80.0)
+	viper.SetDefault("ebpf.sql_aggregator.memory_max_mb", 1024.0)
+	viper.SetDefault("ebpf.sql_aggregator.latency_max_ms", 1000.0)
+	viper.SetDefault("ebpf.sql_aggregator.slow_query_max", 10)
+	viper.SetDefault("ebpf.sql_aggregator.conn_max", 100)
 
 	if *configFile != "" {
 		// 用户指定了配置文件路径
@@ -385,6 +410,17 @@ func Load() (*Config, error) {
 				DurationSec:   viper.GetInt("ebpf.cpu_profiler.duration_sec"),
 				OutputDir:     viper.GetString("ebpf.cpu_profiler.output_dir"),
 				AutoDetect:    viper.GetBool("ebpf.cpu_profiler.auto_detect"),
+			},
+			SQLAggregator: SQLAggregatorConfig{
+				Enabled:              viper.GetBool("ebpf.sql_aggregator.enabled"),
+				SlowQueryThresholdMs: viper.GetUint64("ebpf.sql_aggregator.slow_query_threshold_ms"),
+				EnableCorrelation:    viper.GetBool("ebpf.sql_aggregator.enable_correlation"),
+				MaxSnapshots:         viper.GetInt("ebpf.sql_aggregator.max_snapshots"),
+				CPUMaxThreshold:      viper.GetFloat64("ebpf.sql_aggregator.cpu_max_threshold"),
+				MemoryMaxMB:          viper.GetFloat64("ebpf.sql_aggregator.memory_max_mb"),
+				LatencyMaxMs:         viper.GetFloat64("ebpf.sql_aggregator.latency_max_ms"),
+				SlowQueryMax:         viper.GetUint64("ebpf.sql_aggregator.slow_query_max"),
+				ConnMax:              viper.GetUint64("ebpf.sql_aggregator.conn_max"),
 			},
 		},
 	}

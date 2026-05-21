@@ -165,6 +165,20 @@ ebpf:
     output_dir: "/var/log/cloud-flow-agent/profiler"  # 火焰图输出目录
     auto_detect: true         # 自动检测进程语言类型
 
+  # SQL聚合分析配置
+  # 按SQL语句聚合: 请求数、成功率、平均时延、异常统计
+  # 关联数据库进程性能: CPU时间、内存、连接数、每秒查询数
+  sql_aggregator:
+    enabled: false            # 启用SQL聚合分析（默认关闭）
+    slow_query_threshold_ms: 1000  # 慢SQL阈值(毫秒)
+    enable_correlation: true # 启用进程性能关联分析
+    max_snapshots: 60        # 最大性能快照数
+    cpu_max_threshold: 80.0  # CPU告警阈值(%)
+    memory_max_mb: 1024.0    # 内存告警阈值(MB)
+    latency_max_ms: 1000.0   # 延迟告警阈值(ms)
+    slow_query_max: 10       # 慢查询告警阈值
+    conn_max: 100             # 连接数告警阈值
+
 # 采集开关
 collect:
   cpu: true

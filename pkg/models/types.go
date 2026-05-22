@@ -1174,3 +1174,108 @@ type MetricsConfig struct {
 	EnableRuntimeMetrics bool   `yaml:"enable_runtime_metrics" json:"enable_runtime_metrics"`
 	EnableNetworkMetrics bool   `yaml:"enable_network_metrics" json:"enable_network_metrics"`
 }
+
+// ============================================================
+// CPU 性能剖析配置模型
+// ============================================================
+
+// CPUProfilerConfig CPU性能剖析配置
+type CPUProfilerConfig struct {
+	Enabled          bool                `yaml:"enabled" json:"enabled"`
+	OnCPUEnabled     bool                `yaml:"on_cpu_enabled" json:"on_cpu_enabled"`         // 启用ON-CPU剖析
+	OffCPUEnabled    bool                `yaml:"off_cpu_enabled" json:"off_cpu_enabled"`       // 启用OFF-CPU剖析
+	SampleRate       int                 `yaml:"sample_rate" json:"sample_rate"`               // 采样率 (Hz)
+	Duration         int                 `yaml:"duration" json:"duration"`                     // 单次剖析时长（秒）
+	Interval         int                 `yaml:"interval" json:"interval"`                     // 剖析间隔（秒）
+	OutputDir        string              `yaml:"output_dir" json:"output_dir"`                 // 输出目录
+	MaxProfiles      int                 `yaml:"max_profiles" json:"max_profiles"`             // 最大保留剖析文件数
+	TargetPIDs       []uint32            `yaml:"target_pids" json:"target_pids"`               // 目标进程ID
+	TargetProcesses  []string            `yaml:"target_processes" json:"target_processes"`     // 目标进程名
+	MinBlockTimeMs   int                 `yaml:"min_block_time_ms" json:"min_block_time_ms"`   // 最小阻塞时间（毫秒）
+	MaxStackDepth    int                 `yaml:"max_stack_depth" json:"max_stack_depth"`       // 最大栈深度
+	SymbolResolution bool                `yaml:"symbol_resolution" json:"symbol_resolution"`   // 符号解析
+	FlameGraphEnabled bool               `yaml:"flame_graph_enabled" json:"flame_graph_enabled"` // 生成火焰图
+	ReportFormat     string              `yaml:"report_format" json:"report_format"`           // 报告格式: pprof/flame/svg
+}
+
+// ============================================================
+// SQL性能剖析配置模型
+// ============================================================
+
+// SQLProfilerConfig SQL性能剖析配置
+type SQLProfilerConfig struct {
+	Enabled              bool     `yaml:"enabled" json:"enabled"`
+	CaptureQueries       bool     `yaml:"capture_queries" json:"capture_queries"`           // 捕获SQL语句
+	CaptureSlowQueries   bool     `yaml:"capture_slow_queries" json:"capture_slow_queries"` // 捕获慢查询
+	SlowQueryThresholdMs int      `yaml:"slow_query_threshold_ms" json:"slow_query_threshold_ms"` // 慢查询阈值（毫秒）
+	MaxQueryLength       int      `yaml:"max_query_length" json:"max_query_length"`         // 最大SQL长度
+	AggregationEnabled   bool     `yaml:"aggregation_enabled" json:"aggregation_enabled"`   // 启用聚合
+	AggregationWindow    int      `yaml:"aggregation_window" json:"aggregation_window"`     // 聚合窗口（秒）
+	FingerprintEnabled   bool     `yaml:"fingerprint_enabled" json:"fingerprint_enabled"`   // 启用SQL指纹
+	TopNQueries          int      `yaml:"top_n_queries" json:"top_n_queries"`               // TopN查询数
+	OutputDir            string   `yaml:"output_dir" json:"output_dir"`                     // 输出目录
+	TargetDatabases      []string `yaml:"target_databases" json:"target_databases"`         // 目标数据库类型
+	TargetPorts          []uint16 `yaml:"target_ports" json:"target_ports"`                 // 目标端口
+}
+
+// ============================================================
+// 高可用集群配置模型
+// ============================================================
+
+// HAClusterConfig 高可用集群配置
+type HAClusterConfig struct {
+	Enabled           bool           `yaml:"enabled" json:"enabled"`
+	NodeID            string         `yaml:"node_id" json:"node_id"`                           // 节点ID
+	NodeName          string         `yaml:"node_name" json:"node_name"`                       // 节点名称
+	BindAddr          string         `yaml:"bind_addr" json:"bind_addr"`                       // 绑定地址
+	BindPort          int            `yaml:"bind_port" json:"bind_port"`                       // 绑定端口
+	Peers             []HAClusterPeer `yaml:"peers" json:"peers"`                              // 集群节点列表
+	ElectionTimeout   int            `yaml:"election_timeout" json:"election_timeout"`         // 选举超时（毫秒）
+	HeartbeatInterval int            `yaml:"heartbeat_interval" json:"heartbeat_interval"`     // 心跳间隔（毫秒）
+	HeartbeatTimeout  int            `yaml:"heartbeat_timeout" json:"heartbeat_timeout"`       // 心跳超时（毫秒）
+	DataDir           string         `yaml:"data_dir" json:"data_dir"`                         // 数据目录
+	ReplicationFactor int            `yaml:"replication_factor" json:"replication_factor"`     // 复制因子
+	ShardCount        int            `yaml:"shard_count" json:"shard_count"`                   // 分片数
+	AutoFailover      bool           `yaml:"auto_failover" json:"auto_failover"`               // 自动故障转移
+	AutoRecover       bool           `yaml:"auto_recover" json:"auto_recover"`                 // 自动恢复
+	SplitBrainCheck   bool           `yaml:"split_brain_check" json:"split_brain_check"`       // 脑裂检测
+	QuorumRequired    bool           `yaml:"quorum_required" json:"quorum_required"`           // 需要仲裁
+}
+
+// HAClusterPeer 集群节点配置
+type HAClusterPeer struct {
+	ID       string `yaml:"id" json:"id"`               // 节点ID
+	Name     string `yaml:"name" json:"name"`           // 节点名称
+	Address  string `yaml:"address" json:"address"`     // 节点地址
+	Port     int    `yaml:"port" json:"port"`           // 节点端口
+	Region   string `yaml:"region" json:"region"`       // 区域
+	Priority int    `yaml:"priority" json:"priority"`   // 优先级（选举权重）
+	Weight   int    `yaml:"weight" json:"weight"`       // 负载权重
+}
+
+// ============================================================
+// 存储留存策略配置模型
+// ============================================================
+
+// RetentionConfig 数据留存策略配置
+type RetentionConfig struct {
+	Enabled           bool                    `yaml:"enabled" json:"enabled"`
+	MaxAgeDays        int                     `yaml:"max_age_days" json:"max_age_days"`               // 最大保留天数（默认60天）
+	MaxSizeGB         int64                   `yaml:"max_size_gb" json:"max_size_gb"`                 // 最大磁盘使用量 (GB)
+	MinFreeSpaceGB    int64                   `yaml:"min_free_space_gb" json:"min_free_space_gb"`     // 最小剩余空间 (GB)
+	CleanupInterval   int                     `yaml:"cleanup_interval" json:"cleanup_interval"`       // 清理检查间隔（分钟）
+	ArchiveEnabled    bool                    `yaml:"archive_enabled" json:"archive_enabled"`         // 是否归档
+	ArchivePath       string                  `yaml:"archive_path" json:"archive_path"`               // 归档路径
+	ArchiveRetentionDays int                  `yaml:"archive_retention_days" json:"archive_retention_days"` // 归档保留天数
+	EmergencyCleanup  bool                    `yaml:"emergency_cleanup" json:"emergency_cleanup"`     // 紧急清理
+	Categories        []RetentionCategoryConfig `yaml:"categories" json:"categories"`                   // 分类配置
+}
+
+// RetentionCategoryConfig 留存分类配置
+type RetentionCategoryConfig struct {
+	Category       string `yaml:"category" json:"category"`                         // 类别名称
+	MaxAgeDays     int    `yaml:"max_age_days" json:"max_age_days"`                 // 最大保留天数
+	MaxSizeGB      int64  `yaml:"max_size_gb" json:"max_size_gb"`                   // 最大大小 (GB)
+	ArchiveEnabled bool   `yaml:"archive_enabled" json:"archive_enabled"`           // 是否归档
+	Compress       bool   `yaml:"compress" json:"compress"`                         // 是否压缩
+}

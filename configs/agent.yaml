@@ -1133,3 +1133,162 @@ metrics:
   enable_system_metrics: true     # 启用系统指标
   enable_runtime_metrics: true    # 启用运行时指标
   enable_network_metrics: true    # 启用网络指标
+
+# ============================================================
+# CPU 性能剖析配置
+# ON-CPU/OFF-CPU 火焰图分析，进程瓶颈定位
+# ============================================================
+cpu_profiler:
+  enabled: true                   # 启用CPU性能剖析（默认开启）
+  on_cpu_enabled: true            # 启用ON-CPU剖析（CPU执行时间）
+  off_cpu_enabled: true           # 启用OFF-CPU剖析（阻塞等待时间）
+  sample_rate: 100                # 采样率 (Hz)
+  duration: 30                    # 单次剖析时长（秒）
+  interval: 300                   # 剖析间隔（秒，默认5分钟）
+  output_dir: "/var/lib/cloud-flow/profiles"  # 输出目录
+  max_profiles: 100               # 最大保留剖析文件数
+  target_pids: []                 # 目标进程ID，空表示所有进程
+  target_processes: []            # 目标进程名列表
+  min_block_time_ms: 1            # 最小阻塞时间（毫秒）
+  max_stack_depth: 128            # 最大栈深度
+  symbol_resolution: true         # 启用符号解析
+  flame_graph_enabled: true       # 生成火焰图
+  report_format: "flame"          # 报告格式: pprof/flame/svg
+
+# ============================================================
+# SQL 性能剖析配置
+# SQL聚合、慢查询分析、性能瓶颈定位
+# ============================================================
+sql_profiler:
+  enabled: true                   # 启用SQL性能剖析（默认开启）
+  capture_queries: true           # 捕获SQL语句
+  capture_slow_queries: true      # 捕获慢查询
+  slow_query_threshold_ms: 100    # 慢查询阈值（毫秒）
+  max_query_length: 4096          # 最大SQL长度
+  aggregation_enabled: true       # 启用聚合
+  aggregation_window: 60          # 聚合窗口（秒）
+  fingerprint_enabled: true       # 启用SQL指纹（归一化）
+  top_n_queries: 100              # TopN查询数
+  output_dir: "/var/lib/cloud-flow/sql"  # 输出目录
+  target_databases:               # 目标数据库类型
+    - "mysql"
+    - "postgresql"
+    - "oracle"
+    - "redis"
+  target_ports:                   # 目标端口
+    - 3306
+    - 5432
+    - 1521
+    - 6379
+
+# ============================================================
+# 高可用集群配置
+# Raft选举、数据分片、故障自动转移
+# ============================================================
+ha_cluster:
+  enabled: false                  # 启用高可用集群（默认关闭）
+  node_id: ""                     # 节点ID（留空自动生成）
+  node_name: ""                   # 节点名称（留空使用主机名）
+  bind_addr: "0.0.0.0"           # 绑定地址
+  bind_port: 7948                # 集群通信端口
+
+  # 集群节点列表
+  peers: []
+    # - id: "node-01"
+    #   name: "节点-01"
+    #   address: "192.168.1.101"
+    #   port: 7948
+    #   region: "beijing"
+    #   priority: 100               # 选举优先级
+    #   weight: 100                 # 负载权重
+    # - id: "node-02"
+    #   name: "节点-02"
+    #   address: "192.168.1.102"
+    #   port: 7948
+    #   region: "beijing"
+    #   priority: 90
+    #   weight: 100
+    # - id: "node-03"
+    #   name: "节点-03"
+    #   address: "192.168.1.103"
+    #   port: 7948
+    #   region: "beijing"
+    #   priority: 80
+    #   weight: 100
+
+  election_timeout: 500           # 选举超时（毫秒）
+  heartbeat_interval: 100         # 心跳间隔（毫秒）
+  heartbeat_timeout: 300          # 心跳超时（毫秒）
+  data_dir: "/var/lib/cloud-flow/ha"  # 数据目录
+  replication_factor: 3           # 复制因子
+  shard_count: 128                # 分片数
+  auto_failover: true             # 自动故障转移
+  auto_recover: true              # 自动恢复
+  split_brain_check: true         # 脑裂检测
+  quorum_required: true           # 需要仲裁
+
+# ============================================================
+# 数据留存策略配置
+# 60天数据保留、自动清理、归档管理
+# ============================================================
+retention:
+  enabled: true                   # 启用数据留存管理（默认开启）
+  max_age_days: 60                # 最大保留天数（默认60天）
+  max_size_gb: 100                # 最大磁盘使用量 (GB)
+  min_free_space_gb: 10           # 最小剩余空间 (GB)
+  cleanup_interval: 60            # 清理检查间隔（分钟）
+  archive_enabled: true           # 是否归档
+  archive_path: "/var/lib/cloud-flow/archive"  # 归档路径
+  archive_retention_days: 180     # 归档保留天数（默认180天）
+  emergency_cleanup: true         # 紧急清理（磁盘空间不足时）
+
+  # 分类配置
+  categories:
+    # 指标数据
+    - category: "metrics"
+      max_age_days: 60
+      max_size_gb: 20
+      archive_enabled: true
+      compress: true
+
+    # 日志数据
+    - category: "logs"
+      max_age_days: 30
+      max_size_gb: 10
+      archive_enabled: true
+      compress: true
+
+    # 链路数据
+    - category: "traces"
+      max_age_days: 60
+      max_size_gb: 30
+      archive_enabled: true
+      compress: true
+
+    # 性能剖析数据
+    - category: "profiles"
+      max_age_days: 7
+      max_size_gb: 5
+      archive_enabled: true
+      compress: true
+
+    # 抓包数据
+    - category: "pcap"
+      max_age_days: 3
+      max_size_gb: 50
+      archive_enabled: true
+      compress: false              # PCAP已压缩
+
+    # 数据库观测数据
+    - category: "database"
+      max_age_days: 60
+      max_size_gb: 15
+      archive_enabled: true
+      compress: true
+
+    # 事件数据
+    - category: "events"
+      max_age_days: 90
+      max_size_gb: 5
+      archive_enabled: true
+      compress: true

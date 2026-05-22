@@ -489,3 +489,61 @@ tracing:
     custom_headers:               # 自定义传播Header
       - "x-request-id"
       - "x-correlation-id"
+
+# ============================================================
+# 资源池/VPC健康评分配置
+# 基于利用率、网络质量、SLA达标率三维加权计算综合健康分
+# ============================================================
+health_score:
+  enabled: true                   # 启用健康评分（默认开启）
+  eval_interval: 60               # 评估间隔（秒）
+  history_retention: 1440         # 历史保留数量（约24小时）
+  alert_threshold: 60.0           # 告警阈值（健康分低于此值触发告警）
+  degrade_threshold: 40.0         # 降级阈值（健康分低于此值标记为严重）
+  enable_trend: true              # 启用趋势分析
+  trend_window: 30                # 趋势分析窗口大小
+
+  # 加权配置（权重之和必须为1.0）
+  weights:
+    utilization: 0.4              # 利用率权重
+    network: 0.3                  # 网络质量权重
+    sla: 0.3                      # SLA达标率权重
+
+  # VPC网络评估配置
+  vpc:
+    probe_timeout: 5000           # 探测超时（毫秒）
+    probe_count: 5                # 每次探测次数
+    probe_interval_ms: 200        # 探测间隔（毫秒）
+    default_targets:              # 默认探测目标
+      - "8.8.8.8"
+      - "114.114.114.114"
+    custom_targets: []            # 自定义探测目标
+    latency_warning_ms: 50.0      # 延迟告警阈值（ms）
+    latency_critical_ms: 200.0    # 延迟严重阈值（ms）
+    loss_warning_pct: 1.0         # 丢包告警阈值（%）
+    loss_critical_pct: 5.0        # 丢包严重阈值（%）
+    bandwidth_min_mbps: 100.0     # 最小带宽要求（Mbps）
+    check_internal_routing: true  # 检查VPC内路由
+
+  # 资源池列表
+  pools:
+    # - id: "pool-bj-01"
+    #   name: "北京资源池-主"
+    #   type: "pool"
+    #   hosts:
+    #     - "192.168.1.10"
+    #     - "192.168.1.11"
+    #   labels:
+    #     region: "beijing"
+    #     tier: "production"
+
+    # - id: "vpc-sh-01"
+    #   name: "上海VPC-主"
+    #   type: "vpc"
+    #   vpc_id: "vpc-sh-prod-01"
+    #   subnet_cidrs:
+    #     - "10.0.1.0/24"
+    #     - "10.0.2.0/24"
+    #   labels:
+    #     region: "shanghai"
+    #     tier: "production"

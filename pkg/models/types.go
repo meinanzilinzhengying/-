@@ -344,6 +344,7 @@ type Config struct {
 	Alert       AlertConfig       `yaml:"alert" json:"alert"`
 	RCA         RCAConfig         `yaml:"rca" json:"rca"`
 	Tracing     TracingConfig     `yaml:"tracing" json:"tracing"`
+	HealthScore HealthScoreConfig `yaml:"health_score" json:"health_score"`
 }
 
 // ============================================================
@@ -603,4 +604,55 @@ type HeaderPropagationConfig struct {
 	InheritIncoming bool     `yaml:"inherit_incoming" json:"inherit_incoming"` // 继承传入的TraceID
 	InjectOutgoing    bool     `yaml:"inject_outgoing" json:"inject_outgoing"`     // 向 outgoing 请求注入TraceID
 	CustomHeaders     []string `yaml:"custom_headers" json:"custom_headers"`       // 自定义传播Header
+}
+
+// ============================================================
+// 资源池/VPC健康评分配置模型
+// ============================================================
+
+// HealthScoreConfig 健康评分配置
+type HealthScoreConfig struct {
+	Enabled           bool              `yaml:"enabled" json:"enabled"`
+	EvalInterval      int               `yaml:"eval_interval" json:"eval_interval"`           // 评估间隔（秒）
+	HistoryRetention  int               `yaml:"history_retention" json:"history_retention"`   // 历史保留数量
+	AlertThreshold    float64           `yaml:"alert_threshold" json:"alert_threshold"`       // 告警阈值（健康分）
+	DegradeThreshold  float64           `yaml:"degrade_threshold" json:"degrade_threshold"`   // 降级阈值（健康分）
+	EnableTrend       bool              `yaml:"enable_trend" json:"enable_trend"`             // 启用趋势分析
+	TrendWindow       int               `yaml:"trend_window" json:"trend_window"`             // 趋势窗口大小
+	Weights           HealthScoreWeights `yaml:"weights" json:"weights"`                       // 加权配置
+	VPC               VPCHealthConfig   `yaml:"vpc" json:"vpc"`                               // VPC评估配置
+	Pools             []PoolConfig      `yaml:"pools" json:"pools"`                           // 资源池列表
+}
+
+// HealthScoreWeights 健康评分权重
+type HealthScoreWeights struct {
+	Utilization float64 `yaml:"utilization" json:"utilization"` // 利用率权重
+	Network     float64 `yaml:"network" json:"network"`         // 网络权重
+	SLA         float64 `yaml:"sla" json:"sla"`                 // SLA权重
+}
+
+// VPCHealthConfig VPC健康评估配置
+type VPCHealthConfig struct {
+	ProbeTimeout       int      `yaml:"probe_timeout" json:"probe_timeout"`               // 探测超时（毫秒）
+	ProbeCount         int      `yaml:"probe_count" json:"probe_count"`                   // 每次探测次数
+	ProbeIntervalMs    int      `yaml:"probe_interval_ms" json:"probe_interval_ms"`       // 探测间隔（毫秒）
+	DefaultTargets     []string `yaml:"default_targets" json:"default_targets"`           // 默认探测目标
+	CustomTargets      []string `yaml:"custom_targets" json:"custom_targets"`             // 自定义探测目标
+	LatencyWarningMs   float64  `yaml:"latency_warning_ms" json:"latency_warning_ms"`     // 延迟告警阈值（ms）
+	LatencyCriticalMs  float64  `yaml:"latency_critical_ms" json:"latency_critical_ms"`   // 延迟严重阈值（ms）
+	LossWarningPct     float64  `yaml:"loss_warning_pct" json:"loss_warning_pct"`         // 丢包告警阈值（%）
+	LossCriticalPct    float64  `yaml:"loss_critical_pct" json:"loss_critical_pct"`       // 丢包严重阈值（%）
+	BandwidthMinMbps   float64  `yaml:"bandwidth_min_mbps" json:"bandwidth_min_mbps"`     // 最小带宽要求（Mbps）
+	CheckInternalRouting bool   `yaml:"check_internal_routing" json:"check_internal_routing"` // 检查VPC内路由
+}
+
+// PoolConfig 资源池配置
+type PoolConfig struct {
+	ID          string            `yaml:"id" json:"id"`
+	Name        string            `yaml:"name" json:"name"`
+	Type        string            `yaml:"type" json:"type"`                 // pool / vpc
+	VPCID       string            `yaml:"vpc_id" json:"vpc_id,omitempty"`
+	SubnetCIDRs []string          `yaml:"subnet_cidrs" json:"subnet_cidrs,omitempty"`
+	Hosts       []string          `yaml:"hosts" json:"hosts,omitempty"`
+	Labels      map[string]string `yaml:"labels" json:"labels,omitempty"`
 }

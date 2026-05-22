@@ -340,6 +340,8 @@ type Config struct {
 	TimeSync    TimeSyncConfig    `yaml:"time_sync" json:"time_sync"`
 	Profiler    ProfilerConfig    `yaml:"profiler" json:"profiler"`
 	JVMMem      JVMMemConfig      `yaml:"jvm_memory" json:"jvm_memory"`
+	AIModel     AIModelConfig     `yaml:"ai_model" json:"ai_model"`
+	Alert       AlertConfig       `yaml:"alert" json:"alert"`
 }
 
 // ============================================================
@@ -526,4 +528,33 @@ type JVMMemConfig struct {
 	MaxStackDepth     int                 `yaml:"max_stack_depth" json:"max_stack_depth"`   // 最大栈深度
 	SymbolResolution  bool                `yaml:"symbol_resolution" json:"symbol_resolution"` // 符号解析
 	ReportInterval    int                 `yaml:"report_interval" json:"report_interval"`   // 报告间隔（秒）
+}
+
+// ============================================================
+// AI建模配置模型
+// ============================================================
+
+// AIModelConfig AI建模配置
+type AIModelConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`
+	ModelType         string   `yaml:"model_type" json:"model_type"`             // 模型类型: statistical, ensemble, moving_average, exponential_smoothing
+	TrainInterval     int      `yaml:"train_interval" json:"train_interval"`     // 训练间隔（秒）
+	PredictionWindow  int      `yaml:"prediction_window" json:"prediction_window"` // 预测窗口大小
+	HistoryWindow     int      `yaml:"history_window" json:"history_window"`     // 历史数据窗口大小
+	ConfidenceLevel   float64  `yaml:"confidence_level" json:"confidence_level"` // 置信区间 (0-1)
+	AnomalyThreshold  float64  `yaml:"anomaly_threshold" json:"anomaly_threshold"` // 异常阈值 (标准差倍数)
+	MinDataPoints     int      `yaml:"min_data_points" json:"min_data_points"`   // 最小数据点数
+	SeasonalityPeriod int      `yaml:"seasonality_period" json:"seasonality_period"` // 季节性周期
+	EnableAutoTuning  bool     `yaml:"enable_auto_tuning" json:"enable_auto_tuning"` // 自动调参
+	Metrics           []string `yaml:"metrics" json:"metrics"`                   // 监控的指标列表
+}
+
+// AlertConfig 告警配置
+type AlertConfig struct {
+	Enabled            bool     `yaml:"enabled" json:"enabled"`
+	CooldownPeriod     int      `yaml:"cooldown_period" json:"cooldown_period"`         // 告警冷却期（秒）
+	AggregationWindow  int      `yaml:"aggregation_window" json:"aggregation_window"`   // 聚合窗口（秒）
+	MaxAlertsPerMin    int      `yaml:"max_alerts_per_min" json:"max_alerts_per_min"`   // 每分钟最大告警数
+	SuppressDuplicates bool     `yaml:"suppress_duplicates" json:"suppress_duplicates"` // 抑制重复告警
+	NotificationChannels []string `yaml:"notification_channels" json:"notification_channels"` // 通知渠道
 }

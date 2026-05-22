@@ -408,3 +408,40 @@ jvm_memory:
   max_stack_depth: 64         # 最大栈深度
   symbol_resolution: true     # 启用符号解析
   report_interval: 60         # 报告间隔（秒）
+
+# ============================================================
+# AI建模配置
+# 基于时间序列分析预测正常区间，智能异常检测
+# ============================================================
+ai_model:
+  enabled: true               # 启用AI建模（默认开启）
+  model_type: "ensemble"      # 模型类型: statistical, ensemble, moving_average, exponential_smoothing
+  train_interval: 3600        # 训练间隔（秒）
+  prediction_window: 60       # 预测窗口大小（预测未来60个数据点）
+  history_window: 1440        # 历史数据窗口大小（约24小时，每分钟一个点）
+  confidence_level: 0.95      # 置信区间 (0-1)
+  anomaly_threshold: 3.0      # 异常阈值（标准差倍数）
+  min_data_points: 100        # 最小训练数据点数
+  seasonality_period: 1440    # 季节性周期（日周期，分钟级）
+  enable_auto_tuning: true    # 自动调参
+  metrics:                    # 监控的指标列表
+    - "cpu_usage"
+    - "memory_usage"
+    - "network_bytes_in"
+    - "network_bytes_out"
+    - "disk_io_read"
+    - "disk_io_write"
+
+# ============================================================
+# 智能告警配置
+# 异常事件聚合、冷却、通知
+# ============================================================
+alert:
+  enabled: true               # 启用智能告警（默认开启）
+  cooldown_period: 300        # 告警冷却期（秒）
+  aggregation_window: 60      # 告警聚合窗口（秒）
+  max_alerts_per_min: 100     # 每分钟最大告警数
+  suppress_duplicates: true   # 抑制重复告警
+  notification_channels:      # 通知渠道
+    - "log"
+    - "webhook"

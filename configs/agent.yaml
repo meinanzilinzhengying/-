@@ -635,3 +635,145 @@ tcp_metrics:
   detect_zero_window: true        # 检测零窗口
   detect_queue_overflow: true     # 检测队列溢出
   max_history_size: 1440          # 最大历史记录数（约2小时）
+
+# ============================================================
+# 协议解析配置
+# HTTP/DNS/MySQL 深度解析：路径/Cookie/事务ID/错误信息
+# ============================================================
+protocol:
+  enabled: true
+  
+  http:
+    enabled: true
+    parse_cookies: true            # 解析Cookies
+    parse_headers: true            # 解析Headers
+    parse_body: false              # 不解析Body（避免性能开销）
+    max_body_size: 1024            # 最大Body大小
+    extract_path: true             # 提取路径分段
+    extract_query: true            # 提取查询参数
+    extract_trace: true            # 提取TraceID/SpanID
+  
+  dns:
+    enabled: true
+    collect_txid: true             # 采集DNS事务ID
+    parse_answers: true            # 解析答案记录
+    parse_edns: true               # 解析EDNS扩展
+  
+  mysql:
+    enabled: true
+    parse_sql: true               # 解析SQL语句
+    parse_errors: true             # 解析错误信息
+    parse_result: true             # 解析结果集
+    max_sql_length: 4096          # 最大SQL长度
+
+# ============================================================
+# 管理网传输配置
+# 指定管理网卡，避免占用业务带宽
+# ============================================================
+transport:
+  enabled: true
+  mode: "direct"                 # direct/relay/grpc
+  protocol: "tcp"
+  
+  # 管理网卡配置
+  management_network:
+    enabled: true                 # 启用管理网
+    interface_name: ""           # 网卡名，留空自动检测
+    bind_address: ""             # 绑定地址
+    source_ip: ""                # 指定源IP
+    allowed_ips: []              # 允许的目标IP列表
+    blocked_ips:                 # 禁止的目标IP列表
+      - "127.0.0.0/8"
+      - "10.0.0.0/8"           # 示例：禁止内网IP
+    auto_detect: true            # 自动检测管理网卡
+    detect_patterns:             # 自动检测模式
+      - "mgmt"
+      - "management"
+      - "control"
+  
+  buffer_size: 65536             # 发送缓冲区大小
+  max_connections: 10             # 最大连接数
+  conn_timeout: 30                # 连接超时（秒）
+  write_timeout: 10               # 写超时（秒）
+  keepalive: 60                  # KeepAlive（秒）
+  
+  # 可靠性配置
+  reliability:
+    enabled: true
+    enable_ack: true              # 启用确认
+    enable_retry: true            # 启用重传
+    enable_dedupe: true           # 启用去重
+    retry_count: 3               # 重传次数
+    retry_interval: 100            # 重传间隔（毫秒）
+    ack_timeout: 5000             # 确认超时（毫秒）
+    window_size: 256              # 滑动窗口大小
+    dedupe_window_sec: 300        # 去重窗口（秒）
+  
+  # 负载均衡
+  load_balancing:
+    enabled: true
+    strategy: "round_robin"      # round_robin/least_conn/hash
+    health_check: true            # 健康检查
+    health_check_interval: 10      # 检查间隔（秒）
+
+# ============================================================
+# 过载熔断保护配置
+# 资源超限自动熔断、静默保护、自动恢复
+# ============================================================
+circuit_breaker:
+  enabled: true                   # 启用熔断（默认开启）
+  
+  # 触发条件
+  cpu_warning_threshold: 60.0    # CPU警告阈值 (%)
+  cpu_critical_threshold: 80.0    # CPU熔断阈值 (%)
+  memory_warning_threshold: 70.0 # 内存警告阈值 (%)
+  memory_critical_threshold: 90.0 # 内存熔断阈值 (%)
+  
+  # 触发方式
+  failure_threshold: 5             # 连续失败次数触发熔断
+  success_threshold: 3             # 半开后连续成功次数恢复
+  timeout_threshold: 10            # 超时次数触发熔断
+  latency_p99_threshold: 1000.0    # P99延迟阈值 (ms)
+  
+  # 时间窗口
+  window_duration: 60             # 统计窗口（秒）
+  circuit_open_duration: 30        # 熔断持续时间（秒）
+  probe_interval: 5               # 半开探测间隔（秒）
+  
+  # 保护策略
+  drop_percent_when_open: 100     # 熔断时丢弃百分比 (0-100)
+  silent_mode: true               # 静默模式（不返回错误）
+  queue_limit: 1000               # 请求队列限制
+
+# ============================================================
+# 采集器自监控配置
+# 心跳/状态/资源占用上报，中心端感知探针异常
+# ============================================================
+self_monitor:
+  enabled: true                   # 启用自监控（默认开启）
+  interval_sec: 30               # 上报间隔（秒）
+  heartbeat_enabled: true          # 启用心跳
+  status_enabled: true             # 启用状态上报
+  resource_enabled: true           # 启用资源上报
+  history_enabled: true            # 启用历史记录
+  report_endpoint: ""             # 上报目标地址
+  report_timeout: 10               # 上报超时（秒）
+  
+  # 告警阈值
+  cpu_warning_threshold: 70.0      # CPU警告阈值 (%)
+  memory_warning_threshold: 80.0   # 内存警告阈值 (%)
+  disk_warning_threshold: 85.0     # 磁盘警告阈值 (%)
+
+# ============================================================
+# 可靠传输配置
+# 重传/确认/去重机制，确保数据传输准确性
+# ============================================================
+reliable_transport:
+  enabled: true                   # 启用可靠传输（默认开启）
+  window_size: 256               # 滑动窗口大小
+  retry_count: 3                 # 最大重传次数
+  retry_interval: 100            # 重传间隔（毫秒）
+  ack_timeout: 5000               # ACK超时（毫秒）
+  dedupe_enabled: true            # 启用去重
+  dedupe_size: 10000              # 去重缓存大小
+  dedupe_window: 300             # 去重窗口（秒）

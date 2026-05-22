@@ -745,3 +745,149 @@ type TCPMetricsConfig struct {
 	DetectQueueOverflow bool `yaml:"detect_queue_overflow" json:"detect_queue_overflow"` // 检测队列溢出
 	MaxHistorySize     int  `yaml:"max_history_size" json:"max_history_size"`         // 最大历史记录数
 }
+
+// ============================================================
+// 协议解析配置模型
+// ============================================================
+
+// ProtocolConfig 协议解析配置
+type ProtocolConfig struct {
+	Enabled      bool                  `yaml:"enabled" json:"enabled"`
+	HTTP        HTTPProtocolConfig    `yaml:"http" json:"http"`
+	DNS         DNSProtocolConfig     `yaml:"dns" json:"dns"`
+	MySQL       MySQLProtocolConfig   `yaml:"mysql" json:"mysql"`
+}
+
+// HTTPProtocolConfig HTTP协议解析配置
+type HTTPProtocolConfig struct {
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	ParseCookies  bool   `yaml:"parse_cookies" json:"parse_cookies"`
+	ParseHeaders  bool   `yaml:"parse_headers" json:"parse_headers"`
+	ParseBody     bool   `yaml:"parse_body" json:"parse_body"`
+	MaxBodySize   int    `yaml:"max_body_size" json:"max_body_size"`
+	ExtractPath   bool   `yaml:"extract_path" json:"extract_path"`
+	ExtractQuery  bool   `yaml:"extract_query" json:"extract_query"`
+	ExtractTrace  bool   `yaml:"extract_trace" json:"extract_trace"`
+}
+
+// DNSProtocolConfig DNS协议解析配置
+type DNSProtocolConfig struct {
+	Enabled      bool `yaml:"enabled" json:"enabled"`
+	CollectTxID bool `yaml:"collect_txid" json:"collect_txid"` // 采集事务ID
+	ParseAnswers bool `yaml:"parse_answers" json:"parse_answers"`
+	ParseEDNS    bool `yaml:"parse_edns" json:"parse_edns"`
+}
+
+// MySQLProtocolConfig MySQL协议解析配置
+type MySQLProtocolConfig struct {
+	Enabled        bool   `yaml:"enabled" json:"enabled"`
+	ParseSQL      bool   `yaml:"parse_sql" json:"parse_sql"`
+	ParseErrors   bool   `yaml:"parse_errors" json:"parse_errors"`
+	ParseResult   bool   `yaml:"parse_result" json:"parse_result"`
+	MaxSQLLength  int    `yaml:"max_sql_length" json:"max_sql_length"`
+}
+
+// ============================================================
+// 管理网传输配置模型
+// ============================================================
+
+// TransportConfig 管理网传输配置
+type TransportConfig struct {
+	Enabled           bool                    `yaml:"enabled" json:"enabled"`
+	Mode              string                  `yaml:"mode" json:"mode"`
+	Protocol          string                  `yaml:"protocol" json:"protocol"`
+	ManagementNetwork ManagementNetworkConfig `yaml:"management_network" json:"management_network"`
+	BufferSize       int                     `yaml:"buffer_size" json:"buffer_size"`
+	MaxConnections   int                     `yaml:"max_connections" json:"max_connections"`
+	ConnTimeout      int                     `yaml:"conn_timeout" json:"conn_timeout"`
+	WriteTimeout     int                     `yaml:"write_timeout" json:"write_timeout"`
+	KeepAlive        int                     `yaml:"keepalive" json:"keepalive"`
+	Reliability      ReliabilityConfig        `yaml:"reliability" json:"reliability"`
+	LoadBalancing    LoadBalancingConfig      `yaml:"load_balancing" json:"load_balancing"`
+}
+
+// ManagementNetworkConfig 管理网配置
+type ManagementNetworkConfig struct {
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	InterfaceName string   `yaml:"interface_name" json:"interface_name"`
+	BindAddress   string   `yaml:"bind_address" json:"bind_address"`
+	SourceIP      string   `yaml:"source_ip" json:"source_ip"`
+	AllowedIPs    []string `yaml:"allowed_ips" json:"allowed_ips"`
+	BlockedIPs    []string `yaml:"blocked_ips" json:"blocked_ips"`
+	AutoDetect    bool     `yaml:"auto_detect" json:"auto_detect"`
+}
+
+// ReliabilityConfig 可靠性配置
+type ReliabilityConfig struct {
+	Enabled       bool `yaml:"enabled" json:"enabled"`
+	EnableACK     bool `yaml:"enable_ack" json:"enable_ack"`
+	EnableRetry   bool `yaml:"enable_retry" json:"enable_retry"`
+	EnableDedupe  bool `yaml:"enable_dedupe" json:"enable_dedupe"`
+	RetryCount    int  `yaml:"retry_count" json:"retry_count"`
+	RetryInterval int  `yaml:"retry_interval" json:"retry_interval"`
+	AckTimeout    int  `yaml:"ack_timeout" json:"ack_timeout"`
+	WindowSize    int  `yaml:"window_size" json:"window_size"`
+}
+
+// LoadBalancingConfig 负载均衡配置
+type LoadBalancingConfig struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`
+	Strategy           string `yaml:"strategy" json:"strategy"`
+	HealthCheck        bool   `yaml:"health_check" json:"health_check"`
+	HealthCheckInterval int    `yaml:"health_check_interval" json:"health_check_interval"`
+}
+
+// ============================================================
+// 熔断保护配置模型
+// ============================================================
+
+// CircuitBreakerConfig 熔断保护配置
+type CircuitBreakerConfig struct {
+	Enabled              bool    `yaml:"enabled" json:"enabled"`
+	CPUWarningThreshold float64 `yaml:"cpu_warning_threshold" json:"cpu_warning_threshold"`
+	CPUCriticalThreshold float64 `yaml:"cpu_critical_threshold" json:"cpu_critical_threshold"`
+	MemoryWarningThreshold float64 `yaml:"memory_warning_threshold" json:"memory_warning_threshold"`
+	MemoryCriticalThreshold float64 `yaml:"memory_critical_threshold" json:"memory_critical_threshold"`
+	FailureThreshold    int     `yaml:"failure_threshold" json:"failure_threshold"`
+	SuccessThreshold    int     `yaml:"success_threshold" json:"success_threshold"`
+	TimeoutThreshold    int     `yaml:"timeout_threshold" json:"timeout_threshold"`
+	LatencyP99Threshold float64 `yaml:"latency_p99_threshold" json:"latency_p99_threshold"`
+	WindowDuration      int     `yaml:"window_duration" json:"window_duration"`
+	CircuitOpenDuration int     `yaml:"circuit_open_duration" json:"circuit_open_duration"`
+	SilentMode          bool    `yaml:"silent_mode" json:"silent_mode"`
+	DropPercentWhenOpen int     `yaml:"drop_percent_when_open" json:"drop_percent_when_open"`
+}
+
+// ============================================================
+// 自监控配置模型
+// ============================================================
+
+// SelfMonitorConfig 自监控配置
+type SelfMonitorConfig struct {
+	Enabled           bool    `yaml:"enabled" json:"enabled"`
+	IntervalSec       int     `yaml:"interval_sec" json:"interval_sec"`
+	HeartbeatEnabled  bool    `yaml:"heartbeat_enabled" json:"heartbeat_enabled"`
+	StatusEnabled     bool    `yaml:"status_enabled" json:"status_enabled"`
+	ResourceEnabled   bool    `yaml:"resource_enabled" json:"resource_enabled"`
+	HistoryEnabled    bool    `yaml:"history_enabled" json:"history_enabled"`
+	ReportEndpoint    string  `yaml:"report_endpoint" json:"report_endpoint"`
+	ReportTimeout     int     `yaml:"report_timeout" json:"report_timeout"`
+	CPUWarningThreshold float64 `yaml:"cpu_warning_threshold" json:"cpu_warning_threshold"`
+	MemoryWarningThreshold float64 `yaml:"memory_warning_threshold" json:"memory_warning_threshold"`
+}
+
+// ============================================================
+// AgentConfig 主配置模型扩展
+// ============================================================
+
+// ReliableTransportConfig 可靠传输配置
+type ReliableTransportConfig struct {
+	Enabled      bool `yaml:"enabled" json:"enabled"`
+	WindowSize   int  `yaml:"window_size" json:"window_size"`
+	RetryCount   int  `yaml:"retry_count" json:"retry_count"`
+	RetryInterval int  `yaml:"retry_interval" json:"retry_interval"`
+	AckTimeout   int  `yaml:"ack_timeout" json:"ack_timeout"`
+	DedupeEnabled bool `yaml:"dedupe_enabled" json:"dedupe_enabled"`
+	DedupeSize   int  `yaml:"dedupe_size" json:"dedupe_size"`
+	DedupeWindow int  `yaml:"dedupe_window" json:"dedupe_window"`
+}

@@ -345,6 +345,7 @@ type Config struct {
 	RCA         RCAConfig         `yaml:"rca" json:"rca"`
 	Tracing     TracingConfig     `yaml:"tracing" json:"tracing"`
 	HealthScore HealthScoreConfig `yaml:"health_score" json:"health_score"`
+	PCAPStorage PCAPStorageConfig `yaml:"pcap_storage" json:"pcap_storage"`
 }
 
 // ============================================================
@@ -655,4 +656,38 @@ type PoolConfig struct {
 	SubnetCIDRs []string          `yaml:"subnet_cidrs" json:"subnet_cidrs,omitempty"`
 	Hosts       []string          `yaml:"hosts" json:"hosts,omitempty"`
 	Labels      map[string]string `yaml:"labels" json:"labels,omitempty"`
+}
+
+// ============================================================
+// 全包存储与回放配置模型
+// ============================================================
+
+// PCAPStorageConfig 全包存储配置
+type PCAPStorageConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`
+	BaseDir         string `yaml:"base_dir" json:"base_dir"`                           // 存储根目录
+	BlockDuration   int    `yaml:"block_duration" json:"block_duration"`               // 每个块的时间跨度（分钟）
+	MaxBlockSize    int    `yaml:"max_block_size" json:"max_block_size"`               // 单个块最大大小 (MB)
+	CompressEnabled bool   `yaml:"compress_enabled" json:"compress_enabled"`           // 启用压缩
+	CompressLevel   int    `yaml:"compress_level" json:"compress_level"`               // 压缩级别 1-9
+	IndexEnabled    bool   `yaml:"index_enabled" json:"index_enabled"`                 // 启用索引
+	MaxRetention    int    `yaml:"max_retention" json:"max_retention"`                 // 最大保留时间（小时）
+	MaxTotalSize    int    `yaml:"max_total_size" json:"max_total_size"`               // 最大总容量 (GB)
+	WriteBufferSize int    `yaml:"write_buffer_size" json:"write_buffer_size"`         // 写缓冲区大小
+	FlushInterval   int    `yaml:"flush_interval" json:"flush_interval"`               // 刷新间隔（秒）
+	Replay          PCAPReplayConfig `yaml:"replay" json:"replay"`                            // 回放配置
+}
+
+// PCAPReplayConfig 全包回放配置
+type PCAPReplayConfig struct {
+	Enabled         bool     `yaml:"enabled" json:"enabled"`
+	DefaultSpeed    float64  `yaml:"default_speed" json:"default_speed"`               // 默认倍速
+	MinSpeed        float64  `yaml:"min_speed" json:"min_speed"`                       // 最小倍速
+	MaxSpeed        float64  `yaml:"max_speed" json:"max_speed"`                       // 最大倍速
+	BufferSize      int      `yaml:"buffer_size" json:"buffer_size"`                   // 回放缓冲区大小
+	LoopEnabled     bool     `yaml:"loop_enabled" json:"loop_enabled"`                 // 循环回放
+	FilterRewrite   bool     `yaml:"filter_rewrite" json:"filter_rewrite"`             // 重写过滤
+	TargetInterface string   `yaml:"target_interface" json:"target_interface"`         // 目标接口
+	PauseOnError    bool     `yaml:"pause_on_error" json:"pause_on_error"`             // 错误时暂停
+	MaxConcurrent   int      `yaml:"max_concurrent" json:"max_concurrent"`             // 最大并发回放数
 }

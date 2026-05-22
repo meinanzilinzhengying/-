@@ -547,3 +547,33 @@ health_score:
     #   labels:
     #     region: "shanghai"
     #     tier: "production"
+
+# ============================================================
+# 全包存储与回放配置
+# 支持指定时间窗口抓包存储、按时间检索、流量回放
+# ============================================================
+pcap_storage:
+  enabled: true                   # 启用全包存储（默认开启）
+  base_dir: "/var/lib/cloud-flow/pcap"  # 存储根目录
+  block_duration: 5               # 每个块的时间跨度（分钟）
+  max_block_size: 100             # 单个块最大大小 (MB)
+  compress_enabled: true          # 启用压缩
+  compress_level: 6               # 压缩级别 1-9
+  index_enabled: true             # 启用索引
+  max_retention: 168              # 最大保留时间（小时，默认7天）
+  max_total_size: 100             # 最大总容量 (GB)
+  write_buffer_size: 1000         # 写缓冲区大小
+  flush_interval: 5               # 刷新间隔（秒）
+
+  # 回放配置
+  replay:
+    enabled: true                 # 启用回放功能
+    default_speed: 1.0            # 默认倍速
+    min_speed: 0.1                # 最小倍速
+    max_speed: 16.0               # 最大倍速
+    buffer_size: 1000             # 回放缓冲区大小
+    loop_enabled: false           # 循环回放
+    filter_rewrite: false         # 重写过滤
+    target_interface: ""          # 目标接口
+    pause_on_error: false         # 错误时暂停
+    max_concurrent: 5             # 最大并发回放数

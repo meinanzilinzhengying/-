@@ -371,6 +371,9 @@ type Config struct {
 	Topology        TopologyConfig       `yaml:"topology" json:"topology"`
 	AssetDrilldown  AssetDrilldownConfig `yaml:"asset_drilldown" json:"asset_drilldown"`
 	Query           QueryConfig          `yaml:"query" json:"query"`
+	CollectorManager CollectorManagerConfig `yaml:"collector_manager" json:"collector_manager"`
+	TenantView      TenantViewConfig     `yaml:"tenant_view" json:"tenant_view"`
+	AlertHighlight  AlertHighlightConfig `yaml:"alert_highlight" json:"alert_highlight"`
 }
 
 // ============================================================
@@ -1809,4 +1812,118 @@ type QueryAPIConfig struct {
 	RateLimit    int    `yaml:"rate_limit" json:"rate_limit"`                 // 限流（请求/分钟）
 	ReadTimeout  int    `yaml:"read_timeout" json:"read_timeout"`             // 读超时（秒）
 	WriteTimeout int    `yaml:"write_timeout" json:"write_timeout"`           // 写超时（秒）
+}
+
+// ============================================================
+// 采集器管理配置模型
+// ============================================================
+
+// CollectorManagerConfig 采集器管理配置
+type CollectorManagerConfig struct {
+	Enabled           bool                     `yaml:"enabled" json:"enabled"`                           // 启用采集器管理
+	WebPort           int                      `yaml:"web_port" json:"web_port"`                         // Web管理端口
+	AuthEnabled       bool                     `yaml:"auth_enabled" json:"auth_enabled"`                 // 启用认证
+	JWTSecret         string                   `yaml:"jwt_secret" json:"jwt_secret"`                     // JWT密钥
+	SessionTimeout    int                      `yaml:"session_timeout" json:"session_timeout"`           // 会话超时（秒）
+	MaxProbes         int                      `yaml:"max_probes" json:"max_probes"`                     // 最大探针数
+	DeployTimeout     int                      `yaml:"deploy_timeout" json:"deploy_timeout"`             // 部署超时（秒）
+	HeartbeatInterval int                      `yaml:"heartbeat_interval" json:"heartbeat_interval"`     // 心跳间隔（秒）
+	DefaultCollectors []CollectorProbeConfig   `yaml:"default_collectors" json:"default_collectors"`     // 默认采集器配置
+}
+
+// CollectorProbeConfig 采集器探针配置
+type CollectorProbeConfig struct {
+	ID       string                 `yaml:"id" json:"id"`                                     // 探针ID
+	Name     string                 `yaml:"name" json:"name"`                                 // 探针名称
+	Type     string                 `yaml:"type" json:"type"`                                 // 探针类型
+	Host     string                 `yaml:"host" json:"host"`                                 // 目标主机
+	Port     int                    `yaml:"port" json:"port"`                                 // 目标端口
+	Enabled  bool                   `yaml:"enabled" json:"enabled"`                           // 是否启用
+	AutoStart bool                  `yaml:"auto_start" json:"auto_start"`                     // 自动启动
+	Interval int                    `yaml:"interval" json:"interval"`                         // 采集间隔（秒）
+	Timeout  int                    `yaml:"timeout" json:"timeout"`                           // 超时（秒）
+	Config   map[string]interface{} `yaml:"config" json:"config"`                             // 自定义配置
+	Tags     []string               `yaml:"tags" json:"tags"`                                 // 标签
+	TenantID string                 `yaml:"tenant_id" json:"tenant_id"`                       // 租户ID
+}
+
+// ============================================================
+// 租户视图配置模型
+// ============================================================
+
+// TenantViewConfig 租户视图配置
+type TenantViewConfig struct {
+	Enabled            bool                `yaml:"enabled" json:"enabled"`                           // 启用租户视图
+	DefaultQuota       TenantQuotaSettings `yaml:"default_quota" json:"default_quota"`               // 默认配额
+	SessionTimeout     int                 `yaml:"session_timeout" json:"session_timeout"`           // 会话超时（秒）
+	MaxUsersPerTenant  int                 `yaml:"max_users_per_tenant" json:"max_users_per_tenant"` // 每租户最大用户数
+	EnableRegistration bool                `yaml:"enable_registration" json:"enable_registration"`   // 启用自助注册
+	RequireApproval    bool                `yaml:"require_approval" json:"require_approval"`         // 需要审批
+	DefaultTenants     []DefaultTenantConfig `yaml:"default_tenants" json:"default_tenants"`         // 默认租户
+	DefaultUsers       []DefaultUserConfig   `yaml:"default_users" json:"default_users"`             // 默认用户
+}
+
+// TenantQuotaSettings 租户配额设置
+type TenantQuotaSettings struct {
+	MaxCollectors  int `yaml:"max_collectors" json:"max_collectors"`           // 最大采集器数
+	MaxUsers       int `yaml:"max_users" json:"max_users"`                     // 最大用户数
+	MaxAlerts      int `yaml:"max_alerts" json:"max_alerts"`                   // 最大告警数
+	MaxStorageGB   int `yaml:"max_storage_gb" json:"max_storage_gb"`           // 最大存储(GB)
+	MaxNetworkMbps int `yaml:"max_network_mbps" json:"max_network_mbps"`       // 最大带宽(Mbps)
+	RetentionDays  int `yaml:"retention_days" json:"retention_days"`           // 数据保留天数
+}
+
+// DefaultTenantConfig 默认租户配置
+type DefaultTenantConfig struct {
+	ID          string            `yaml:"id" json:"id"`                                     // 租户ID
+	Name        string            `yaml:"name" json:"name"`                                 // 租户名称
+	Description string            `yaml:"description" json:"description"`                   // 描述
+	Quota       TenantQuotaSettings `yaml:"quota" json:"quota"`                             // 配额
+}
+
+// DefaultUserConfig 默认用户配置
+type DefaultUserConfig struct {
+	ID       string   `yaml:"id" json:"id"`                                     // 用户ID
+	Username string   `yaml:"username" json:"username"`                         // 用户名
+	Email    string   `yaml:"email" json:"email"`                               // 邮箱
+	Role     string   `yaml:"role" json:"role"`                                 // 角色
+	TenantID string   `yaml:"tenant_id" json:"tenant_id"`                       // 所属租户
+}
+
+// ============================================================
+// 告警高亮配置模型
+// ============================================================
+
+// AlertHighlightConfig 告警高亮配置
+type AlertHighlightConfig struct {
+	Enabled           bool                     `yaml:"enabled" json:"enabled"`                           // 启用告警高亮
+	UpdateInterval    int                      `yaml:"update_interval" json:"update_interval"`           // 更新间隔（秒）
+	HighlightDuration int                      `yaml:"highlight_duration" json:"highlight_duration"`     // 高亮持续时间（秒）
+	MaxHighlights     int                      `yaml:"max_highlights" json:"max_highlights"`             // 最大高亮数
+	EnableAnimation   bool                     `yaml:"enable_animation" json:"enable_animation"`         // 启用动画效果
+	EnableSound       bool                     `yaml:"enable_sound" json:"enable_sound"`                 // 启用声音提示
+	SeverityStyles    map[string]SeverityStyle `yaml:"severity_styles" json:"severity_styles"`           // 严重级别样式
+	ImpactAnalysis    ImpactAnalysisConfig     `yaml:"impact_analysis" json:"impact_analysis"`           // 影响分析配置
+}
+
+// SeverityStyle 严重级别样式配置
+type SeverityStyle struct {
+	Color       string  `yaml:"color" json:"color"`                               // 颜色
+	BorderColor string  `yaml:"border_color" json:"border_color"`                 // 边框颜色
+	BorderWidth int     `yaml:"border_width" json:"border_width"`                 // 边框宽度
+	Opacity     float64 `yaml:"opacity" json:"opacity"`                           // 透明度
+	Size        float64 `yaml:"size" json:"size"`                                 // 大小倍数
+	Pulse       bool    `yaml:"pulse" json:"pulse"`                               // 脉冲动画
+	Blink       bool    `yaml:"blink" json:"blink"`                               // 闪烁动画
+	Icon        string  `yaml:"icon" json:"icon"`                                 // 图标
+	Badge       string  `yaml:"badge" json:"badge"`                               // 徽章
+}
+
+// ImpactAnalysisConfig 影响分析配置
+type ImpactAnalysisConfig struct {
+	Enabled           bool `yaml:"enabled" json:"enabled"`                           // 启用影响分析
+	MaxDepth          int  `yaml:"max_depth" json:"max_depth"`                       // 最大分析深度
+	MaxRelatedEntities int `yaml:"max_related_entities" json:"max_related_entities"` // 最大相关实体数
+	PropagationTimeout int `yaml:"propagation_timeout" json:"propagation_timeout"`   // 传播超时（秒）
+	EnablePathDiscovery bool `yaml:"enable_path_discovery" json:"enable_path_discovery"` // 启用路径发现
 }

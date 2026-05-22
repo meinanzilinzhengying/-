@@ -225,3 +225,71 @@ resilience:
       auto_recover: true
       recover_after_sec: 120
       recover_threshold: 5
+
+# ============================================================
+# VXLAN 隧道解封装配置
+# 支持 VXLAN 隧道解封装，提取内层原始流量
+# ============================================================
+vxlan:
+  enabled: false              # 启用 VXLAN 解封装（默认关闭）
+  listen_port: 4789           # VXLAN 监听端口 (RFC 7348)
+  filter_vni: []              # 过滤的 VNI 列表（空=全部）
+  filter_src_ip: []           # 过滤的内层源 IP
+  filter_dst_ip: []           # 过滤的内层目的 IP
+  buffer_size: 65535          # 缓冲区大小
+  max_packet_size: 9000       # 最大包大小（支持 Jumbo Frame）
+
+# ============================================================
+# 流量镜像配置
+# 将解封装后的流量镜像至云下环境
+# ============================================================
+mirror:
+  enabled: false              # 启用流量镜像（默认关闭）
+  source_ip: ""               # 源 IP（用于封装，留空自动获取）
+  source_port: 4789           # 源端口
+  queue_size: 10000           # 队列大小
+  batch_size: 100             # 批量发送大小
+  batch_timeout: 100          # 批量发送超时（毫秒）
+
+  # 流量过滤（可选）
+  filter:
+    src_ips: []               # 过滤源 IP
+    dst_ips: []               # 过滤目的 IP
+    src_ports: []             # 过滤源端口
+    dst_ports: []             # 过滤目的端口
+    protocols: []             # 过滤协议 (6=TCP, 17=UDP)
+    vnis: []                  # 过滤 VNI
+    sample_rate: 100          # 采样率 (1-100)
+
+  # 镜像目标列表
+  targets:
+    # 示例1：通过 VXLAN 隧道镜像到云下
+    # - name: "cloud-onprem-vxlan"
+    #   mode: "vxlan"
+    #   address: "192.168.100.10"
+    #   port: 4789
+    #   vni: 100
+    #   enabled: true
+
+    # 示例2：通过 GRE 隧道镜像
+    # - name: "cloud-onprem-gre"
+    #   mode: "gre"
+    #   address: "192.168.100.20"
+    #   port: 47
+    #   gre_key: 1000
+    #   enabled: true
+
+    # 示例3：通过 UDP 封装镜像
+    # - name: "cloud-onprem-udp"
+    #   mode: "udp"
+    #   address: "192.168.100.30"
+    #   port: 5000
+    #   enabled: true
+
+    # 示例4：通过 ERSPAN 镜像
+    # - name: "cloud-onprem-erspan"
+    #   mode: "erspan"
+    #   address: "192.168.100.40"
+    #   port: 47
+    #   erspan_id: 1
+    #   enabled: true

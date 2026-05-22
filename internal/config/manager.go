@@ -395,6 +395,34 @@ func (m *Manager) setDefaults(config *models.Config) {
 	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.TimeoutSec <= 0 {
 		config.Resilience.CircuitBreaker.TimeoutSec = 10
 	}
+
+	// VXLAN 配置默认值
+	if config.VXLAN.Enabled && config.VXLAN.ListenPort == 0 {
+		config.VXLAN.ListenPort = 4789
+	}
+	if config.VXLAN.Enabled && config.VXLAN.BufferSize <= 0 {
+		config.VXLAN.BufferSize = 65535
+	}
+	if config.VXLAN.Enabled && config.VXLAN.MaxPacketSize <= 0 {
+		config.VXLAN.MaxPacketSize = 9000
+	}
+
+	// Mirror 配置默认值
+	if config.Mirror.Enabled && config.Mirror.SourcePort == 0 {
+		config.Mirror.SourcePort = 4789
+	}
+	if config.Mirror.Enabled && config.Mirror.QueueSize <= 0 {
+		config.Mirror.QueueSize = 10000
+	}
+	if config.Mirror.Enabled && config.Mirror.BatchSize <= 0 {
+		config.Mirror.BatchSize = 100
+	}
+	if config.Mirror.Enabled && config.Mirror.BatchTimeout <= 0 {
+		config.Mirror.BatchTimeout = 100
+	}
+	if config.Mirror.Enabled && config.Mirror.Filter.SampleRate <= 0 {
+		config.Mirror.Filter.SampleRate = 100
+	}
 }
 
 // ToJSON 转换为 JSON

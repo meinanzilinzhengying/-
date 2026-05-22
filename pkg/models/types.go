@@ -271,6 +271,57 @@ type ResilienceConfig struct {
 	Policies            []DegradationPolicyConfig `yaml:"policies" json:"policies"`
 }
 
+// ============================================================
+// VXLAN 隧道解封装配置模型
+// ============================================================
+
+// VXLANConfig VXLAN 解封装配置
+type VXLANConfig struct {
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	ListenPort    uint16   `yaml:"listen_port" json:"listen_port"`       // VXLAN 监听端口 (默认 4789)
+	FilterVNI     []uint32 `yaml:"filter_vni" json:"filter_vni"`         // 过滤的 VNI 列表
+	FilterSrcIP   []string `yaml:"filter_src_ip" json:"filter_src_ip"`   // 过滤的内层源 IP
+	FilterDstIP   []string `yaml:"filter_dst_ip" json:"filter_dst_ip"`   // 过滤的内层目的 IP
+	BufferSize    int      `yaml:"buffer_size" json:"buffer_size"`       // 缓冲区大小
+	MaxPacketSize int      `yaml:"max_packet_size" json:"max_packet_size"` // 最大包大小
+}
+
+// MirrorTargetConfig 镜像目标配置
+type MirrorTargetConfig struct {
+	Name        string `yaml:"name" json:"name"`
+	Mode        string `yaml:"mode" json:"mode"`             // raw/gre/vxlan/udp/erspan
+	Address     string `yaml:"address" json:"address"`       // 目标地址
+	Port        uint16 `yaml:"port" json:"port"`             // 目标端口
+	VNI         uint32 `yaml:"vni" json:"vni"`               // VXLAN VNI
+	GREKey      uint32 `yaml:"gre_key" json:"gre_key"`       // GRE Key
+	ERSPANID    uint32 `yaml:"erspan_id" json:"erspan_id"`   // ERSPAN Session ID
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	BufferSize  int    `yaml:"buffer_size" json:"buffer_size"`
+}
+
+// MirrorFilterConfig 镜像过滤配置
+type MirrorFilterConfig struct {
+	SrcIPs     []string `yaml:"src_ips" json:"src_ips"`
+	DstIPs     []string `yaml:"dst_ips" json:"dst_ips"`
+	SrcPorts   []uint16 `yaml:"src_ports" json:"src_ports"`
+	DstPorts   []uint16 `yaml:"dst_ports" json:"dst_ports"`
+	Protocols  []uint8  `yaml:"protocols" json:"protocols"`   // 6=TCP, 17=UDP
+	VNIs       []uint32 `yaml:"vnis" json:"vnis"`
+	SampleRate int      `yaml:"sample_rate" json:"sample_rate"` // 1-100
+}
+
+// MirrorConfig 流量镜像配置
+type MirrorConfig struct {
+	Enabled      bool                `yaml:"enabled" json:"enabled"`
+	SourceIP     string              `yaml:"source_ip" json:"source_ip"`       // 源 IP（用于封装）
+	SourcePort   uint16              `yaml:"source_port" json:"source_port"`   // 源端口
+	QueueSize    int                 `yaml:"queue_size" json:"queue_size"`     // 队列大小
+	BatchSize    int                 `yaml:"batch_size" json:"batch_size"`     // 批量发送大小
+	BatchTimeout int                 `yaml:"batch_timeout" json:"batch_timeout"` // 批量发送超时（毫秒）
+	Filter       MirrorFilterConfig  `yaml:"filter" json:"filter"`             // 流量过滤
+	Targets      []MirrorTargetConfig `yaml:"targets" json:"targets"`          // 镜像目标列表
+}
+
 // Config 配置结构
 type Config struct {
 	Agent       AgentConfig       `yaml:"agent" json:"agent"`
@@ -282,6 +333,8 @@ type Config struct {
 	Failover    FailoverConfig    `yaml:"failover" json:"failover"`
 	VIP         VIPConfig         `yaml:"vip" json:"vip"`
 	Resilience  ResilienceConfig  `yaml:"resilience" json:"resilience"`
+	VXLAN       VXLANConfig       `yaml:"vxlan" json:"vxlan"`
+	Mirror      MirrorConfig      `yaml:"mirror" json:"mirror"`
 }
 
 // AgentConfig Agent 配置

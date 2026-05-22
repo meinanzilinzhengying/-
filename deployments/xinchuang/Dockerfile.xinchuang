@@ -1,0 +1,307 @@
+# Cloud Flow Agent - 信创镜像 Dockerfile
+# 支持麒麟(Kylin)、统信(UOS)、EulerOS等信创操作系统
+# 多架构支持：x86_64(海光)、aarch64(鲲鹏/飞腾)、mips64el(龙芯)、loongarch64(龙芯新架构)
+
+# ==================== 构建阶段 ====================
+# 使用官方Go镜像作为构建基础
+FROM golang:1.22-bookworm AS builder
+
+# 构建参数
+ARG TARGETARCH
+ARG TARGETOS
+ARG VERSION=dev
+ARG BUILD_TIME
+ARG GIT_COMMIT
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y \
+    git \
+    make \
+    gcc \
+    g++ \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置工作目录
+WORKDIR /build
+
+# 复制依赖文件
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制源码
+COPY . .
+
+# 构建二进制（静态链接）
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}" \
+    -o /build/cloud-flow-agent ./cmd/agent
+
+# ==================== 麒麟系统 (Kylin V10) ====================
+FROM openkylin/openkylin:v10-1 AS kylin
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    tzdata \
+    procps \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent (Kylin)"
+LABEL org.opencontainers.image.description="Cloud Flow Agent for Kylin V10 OS"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"
+LABEL com.kylin.os.version="V10"
+
+# ==================== 统信UOS (UnionTech OS) ====================
+FROM uniontech/uos:v20 AS uos
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    tzdata \
+    procps \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent (UOS)"
+LABEL org.opencontainers.image.description="Cloud Flow Agent for UnionTech UOS"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"
+LABEL com.uos.version="V20"
+
+# ==================== EulerOS (华为欧拉) ====================
+FROM openeuler/openeuler:22.03-lts AS euler
+
+# 安装运行时依赖
+RUN yum install -y \
+    ca-certificates \
+    tzdata \
+    procps-ng \
+    curl \
+    && yum clean all
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent (EulerOS)"
+LABEL org.opencontainers.image.description="Cloud Flow Agent for openEuler/EulerOS"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"
+LABEL com.openeuler.version="22.03-lts"
+
+# ==================== 龙芯镜像 (LoongArch64) ====================
+FROM loongarch64/debian:sid AS loongarch
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    tzdata \
+    procps \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent (LoongArch64)"
+LABEL org.opencontainers.image.description="Cloud Flow Agent for Loongson LoongArch64"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"
+LABEL com.loongson.arch="loongarch64"
+
+# ==================== 鲲鹏镜像 (Kunpeng/ARM64) ====================
+FROM alpine:3.19 AS kunpeng
+
+# 安装运行时依赖
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    procps \
+    curl
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent (Kunpeng)"
+LABEL org.opencontainers.image.description="Cloud Flow Agent for Huawei Kunpeng ARM64"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"
+LABEL com.huawei.arch="kunpeng"
+
+# ==================== 海光镜像 (Hygon/x86_64) ====================
+FROM alpine:3.19 AS hygon
+
+# 安装运行时依赖
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    procps \
+    curl
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent (Hygon)"
+LABEL org.opencontainers.image.description="Cloud Flow Agent for Hygon x86_64"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"
+LABEL com.hygon.arch="x86_64"
+
+# ==================== 默认输出 ====================
+FROM alpine:3.19 AS default
+
+# 安装运行时依赖
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    procps \
+    curl
+
+# 创建目录
+WORKDIR /app
+RUN mkdir -p /var/log/cloud-flow /etc/cloud-flow
+
+# 复制二进制
+COPY --from=builder /build/cloud-flow-agent /app/
+COPY configs/agent.yaml /etc/cloud-flow/agent.yaml
+
+# 设置环境变量
+ENV CLOUD_FLOW_CONFIG=/etc/cloud-flow/agent.yaml
+ENV TZ=Asia/Shanghai
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep cloud-flow-agent || exit 1
+
+# 运行
+EXPOSE 9090
+ENTRYPOINT ["/app/cloud-flow-agent"]
+CMD ["-config", "/etc/cloud-flow/agent.yaml"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Agent"
+LABEL org.opencontainers.image.description="Cloud Flow Agent - Universal Image"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.vendor="Cloud Flow"

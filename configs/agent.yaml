@@ -53,3 +53,45 @@ asset_drilldown:
     rate_limit: 1000              # 限流（请求/分钟）
     read_timeout: 30              # 读超时（秒）
     write_timeout: 30             # 写超时（秒）
+
+# ============================================================
+# 数据检索配置
+# 支持网络/应用/SQL多条件筛选和历史趋势图
+# ============================================================
+query:
+  enabled: true                   # 启用数据检索
+  
+  # 筛选引擎配置
+  filter:
+    enabled: true                 # 启用筛选引擎
+    driver: "sqlite"              # 驱动: sqlite/mysql/postgres
+    dsn: "/var/lib/cloud-flow/query.db"  # 数据源
+    max_connections: 10           # 最大连接数
+    query_timeout_sec: 30         # 查询超时（秒）
+    enable_cache: true            # 启用查询缓存
+    cache_ttl_sec: 60             # 缓存TTL（秒）
+  
+  # 趋势生成器配置
+  trend:
+    enabled: true                 # 启用趋势生成
+    default_granularity: "5m"     # 默认时间粒度: 1s/10s/1m/5m/1h/1d
+    max_data_points: 1000         # 最大数据点数
+    enable_compare: true          # 启用同比/环比
+    smooth_window: 3              # 平滑窗口
+    fill_gap: true                # 填充数据间隙
+    supported_types:              # 支持的趋势类型
+      - "line"
+      - "area"
+      - "bar"
+      - "stacked"
+      - "step"
+  
+  # 数据检索API配置
+  api:
+    enabled: true                 # 启用API
+    listen_addr: ":8083"          # 监听地址
+    auth_enabled: false           # 启用认证
+    auth_token: ""                # 认证Token
+    rate_limit: 1000              # 限流（请求/分钟）
+    read_timeout: 30              # 读超时（秒）
+    write_timeout: 30             # 写超时（秒）

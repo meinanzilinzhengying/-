@@ -370,6 +370,7 @@ type Config struct {
 	Recovery        RecoveryConfig       `yaml:"recovery" json:"recovery"`
 	Topology        TopologyConfig       `yaml:"topology" json:"topology"`
 	AssetDrilldown  AssetDrilldownConfig `yaml:"asset_drilldown" json:"asset_drilldown"`
+	Query           QueryConfig          `yaml:"query" json:"query"`
 }
 
 // ============================================================
@@ -1756,6 +1757,51 @@ type AssetDrilldownStorageConfig struct {
 
 // AssetDrilldownAPIConfig 资产下钻API配置
 type AssetDrilldownAPIConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`                       // 启用API
+	ListenAddr   string `yaml:"listen_addr" json:"listen_addr"`               // 监听地址
+	AuthEnabled  bool   `yaml:"auth_enabled" json:"auth_enabled"`             // 启用认证
+	AuthToken    string `yaml:"auth_token" json:"auth_token"`                 // 认证Token
+	RateLimit    int    `yaml:"rate_limit" json:"rate_limit"`                 // 限流（请求/分钟）
+	ReadTimeout  int    `yaml:"read_timeout" json:"read_timeout"`             // 读超时（秒）
+	WriteTimeout int    `yaml:"write_timeout" json:"write_timeout"`           // 写超时（秒）
+}
+
+// ============================================================
+// 数据检索配置模型
+// ============================================================
+
+// QueryConfig 数据检索配置
+type QueryConfig struct {
+	Enabled      bool              `yaml:"enabled" json:"enabled"`           // 启用数据检索
+	Filter       QueryFilterConfig `yaml:"filter" json:"filter"`             // 筛选引擎配置
+	Trend        QueryTrendConfig  `yaml:"trend" json:"trend"`               // 趋势生成器配置
+	API          QueryAPIConfig    `yaml:"api" json:"api"`                   // API配置
+}
+
+// QueryFilterConfig 筛选引擎配置
+type QueryFilterConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`                   // 启用筛选引擎
+	Driver          string `yaml:"driver" json:"driver"`                     // 驱动: sqlite/mysql/postgres
+	DSN             string `yaml:"dsn" json:"dsn"`                           // 数据源
+	MaxConnections  int    `yaml:"max_connections" json:"max_connections"`   // 最大连接数
+	QueryTimeoutSec int    `yaml:"query_timeout_sec" json:"query_timeout_sec"` // 查询超时（秒）
+	EnableCache     bool   `yaml:"enable_cache" json:"enable_cache"`         // 启用查询缓存
+	CacheTTLSec     int    `yaml:"cache_ttl_sec" json:"cache_ttl_sec"`       // 缓存TTL（秒）
+}
+
+// QueryTrendConfig 趋势生成器配置
+type QueryTrendConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`                       // 启用趋势生成
+	DefaultGranularity string  `yaml:"default_granularity" json:"default_granularity"` // 默认时间粒度
+	MaxDataPoints     int      `yaml:"max_data_points" json:"max_data_points"`       // 最大数据点数
+	EnableCompare     bool     `yaml:"enable_compare" json:"enable_compare"`         // 启用同比/环比
+	SmoothWindow      int      `yaml:"smooth_window" json:"smooth_window"`           // 平滑窗口
+	FillGap           bool     `yaml:"fill_gap" json:"fill_gap"`                     // 填充数据间隙
+	SupportedTypes    []string `yaml:"supported_types" json:"supported_types"`       // 支持的趋势类型
+}
+
+// QueryAPIConfig 数据检索API配置
+type QueryAPIConfig struct {
 	Enabled      bool   `yaml:"enabled" json:"enabled"`                       // 启用API
 	ListenAddr   string `yaml:"listen_addr" json:"listen_addr"`               // 监听地址
 	AuthEnabled  bool   `yaml:"auth_enabled" json:"auth_enabled"`             // 启用认证

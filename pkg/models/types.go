@@ -1346,3 +1346,74 @@ type AlertNotificationConfig struct {
 	RepeatInterval int      `yaml:"repeat_interval" json:"repeat_interval"`         // 重复间隔（秒）
 	MaxPerHour     int      `yaml:"max_per_hour" json:"max_per_hour"`               // 每小时最大通知数
 }
+
+// ============================================================
+// RBAC权限控制配置模型
+// ============================================================
+
+// RBACConfig RBAC权限控制配置
+type RBACConfig struct {
+	Enabled          bool             `yaml:"enabled" json:"enabled"`                           // 启用RBAC
+	DefaultTenantID  string           `yaml:"default_tenant_id" json:"default_tenant_id"`       // 默认租户ID
+	AllowSelfSignup  bool             `yaml:"allow_self_signup" json:"allow_self_signup"`       // 允许自助注册
+	RequireMFA       bool             `yaml:"require_mfa" json:"require_mfa"`                   // 需要MFA
+	SessionTimeout   int              `yaml:"session_timeout" json:"session_timeout"`           // 会话超时（秒）
+	MaxLoginAttempts int              `yaml:"max_login_attempts" json:"max_login_attempts"`     // 最大登录尝试次数
+	Tenants          []TenantConfig   `yaml:"tenants" json:"tenants"`                           // 租户配置
+	Users            []UserConfig     `yaml:"users" json:"users"`                               // 用户配置
+	Groups           []UserGroupConfig `yaml:"groups" json:"groups"`                            // 用户组配置
+	Roles            []RoleConfig     `yaml:"roles" json:"roles"`                               // 角色配置
+}
+
+// TenantConfig 租户配置
+type TenantConfig struct {
+	ID          string       `yaml:"id" json:"id"`                                     // 租户ID
+	Name        string       `yaml:"name" json:"name"`                                 // 租户名称
+	Description string       `yaml:"description" json:"description"`                   // 描述
+	Status      string       `yaml:"status" json:"status"`                             // 状态: active/suspended/deleted
+	Quota       TenantQuotaConfig `yaml:"quota" json:"quota"`                          // 配额配置
+	Settings    map[string]string `yaml:"settings" json:"settings"`                      // 设置
+}
+
+// TenantQuotaConfig 租户配额配置
+type TenantQuotaConfig struct {
+	MaxUsers     int   `yaml:"max_users" json:"max_users"`                         // 最大用户数
+	MaxGroups    int   `yaml:"max_groups" json:"max_groups"`                       // 最大组数
+	MaxResources int   `yaml:"max_resources" json:"max_resources"`                 // 最大资源数
+	MaxDataSize  int64 `yaml:"max_data_size" json:"max_data_size"`                 // 最大数据大小 (GB)
+	MaxBandwidth int64 `yaml:"max_bandwidth" json:"max_bandwidth"`                 // 最大带宽 (MB/s)
+	MaxAlerts    int   `yaml:"max_alerts" json:"max_alerts"`                       // 最大告警数
+	MaxRetention int   `yaml:"max_retention" json:"max_retention"`                 // 最大保留天数
+}
+
+// UserConfig 用户配置
+type UserConfig struct {
+	ID       string   `yaml:"id" json:"id"`                                       // 用户ID
+	Username string   `yaml:"username" json:"username"`                           // 用户名
+	Email    string   `yaml:"email" json:"email"`                                 // 邮箱
+	Phone    string   `yaml:"phone" json:"phone"`                                 // 电话
+	TenantID string   `yaml:"tenant_id" json:"tenant_id"`                         // 所属租户
+	Roles    []string `yaml:"roles" json:"roles"`                                 // 角色列表
+	Groups   []string `yaml:"groups" json:"groups"`                               // 所属组
+	Status   string   `yaml:"status" json:"status"`                               // 状态: active/inactive/locked/deleted
+}
+
+// UserGroupConfig 用户组配置
+type UserGroupConfig struct {
+	ID          string   `yaml:"id" json:"id"`                                     // 组ID
+	Name        string   `yaml:"name" json:"name"`                                 // 组名称
+	Description string   `yaml:"description" json:"description"`                   // 描述
+	TenantID    string   `yaml:"tenant_id" json:"tenant_id"`                       // 所属租户
+	ParentID    string   `yaml:"parent_id" json:"parent_id"`                       // 父组ID
+	Members     []string `yaml:"members" json:"members"`                           // 成员ID列表
+	Roles       []string `yaml:"roles" json:"roles"`                               // 组角色
+	Status      string   `yaml:"status" json:"status"`                             // 状态
+}
+
+// RoleConfig 角色配置
+type RoleConfig struct {
+	ID          string   `yaml:"id" json:"id"`                                     // 角色ID
+	Name        string   `yaml:"name" json:"name"`                                 // 角色名称
+	Description string   `yaml:"description" json:"description"`                   // 描述
+	Permissions []string `yaml:"permissions" json:"permissions"`                   // 权限列表
+}

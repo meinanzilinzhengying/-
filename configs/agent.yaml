@@ -1354,6 +1354,184 @@ alert_manager:
         repeat_interval: 3600
         max_per_hour: 10
 
+# ============================================================
+# RBAC权限控制配置
+# 支持租户隔离、用户组、角色权限分级
+# ============================================================
+rbac:
+  enabled: true                   # 启用RBAC权限控制（默认开启）
+  default_tenant_id: "default"    # 默认租户ID
+  allow_self_signup: false        # 禁止自助注册
+  require_mfa: false              # 不需要MFA
+  session_timeout: 3600           # 会话超时（秒）
+  max_login_attempts: 5           # 最大登录尝试次数
+
+  # 租户配置
+  tenants:
+    - id: "default"
+      name: "默认租户"
+      description: "系统默认租户"
+      status: "active"
+      quota:
+        max_users: 100
+        max_groups: 20
+        max_resources: 1000
+        max_data_size: 100          # GB
+        max_bandwidth: 100          # MB/s
+        max_alerts: 1000
+        max_retention: 90           # days
+      settings:
+        timezone: "Asia/Shanghai"
+        language: "zh-CN"
+
+  # 角色配置（内置角色）
+  roles:
+    - id: "super_admin"
+      name: "超级管理员"
+      description: "全系统管理员，拥有所有权限"
+      permissions:
+        - "system:admin"
+        - "tenant:*"
+        - "user:*"
+        - "group:*"
+        - "resource:*"
+        - "data:*"
+        - "alert:*"
+        - "config:*"
+        - "audit:*"
+
+    - id: "tenant_admin"
+      name: "租户管理员"
+      description: "租户内所有权限"
+      permissions:
+        - "tenant:read"
+        - "tenant:update"
+        - "tenant:manage"
+        - "user:*"
+        - "group:*"
+        - "resource:*"
+        - "data:*"
+        - "alert:*"
+        - "config:read"
+        - "config:write"
+        - "audit:read"
+
+    - id: "tenant_operator"
+      name: "租户操作员"
+      description: "租户内操作权限"
+      permissions:
+        - "tenant:read"
+        - "user:read"
+        - "user:update"
+        - "group:read"
+        - "resource:create"
+        - "resource:read"
+        - "resource:update"
+        - "data:collect"
+        - "data:read"
+        - "data:export"
+        - "alert:create"
+        - "alert:read"
+        - "alert:update"
+        - "config:read"
+
+    - id: "tenant_viewer"
+      name: "租户观察员"
+      description: "租户内只读权限"
+      permissions:
+        - "tenant:read"
+        - "user:read"
+        - "group:read"
+        - "resource:read"
+        - "data:read"
+        - "alert:read"
+        - "config:read"
+
+    - id: "auditor"
+      name: "审计员"
+      description: "审计权限"
+      permissions:
+        - "system:read"
+        - "tenant:read"
+        - "user:read"
+        - "group:read"
+        - "resource:read"
+        - "data:read"
+        - "alert:read"
+        - "config:read"
+        - "audit:read"
+        - "audit:all"
+
+    - id: "guest"
+      name: "访客"
+      description: "访客权限"
+      permissions:
+        - "resource:read"
+        - "data:read"
+
+  # 用户组配置
+  groups:
+    - id: "ops_team"
+      name: "运维团队"
+      description: "运维操作团队"
+      tenant_id: "default"
+      roles:
+        - "tenant_operator"
+      members:
+        - "user_001"
+        - "user_002"
+
+    - id: "dev_team"
+      name: "开发团队"
+      description: "开发团队"
+      tenant_id: "default"
+      roles:
+        - "tenant_viewer"
+      members:
+        - "user_003"
+        - "user_004"
+
+  # 用户配置（示例用户）
+  users:
+    - id: "admin"
+      username: "admin"
+      email: "admin@example.com"
+      tenant_id: "default"
+      roles:
+        - "super_admin"
+      groups: []
+      status: "active"
+
+    - id: "user_001"
+      username: "ops_user1"
+      email: "ops1@example.com"
+      tenant_id: "default"
+      roles:
+        - "tenant_operator"
+      groups:
+        - "ops_team"
+      status: "active"
+
+    - id: "user_002"
+      username: "ops_user2"
+      email: "ops2@example.com"
+      tenant_id: "default"
+      roles:
+        - "tenant_operator"
+      groups:
+        - "ops_team"
+      status: "active"
+
+    - id: "user_003"
+      username: "dev_user1"
+      email: "dev1@example.com"
+      tenant_id: "default"
+      roles:
+        - "tenant_viewer"
+      groups:
+        - "dev_team"
+      status: "active"
+
     # 网络时延严重告警
     - id: "network_latency_critical"
       name: "网络时延严重超标"

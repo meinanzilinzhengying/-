@@ -460,3 +460,32 @@ rca:
   max_incident_age: 3600      # 最大事件保留时间（秒）
   analysis_interval: 30       # 分析间隔（秒）
   max_root_causes: 3          # 最大根因数量
+
+# ============================================================
+# 分布式追踪配置
+# TraceID跨服务/网络追踪，关联进程剖析
+# ============================================================
+tracing:
+  enabled: true                   # 启用分布式追踪（默认开启）
+  service_name: ""                # 服务名称，留空自动获取
+  sample_rate: 0.1                # 采样率 (0-1)，默认10%
+  propagation_format: "both"      # 传播格式: w3c, b3, both
+  max_spans_per_trace: 1000       # 每个Trace最大Span数
+  max_trace_duration: 300         # Trace最大持续时间（秒）
+  buffer_size: 10000              # 缓冲区大小
+  report_interval: 30             # 报告间隔（秒）
+  enable_process_profile: true    # 启用进程剖析关联
+  enable_network_trace: true      # 启用网络路径追踪
+  
+  # 全局标签
+  tags:
+    environment: "production"
+    datacenter: "default"
+  
+  # Header传播配置
+  header_propagation:
+    inherit_incoming: true        # 继承传入的TraceID
+    inject_outgoing: true         # 向 outgoing 请求注入TraceID
+    custom_headers:               # 自定义传播Header
+      - "x-request-id"
+      - "x-correlation-id"

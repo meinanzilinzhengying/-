@@ -343,6 +343,7 @@ type Config struct {
 	AIModel     AIModelConfig     `yaml:"ai_model" json:"ai_model"`
 	Alert       AlertConfig       `yaml:"alert" json:"alert"`
 	RCA         RCAConfig         `yaml:"rca" json:"rca"`
+	Tracing     TracingConfig     `yaml:"tracing" json:"tracing"`
 }
 
 // ============================================================
@@ -575,4 +576,31 @@ type RCAConfig struct {
 	MaxIncidentAge       int    `yaml:"max_incident_age" json:"max_incident_age"`       // 最大事件保留时间（秒）
 	AnalysisInterval     int    `yaml:"analysis_interval" json:"analysis_interval"`     // 分析间隔（秒）
 	MaxRootCauses        int    `yaml:"max_root_causes" json:"max_root_causes"`         // 最大根因数量
+}
+
+// ============================================================
+// 分布式追踪配置模型
+// ============================================================
+
+// TracingConfig 分布式追踪配置
+type TracingConfig struct {
+	Enabled              bool                 `yaml:"enabled" json:"enabled"`
+	ServiceName          string               `yaml:"service_name" json:"service_name"`           // 服务名称
+	SampleRate           float64              `yaml:"sample_rate" json:"sample_rate"`             // 采样率 (0-1)
+	PropagationFormat    string               `yaml:"propagation_format" json:"propagation_format"` // 传播格式: w3c, b3, both
+	MaxSpansPerTrace     int                  `yaml:"max_spans_per_trace" json:"max_spans_per_trace"` // 每个Trace最大Span数
+	MaxTraceDuration     int                  `yaml:"max_trace_duration" json:"max_trace_duration"`   // Trace最大持续时间（秒）
+	BufferSize           int                  `yaml:"buffer_size" json:"buffer_size"`               // 缓冲区大小
+	ReportInterval       int                  `yaml:"report_interval" json:"report_interval"`       // 报告间隔（秒）
+	EnableProcessProfile bool                 `yaml:"enable_process_profile" json:"enable_process_profile"` // 启用进程剖析
+	EnableNetworkTrace   bool                 `yaml:"enable_network_trace" json:"enable_network_trace"`     // 启用网络追踪
+	Tags                 map[string]string    `yaml:"tags" json:"tags"`                             // 全局标签
+	HeaderPropagation    HeaderPropagationConfig `yaml:"header_propagation" json:"header_propagation"` // Header传播配置
+}
+
+// HeaderPropagationConfig Header传播配置
+type HeaderPropagationConfig struct {
+	InheritIncoming bool     `yaml:"inherit_incoming" json:"inherit_incoming"` // 继承传入的TraceID
+	InjectOutgoing    bool     `yaml:"inject_outgoing" json:"inject_outgoing"`     // 向 outgoing 请求注入TraceID
+	CustomHeaders     []string `yaml:"custom_headers" json:"custom_headers"`       // 自定义传播Header
 }

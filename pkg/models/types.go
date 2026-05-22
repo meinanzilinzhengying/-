@@ -338,6 +338,7 @@ type Config struct {
 	Protocol    ProtocolConfig    `yaml:"protocol" json:"protocol"`
 	PacketLoss  PacketLossConfig  `yaml:"packet_loss" json:"packet_loss"`
 	TimeSync    TimeSyncConfig    `yaml:"time_sync" json:"time_sync"`
+	Profiler    ProfilerConfig    `yaml:"profiler" json:"profiler"`
 }
 
 // ============================================================
@@ -474,4 +475,34 @@ type TimeSyncConfig struct {
 	AutoCorrect    bool     `yaml:"auto_correct" json:"auto_correct"`       // 自动校准
 	DriftThreshold int      `yaml:"drift_threshold" json:"drift_threshold"` // 偏差告警阈值（秒）
 	RetryAttempts  int      `yaml:"retry_attempts" json:"retry_attempts"`   // 重试次数
+}
+
+// ============================================================
+// CPU等待分析器配置模型
+// ============================================================
+
+// ProfilerConfig CPU等待分析器配置
+type ProfilerConfig struct {
+	Enabled          bool                `yaml:"enabled" json:"enabled"`
+	SampleRate       int                 `yaml:"sample_rate" json:"sample_rate"`           // 采样率 (Hz)
+	MaxSamplesPerSec int                 `yaml:"max_samples_per_sec" json:"max_samples_per_sec"` // 每秒最大采样数
+	TargetLanguages  []string            `yaml:"target_languages" json:"target_languages"`   // 目标语言: c,cpp,go,java
+	TargetPIDs       []uint32            `yaml:"target_pids" json:"target_pids"`           // 目标进程ID，空表示所有
+	MinBlockTimeMs   int                 `yaml:"min_block_time_ms" json:"min_block_time_ms"` // 最小阻塞时间（毫秒）
+	MaxStackDepth    int                 `yaml:"max_stack_depth" json:"max_stack_depth"`   // 最大栈深度
+	SymbolResolution bool                `yaml:"symbol_resolution" json:"symbol_resolution"` // 符号解析
+	ReportInterval   int                 `yaml:"report_interval" json:"report_interval"`   // 报告间隔（秒）
+	DynamicAdjust    bool                `yaml:"dynamic_adjust" json:"dynamic_adjust"`     // 动态调整采样率
+	WaitTypes        ProfilerWaitTypes   `yaml:"wait_types" json:"wait_types"`             // 等待类型开关
+}
+
+// ProfilerWaitTypes 等待类型配置
+type ProfilerWaitTypes struct {
+	Futex     bool `yaml:"futex" json:"futex"`       // futex等待
+	IO        bool `yaml:"io" json:"io"`             // IO等待
+	Network   bool `yaml:"network" json:"network"`   // 网络等待
+	Lock      bool `yaml:"lock" json:"lock"`         // 锁等待
+	Sleep     bool `yaml:"sleep" json:"sleep"`       // 睡眠等待
+	Park      bool `yaml:"park" json:"park"`         // park等待
+	Monitor   bool `yaml:"monitor" json:"monitor"`   // Java monitor
 }

@@ -9,6 +9,102 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 
 // ============================================================
+// 错误码定义
+// ============================================================
+
+enum ErrorCode {
+  // 成功
+  OK = 0;
+  
+  // 通用错误 (1-99)
+  UNKNOWN_ERROR = 1;
+  INVALID_ARGUMENT = 2;
+  DEADLINE_EXCEEDED = 3;
+  NOT_FOUND = 4;
+  ALREADY_EXISTS = 5;
+  PERMISSION_DENIED = 6;
+  RESOURCE_EXHAUSTED = 7;
+  FAILED_PRECONDITION = 8;
+  ABORTED = 9;
+  OUT_OF_RANGE = 10;
+  UNIMPLEMENTED = 11;
+  INTERNAL_ERROR = 12;
+  UNAVAILABLE = 13;
+  DATA_LOSS = 14;
+  UNAUTHENTICATED = 15;
+  
+  // 认证授权错误 (100-199)
+  AUTH_TOKEN_INVALID = 100;
+  AUTH_TOKEN_EXPIRED = 101;
+  AUTH_SIGNATURE_INVALID = 102;
+  AUTH_INSUFFICIENT_PERMISSIONS = 103;
+  AUTH_ACCOUNT_LOCKED = 104;
+  AUTH_ACCOUNT_DISABLED = 105;
+  AUTH_MFA_REQUIRED = 106;
+  AUTH_MFA_INVALID = 107;
+  
+  // Agent 错误 (200-299)
+  AGENT_NOT_REGISTERED = 200;
+  AGENT_ALREADY_REGISTERED = 201;
+  AGENT_VERSION_INCOMPATIBLE = 202;
+  AGENT_HEARTBEAT_TIMEOUT = 203;
+  AGENT_CONFIG_INVALID = 204;
+  AGENT_COMMAND_FAILED = 205;
+  AGENT_RESOURCE_LIMIT = 206;
+  AGENT_COLLECTOR_FAILED = 207;
+  
+  // 配置错误 (300-399)
+  CONFIG_PARSE_ERROR = 300;
+  CONFIG_VALIDATION_FAILED = 301;
+  CONFIG_VERSION_MISMATCH = 302;
+  CONFIG_SIGNATURE_INVALID = 303;
+  CONFIG_NOT_FOUND = 304;
+  
+  // 数据传输错误 (400-499)
+  DATA_ENCODE_ERROR = 400;
+  DATA_DECODE_ERROR = 401;
+  DATA_COMPRESSION_ERROR = 402;
+  DATA_ENCRYPTION_ERROR = 403;
+  DATA_BATCH_TOO_LARGE = 404;
+  DATA_RATE_LIMITED = 405;
+  DATA_INVALID_FORMAT = 406;
+  
+  // 存储错误 (500-599)
+  STORAGE_WRITE_ERROR = 500;
+  STORAGE_READ_ERROR = 501;
+  STORAGE_CONNECTION_ERROR = 502;
+  STORAGE_QUOTA_EXCEEDED = 503;
+  
+  // 网络错误 (600-699)
+  NETWORK_CONNECTION_ERROR = 600;
+  NETWORK_TIMEOUT = 601;
+  NETWORK_DNS_ERROR = 602;
+  NETWORK_TLS_ERROR = 603;
+  NETWORK_CIRCUIT_BREAKER_OPEN = 604;
+  
+  // 拓扑错误 (700-799)
+  TOPOLOGY_DISCOVERY_FAILED = 700;
+  TOPOLOGY_ENTITY_NOT_FOUND = 701;
+  TOPOLOGY_RELATION_INVALID = 702;
+  
+  // 告警错误 (800-899)
+  ALERT_RULE_INVALID = 800;
+  ALERT_NOTIFICATION_FAILED = 801;
+  ALERT_SILENCED = 802;
+}
+
+// 错误详情消息
+message ErrorDetails {
+  ErrorCode code = 1;
+  string message = 2;
+  string details = 3;
+  map<string, string> metadata = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  string request_id = 6;
+  string trace_id = 7;
+}
+
+// ============================================================
 // 云流探针服务
 // ============================================================
 
@@ -23,6 +119,9 @@ service CloudFlowAgent {
   rpc ReportTraces(stream TraceBatch) returns (ReportResponse);
   rpc ReportLogs(stream LogBatch) returns (ReportResponse);
   rpc ReportEvents(stream EventBatch) returns (ReportResponse);
+  rpc ReportNetworkFlows(stream NetworkFlowBatch) returns (ReportResponse);
+  rpc ReportProcessEvents(stream ProcessEventBatch) returns (ReportResponse);
+  rpc ReportSystemMetrics(stream SystemMetricBatch) returns (ReportResponse);
   
   // 配置管理
   rpc GetConfig(GetConfigRequest) returns (ConfigResponse);
@@ -44,6 +143,14 @@ service CloudFlowAgent {
   // 探针状态查询
   rpc GetAgentStatus(AgentStatusRequest) returns (AgentStatusResponse);
   rpc GetAgentMetrics(AgentMetricsRequest) returns (AgentMetricsResponse);
+  
+  // 拓扑相关
+  rpc ReportTopology(TopologyReportRequest) returns (ReportResponse);
+  rpc GetTopology(GetTopologyRequest) returns (TopologyResponse);
+  
+  // 告警相关
+  rpc ReportAlert(AlertReportRequest) returns (AlertReportResponse);
+  rpc SubscribeAlerts(AlertSubscriptionRequest) returns (stream AlertReport);
 }
 
 // ============================================================
@@ -55,6 +162,8 @@ service EdgeService {
   rpc ReceiveMetrics(stream MetricBatch) returns (AckResponse);
   rpc ReceiveTraces(stream TraceBatch) returns (AckResponse);
   rpc ReceiveLogs(stream LogBatch) returns (AckResponse);
+  rpc ReceiveEvents(stream EventBatch) returns (AckResponse);
+  rpc ReceiveNetworkFlows(stream NetworkFlowBatch) returns (AckResponse);
   
   // 负载均衡与路由
   rpc GetRoutingInfo(RoutingRequest) returns (RoutingResponse);
@@ -63,10 +172,12 @@ service EdgeService {
   // 服务发现
   rpc DiscoverServices(ServiceDiscoveryRequest) returns (ServiceDiscoveryResponse);
   rpc RegisterService(ServiceRegistration) returns (ServiceRegistrationResponse);
+  rpc DeregisterService(DeregisterServiceRequest) returns (google.protobuf.Empty);
   
   // 健康检查
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
   rpc GetServiceHealth(ServiceHealthRequest) returns (ServiceHealthResponse);
+  rpc StreamHealthChecks(stream HealthCheckRequest) returns (stream HealthCheckResponse);
 }
 
 // ============================================================
@@ -77,39 +188,106 @@ service ControlCenter {
   // 全局配置管理
   rpc GetGlobalConfig(GlobalConfigRequest) returns (GlobalConfigResponse);
   rpc UpdateGlobalConfig(UpdateGlobalConfigRequest) returns (GlobalConfigResponse);
+  rpc PushConfig(PushConfigRequest) returns (PushConfigResponse);
   
   // 策略管理
   rpc GetPolicy(PolicyRequest) returns (PolicyResponse);
   rpc UpdatePolicy(UpdatePolicyRequest) returns (PolicyResponse);
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc DeletePolicy(DeletePolicyRequest) returns (google.protobuf.Empty);
   
   // 告警管理
   rpc ReportAlert(AlertReport) returns (AlertResponse);
   rpc SubscribeAlerts(AlertSubscription) returns (stream AlertReport);
+  rpc AcknowledgeAlert(AcknowledgeAlertRequest) returns (AlertResponse);
+  rpc ResolveAlert(ResolveAlertRequest) returns (AlertResponse);
   
   // 数据分析
   rpc QueryMetrics(MetricsQueryRequest) returns (MetricsQueryResponse);
   rpc QueryTraces(TracesQueryRequest) returns (TracesQueryResponse);
   rpc QueryLogs(LogsQueryRequest) returns (LogsQueryResponse);
+  rpc QueryEvents(EventsQueryRequest) returns (EventsQueryResponse);
+  rpc QueryTopology(TopologyQueryRequest) returns (TopologyQueryResponse);
   
   // 探针管理
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgentDetails(AgentDetailsRequest) returns (AgentDetailsResponse);
   rpc ControlAgent(AgentControlRequest) returns (AgentControlResponse);
+  rpc BatchControlAgents(BatchControlAgentsRequest) returns (BatchControlAgentsResponse);
+  
+  // 租户管理
+  rpc CreateTenant(CreateTenantRequest) returns (TenantResponse);
+  rpc UpdateTenant(UpdateTenantRequest) returns (TenantResponse);
+  rpc DeleteTenant(DeleteTenantRequest) returns (google.protobuf.Empty);
+  rpc GetTenant(GetTenantRequest) returns (TenantResponse);
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+  
+  // 用户管理
+  rpc CreateUser(CreateUserRequest) returns (UserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc AuthenticateUser(AuthenticateUserRequest) returns (AuthenticateUserResponse);
+  
+  // 采集器管理
+  rpc DeployCollector(DeployCollectorRequest) returns (DeployCollectorResponse);
+  rpc ControlCollector(ControlCollectorRequest) returns (ControlCollectorResponse);
+  rpc GetCollectorStatus(GetCollectorStatusRequest) returns (CollectorStatusResponse);
+  rpc ListCollectors(ListCollectorsRequest) returns (ListCollectorsResponse);
 }
 
 // ============================================================
-// 消息定义
+// 基础消息定义
 // ============================================================
 
+// 分页请求
+message PaginationRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  string sort_by = 3;
+  bool sort_desc = 4;
+}
+
+// 分页响应
+message PaginationResponse {
+  int32 total_count = 1;
+  string next_page_token = 2;
+  bool has_more = 3;
+}
+
+// 时间范围
+message TimeRange {
+  google.protobuf.Timestamp start_time = 1;
+  google.protobuf.Timestamp end_time = 2;
+}
+
+// 标签过滤
+message TagFilter {
+  string key = 1;
+  string value = 2;
+  string operator = 3; // eq, ne, contains, regex
+}
+
+// ============================================================
 // 探针信息
+// ============================================================
+
 message AgentInfo {
   string agent_id = 1;
   string hostname = 2;
   string ip_address = 3;
   string version = 4;
-  map<string, string> tags = 5;
-  AgentCapabilities capabilities = 6;
-  google.protobuf.Timestamp register_time = 7;
+  string os_type = 5;
+  string arch = 6;
+  map<string, string> tags = 7;
+  AgentCapabilities capabilities = 8;
+  google.protobuf.Timestamp register_time = 9;
+  google.protobuf.Timestamp last_heartbeat = 10;
+  string status = 11; // online, offline, error, upgrading
+  string tenant_id = 12;
+  string region = 13;
+  string zone = 14;
 }
 
 message AgentCapabilities {
@@ -117,52 +295,76 @@ message AgentCapabilities {
   bool supports_tracing = 2;
   bool supports_metrics = 3;
   bool supports_logs = 4;
-  repeated string supported_protocols = 5;
+  bool supports_events = 5;
+  bool supports_network_flow = 6;
+  bool supports_process_events = 7;
+  repeated string supported_protocols = 8;
+  int32 max_bandwidth_mbps = 9;
+  int32 max_collectors = 10;
 }
 
-// 注册请求/响应
+// ============================================================
+// 注册与认证
+// ============================================================
+
 message RegisterAgentRequest {
   AgentInfo agent_info = 1;
   string auth_token = 2;
   string signature = 3;
+  string nonce = 4;
+  int64 timestamp = 5;
+  string public_key = 6;
 }
 
 message RegisterAgentResponse {
   bool success = 1;
-  string session_id = 2;
-  string assigned_edge = 3;
-  int64 token_expiry = 4;
-  string error_message = 5;
-  ConfigSnapshot initial_config = 6;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string session_id = 4;
+  string assigned_edge = 5;
+  int64 token_expiry = 6;
+  ConfigSnapshot initial_config = 7;
+  map<string, string> metadata = 8;
 }
 
-// 心跳
 message HeartbeatRequest {
   string agent_id = 1;
   string session_id = 2;
   AgentStatus status = 3;
   ResourceUsage resources = 4;
+  repeated CollectorStatus collector_status = 5;
+  map<string, int64> metrics_summary = 6;
+  string config_hash = 7;
 }
 
 message HeartbeatResponse {
   bool accepted = 1;
-  int64 next_heartbeat_interval = 2; // 秒
-  repeated Command pending_commands = 3;
-  bool config_updated = 4;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  int64 next_heartbeat_interval = 4;
+  repeated Command pending_commands = 5;
+  bool config_updated = 6;
+  ConfigSnapshot config_delta = 7;
 }
 
 message UnregisterAgentRequest {
   string agent_id = 1;
   string session_id = 2;
   string reason = 3;
+  bool force = 4;
 }
 
+// ============================================================
 // 状态与资源
+// ============================================================
+
 message AgentStatus {
-  string state = 1; // running, paused, error, shutting_down
+  string state = 1; // running, paused, error, shutting_down, upgrading
   string message = 2;
   map<string, string> details = 3;
   google.protobuf.Timestamp timestamp = 4;
+  repeated string active_collectors = 5;
+  int64 uptime_seconds = 6;
 }
 
 message ResourceUsage {
@@ -172,15 +374,40 @@ message ResourceUsage {
   uint32 goroutines = 4;
   uint32 open_files = 5;
   uint32 connections = 6;
+  uint64 network_bytes_sent = 7;
+  uint64 network_bytes_recv = 8;
+  double load_average_1m = 9;
+  double load_average_5m = 10;
+  double load_average_15m = 11;
 }
 
+message CollectorStatus {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  bool enabled = 4;
+  bool running = 5;
+  google.protobuf.Timestamp start_time = 6;
+  string last_error = 7;
+  uint64 events_count = 8;
+  uint64 drop_count = 9;
+  double cpu_usage = 10;
+  uint64 memory_usage = 11;
+}
+
+// ============================================================
 // 指标数据
+// ============================================================
+
 message MetricBatch {
   string agent_id = 1;
   string batch_id = 2;
   google.protobuf.Timestamp timestamp = 3;
   repeated Metric metrics = 4;
   map<string, string> metadata = 5;
+  string compression = 6; // none, gzip, zstd
+  string encoding = 7; // json, protobuf
+  int64 sequence_number = 8;
 }
 
 message Metric {
@@ -189,10 +416,14 @@ message Metric {
   MetricType type = 3;
   map<string, string> tags = 4;
   google.protobuf.Timestamp timestamp = 5;
-  uint64 count = 6; // 聚合计数
+  uint64 count = 6;
   double sum = 7;
   double min = 8;
   double max = 9;
+  repeated double buckets = 10;
+  repeated uint64 bucket_counts = 11;
+  string unit = 12;
+  string description = 13;
 }
 
 enum MetricType {
@@ -203,11 +434,82 @@ enum MetricType {
   METRIC_TYPE_SUMMARY = 4;
 }
 
+message SystemMetricBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  repeated SystemMetric metrics = 4;
+}
+
+message SystemMetric {
+  google.protobuf.Timestamp timestamp = 1;
+  string host_ip = 2;
+  string hostname = 3;
+  
+  // CPU
+  double cpu_usage = 4;
+  double cpu_user = 5;
+  double cpu_system = 6;
+  double cpu_idle = 7;
+  double cpu_iowait = 8;
+  double cpu_steal = 9;
+  double load_1 = 10;
+  double load_5 = 11;
+  double load_15 = 12;
+  
+  // Memory
+  uint64 mem_total = 13;
+  uint64 mem_used = 14;
+  uint64 mem_free = 15;
+  uint64 mem_buffers = 16;
+  uint64 mem_cached = 17;
+  uint64 mem_available = 18;
+  double mem_usage = 19;
+  uint64 swap_total = 20;
+  uint64 swap_used = 21;
+  uint64 swap_free = 22;
+  double swap_usage = 23;
+  
+  // Disk
+  uint64 disk_total = 24;
+  uint64 disk_used = 25;
+  uint64 disk_free = 26;
+  double disk_usage = 27;
+  uint64 disk_read_bytes = 28;
+  uint64 disk_write_bytes = 29;
+  uint64 disk_read_ops = 30;
+  uint64 disk_write_ops = 31;
+  uint64 disk_io_wait = 32;
+  
+  // Network
+  uint64 net_bytes_sent = 33;
+  uint64 net_bytes_recv = 34;
+  uint64 net_packets_sent = 35;
+  uint64 net_packets_recv = 36;
+  uint64 net_err_in = 37;
+  uint64 net_err_out = 38;
+  uint64 net_drop_in = 39;
+  uint64 net_drop_out = 40;
+  uint64 net_tcp_conns = 41;
+  uint64 net_udp_conns = 42;
+  
+  // Process
+  uint32 process_total = 43;
+  uint32 process_running = 44;
+  uint32 process_sleeping = 45;
+  uint32 process_zombie = 46;
+}
+
+// ============================================================
 // 链路追踪
+// ============================================================
+
 message TraceBatch {
   string agent_id = 1;
   string batch_id = 2;
   repeated Span spans = 3;
+  string service_name = 4;
+  string service_version = 5;
 }
 
 message Span {
@@ -220,6 +522,8 @@ message Span {
   map<string, string> tags = 7;
   repeated SpanLog logs = 8;
   SpanContext context = 9;
+  repeated SpanReference references = 10;
+  int32 flags = 11;
 }
 
 message SpanContext {
@@ -227,6 +531,10 @@ message SpanContext {
   string service_version = 2;
   string host = 3;
   string ip = 4;
+  string container_id = 5;
+  string pod_name = 6;
+  string namespace = 7;
+  string cluster = 8;
 }
 
 message SpanLog {
@@ -234,11 +542,21 @@ message SpanLog {
   map<string, string> fields = 2;
 }
 
+message SpanReference {
+  string trace_id = 1;
+  string span_id = 2;
+  string reference_type = 3; // child_of, follows_from
+}
+
+// ============================================================
 // 日志数据
+// ============================================================
+
 message LogBatch {
   string agent_id = 1;
   string batch_id = 2;
   repeated LogEntry entries = 3;
+  string source = 4;
 }
 
 message LogEntry {
@@ -249,6 +567,14 @@ message LogEntry {
   map<string, string> fields = 5;
   string trace_id = 6;
   string span_id = 7;
+  string service_name = 8;
+  string host = 9;
+  string logger_name = 10;
+  string thread_name = 11;
+  string class_name = 12;
+  string method_name = 13;
+  int32 line_number = 14;
+  map<string, string> labels = 15;
 }
 
 enum LogLevel {
@@ -260,7 +586,10 @@ enum LogLevel {
   LOG_LEVEL_FATAL = 5;
 }
 
+// ============================================================
 // 事件数据
+// ============================================================
+
 message EventBatch {
   string agent_id = 1;
   string batch_id = 2;
@@ -274,6 +603,12 @@ message Event {
   map<string, string> attributes = 4;
   Severity severity = 5;
   string description = 6;
+  string source = 7;
+  string category = 8;
+  string sub_category = 9;
+  string entity_id = 10;
+  string entity_type = 11;
+  map<string, string> tags = 12;
 }
 
 enum Severity {
@@ -284,16 +619,85 @@ enum Severity {
   SEVERITY_CRITICAL = 4;
 }
 
+// ============================================================
+// 网络流量
+// ============================================================
+
+message NetworkFlowBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  repeated NetworkFlow flows = 4;
+}
+
+message NetworkFlow {
+  int64 timestamp = 1;
+  string protocol = 2;
+  string source_ip = 3;
+  uint32 source_port = 4;
+  string dest_ip = 5;
+  uint32 dest_port = 6;
+  string process_name = 7;
+  uint32 process_pid = 8;
+  uint64 bytes_sent = 9;
+  uint64 bytes_recv = 10;
+  uint64 packets_sent = 11;
+  uint64 packets_recv = 12;
+  uint64 duration_ns = 13;
+  string tcp_state = 14;
+  string collector_type = 15;
+  string direction = 16; // inbound, outbound, internal
+  string l7_protocol = 17;
+  map<string, string> tags = 18;
+}
+
+// ============================================================
+// 进程事件
+// ============================================================
+
+message ProcessEventBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  repeated ProcessEvent events = 4;
+}
+
+message ProcessEvent {
+  int64 timestamp = 1;
+  string event_type = 2; // exec, fork, exit, clone
+  uint32 pid = 3;
+  uint32 ppid = 4;
+  uint32 tid = 5;
+  string comm = 6;
+  string exe = 7;
+  string cmdline = 8;
+  string cwd = 9;
+  uint32 uid = 10;
+  uint32 gid = 11;
+  int32 exit_code = 12;
+  uint32 signal = 13;
+  map<string, string> env = 14;
+  repeated string args = 15;
+  string container_id = 16;
+  string pod_name = 17;
+  string namespace = 18;
+}
+
+// ============================================================
 // 配置管理
+// ============================================================
+
 message GetConfigRequest {
   string agent_id = 1;
   string config_version = 2;
+  repeated string config_paths = 3;
 }
 
 message ConfigResponse {
   bool success = 1;
-  ConfigSnapshot config = 2;
+  ErrorCode error_code = 2;
   string error_message = 3;
+  ConfigSnapshot config = 4;
 }
 
 message UpdateConfigRequest {
@@ -301,11 +705,14 @@ message UpdateConfigRequest {
   string config_path = 2;
   bytes config_data = 3;
   string signature = 4;
+  string version = 5;
+  bool dry_run = 6;
 }
 
 message SubscribeConfigRequest {
   string agent_id = 1;
   repeated string interested_paths = 2;
+  string current_version = 3;
 }
 
 message ConfigChangeEvent {
@@ -314,6 +721,8 @@ message ConfigChangeEvent {
   bytes old_value = 3;
   bytes new_value = 4;
   google.protobuf.Timestamp change_time = 5;
+  string changed_by = 6;
+  string change_reason = 7;
 }
 
 message ConfigSnapshot {
@@ -321,9 +730,14 @@ message ConfigSnapshot {
   google.protobuf.Timestamp timestamp = 2;
   bytes config_data = 3;
   string checksum = 4;
+  string format = 5; // yaml, json, toml
+  map<string, string> metadata = 6;
 }
 
+// ============================================================
 // 命令执行
+// ============================================================
+
 message Command {
   string command_id = 1;
   string command_type = 2;
@@ -331,6 +745,8 @@ message Command {
   int64 timeout_seconds = 4;
   string issued_by = 5;
   google.protobuf.Timestamp issued_at = 6;
+  int32 priority = 7;
+  bool async = 8;
 }
 
 message CommandRequest {
@@ -341,32 +757,45 @@ message CommandRequest {
 message CommandResponse {
   string command_id = 1;
   bool success = 2;
-  string output = 3;
+  ErrorCode error_code = 3;
   string error_message = 4;
-  int32 exit_code = 5;
-  google.protobuf.Duration execution_time = 6;
+  string output = 5;
+  int32 exit_code = 6;
+  google.protobuf.Duration execution_time = 7;
+  google.protobuf.Timestamp completed_at = 8;
 }
 
 message StreamCommandRequest {
   string agent_id = 1;
   string command_filter = 2;
+  repeated string command_types = 3;
 }
 
+// ============================================================
 // 文件传输
+// ============================================================
+
 message FileChunk {
   string transfer_id = 1;
   string file_name = 2;
-  uint64 offset = 3;
-  bytes data = 4;
-  bool is_last = 5;
-  string checksum = 6;
+  string file_path = 3;
+  uint64 offset = 4;
+  bytes data = 5;
+  bool is_last = 6;
+  string checksum = 7;
+  uint64 total_size = 8;
+  uint64 chunk_index = 9;
+  uint64 total_chunks = 10;
 }
 
 message FileTransferResponse {
   bool success = 1;
-  string transfer_id = 2;
-  uint64 bytes_received = 3;
-  string error_message = 4;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string transfer_id = 4;
+  uint64 bytes_received = 5;
+  uint64 bytes_total = 6;
+  string checksum = 7;
 }
 
 message DownloadFileRequest {
@@ -374,45 +803,61 @@ message DownloadFileRequest {
   string file_path = 2;
   uint64 offset = 3;
   uint64 chunk_size = 4;
+  string checksum = 5;
 }
 
+// ============================================================
 // 诊断
+// ============================================================
+
 message DiagnosticsRequest {
   string agent_id = 1;
-  string diagnostics_type = 2; // cpu, memory, network, goroutine, all
+  string diagnostics_type = 2;
   int64 duration_seconds = 3;
+  map<string, string> parameters = 4;
 }
 
 message DiagnosticsResponse {
   bool success = 1;
-  string diagnostics_id = 2;
-  map<string, string> results = 3;
-  string report_url = 4;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string diagnostics_id = 4;
+  map<string, string> results = 5;
+  string report_url = 6;
+  bytes report_data = 7;
 }
 
 message ProfileRequest {
   string agent_id = 1;
-  string profile_type = 2; // cpu, heap, goroutine, mutex, block
+  string profile_type = 2;
   int64 duration_seconds = 3;
+  int64 sample_rate = 4;
 }
 
 message ProfileData {
   bytes data = 1;
   string profile_type = 2;
   bool is_last = 3;
+  uint64 total_size = 4;
+  uint64 chunk_index = 5;
 }
 
+// ============================================================
 // 探针状态查询
+// ============================================================
+
 message AgentStatusRequest {
   string agent_id = 1;
 }
 
 message AgentStatusResponse {
   bool online = 1;
-  AgentInfo info = 2;
-  AgentStatus status = 3;
-  ResourceUsage resources = 4;
-  google.protobuf.Timestamp last_heartbeat = 5;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  AgentInfo info = 4;
+  AgentStatus status = 5;
+  ResourceUsage resources = 6;
+  google.protobuf.Timestamp last_heartbeat = 7;
 }
 
 message AgentMetricsRequest {
@@ -420,40 +865,134 @@ message AgentMetricsRequest {
   string metric_pattern = 2;
   google.protobuf.Timestamp start_time = 3;
   google.protobuf.Timestamp end_time = 4;
+  repeated string metric_names = 5;
 }
 
 message AgentMetricsResponse {
-  repeated Metric metrics = 1;
-  map<string, double> aggregates = 2;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated Metric metrics = 3;
+  map<string, double> aggregates = 4;
 }
 
+// ============================================================
+// 拓扑相关
+// ============================================================
+
+message TopologyReportRequest {
+  string agent_id = 1;
+  repeated TopologyEntity entities = 2;
+  repeated TopologyRelation relations = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message TopologyEntity {
+  string entity_id = 1;
+  string entity_type = 2; // pod, vm, container, service, process
+  string name = 3;
+  map<string, string> attributes = 4;
+  map<string, string> labels = 5;
+  string parent_id = 6;
+  google.protobuf.Timestamp discovered_at = 7;
+}
+
+message TopologyRelation {
+  string relation_id = 1;
+  string source_id = 2;
+  string target_id = 3;
+  string relation_type = 4; // calls, contains, runs_on, depends_on
+  map<string, string> attributes = 5;
+  google.protobuf.Timestamp discovered_at = 6;
+}
+
+message GetTopologyRequest {
+  string agent_id = 1;
+  string entity_type = 2;
+  string entity_id = 3;
+  int32 depth = 4;
+  TimeRange time_range = 5;
+}
+
+message TopologyResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated TopologyEntity entities = 3;
+  repeated TopologyRelation relations = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// ============================================================
+// 告警相关
+// ============================================================
+
+message AlertReportRequest {
+  string agent_id = 1;
+  string alert_id = 2;
+  string alert_type = 3;
+  Severity severity = 4;
+  string source = 5;
+  string message = 6;
+  map<string, string> context = 7;
+  google.protobuf.Timestamp timestamp = 8;
+  repeated string related_entities = 9;
+  map<string, string> labels = 10;
+}
+
+message AlertReportResponse {
+  bool accepted = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string ticket_id = 4;
+  string escalation_level = 5;
+}
+
+message AlertSubscriptionRequest {
+  string subscriber_id = 1;
+  repeated string alert_types = 2;
+  Severity min_severity = 3;
+  map<string, string> filters = 4;
+}
+
+// ============================================================
 // 通用响应
+// ============================================================
+
 message ReportResponse {
   bool accepted = 1;
-  string batch_id = 2;
-  int64 items_received = 3;
-  int64 items_accepted = 4;
-  repeated string rejected_items = 5;
-  string error_message = 6;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string batch_id = 4;
+  int64 items_received = 5;
+  int64 items_accepted = 6;
+  repeated string rejected_items = 7;
+  map<string, string> metadata = 8;
 }
 
 message AckResponse {
   bool acknowledged = 1;
-  string batch_id = 2;
-  int64 sequence_number = 3;
-  string error_message = 4;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string batch_id = 4;
+  int64 sequence_number = 5;
+  int64 processed_count = 6;
 }
 
+// ============================================================
 // 边缘服务消息
+// ============================================================
+
 message RoutingRequest {
   string agent_id = 1;
   string service_type = 2;
+  map<string, string> requirements = 3;
 }
 
 message RoutingResponse {
-  repeated Endpoint endpoints = 1;
-  string routing_strategy = 2;
-  google.protobuf.Duration ttl = 3;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated Endpoint endpoints = 3;
+  string routing_strategy = 4;
+  google.protobuf.Duration ttl = 5;
 }
 
 message Endpoint {
@@ -462,6 +1001,9 @@ message Endpoint {
   int32 weight = 3;
   bool healthy = 4;
   map<string, string> metadata = 5;
+  string region = 6;
+  string zone = 7;
+  double latency_ms = 8;
 }
 
 message LoadReport {
@@ -471,16 +1013,24 @@ message LoadReport {
   double memory_usage = 4;
   int32 active_connections = 5;
   int64 requests_per_second = 6;
+  double latency_p99 = 7;
+  double error_rate = 8;
 }
 
+// ============================================================
 // 服务发现
+// ============================================================
+
 message ServiceDiscoveryRequest {
   string service_name = 1;
   map<string, string> tags = 2;
+  bool healthy_only = 3;
 }
 
 message ServiceDiscoveryResponse {
-  repeated ServiceInstance instances = 1;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated ServiceInstance instances = 3;
 }
 
 message ServiceInstance {
@@ -491,6 +1041,9 @@ message ServiceInstance {
   map<string, string> tags = 5;
   bool healthy = 6;
   google.protobuf.Timestamp last_heartbeat = 7;
+  string region = 8;
+  string zone = 9;
+  double weight = 10;
 }
 
 message ServiceRegistration {
@@ -500,44 +1053,68 @@ message ServiceRegistration {
   int32 port = 4;
   map<string, string> tags = 5;
   google.protobuf.Duration ttl = 6;
+  map<string, string> metadata = 7;
 }
 
 message ServiceRegistrationResponse {
   bool success = 1;
-  string lease_id = 2;
-  google.protobuf.Duration lease_duration = 3;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string lease_id = 4;
+  google.protobuf.Duration lease_duration = 5;
 }
 
+message DeregisterServiceRequest {
+  string instance_id = 1;
+  string service_name = 2;
+  string reason = 3;
+}
+
+// ============================================================
 // 健康检查
+// ============================================================
+
 message HealthCheckRequest {
   string service_id = 1;
   string check_type = 2;
+  map<string, string> parameters = 3;
 }
 
 message HealthCheckResponse {
   bool healthy = 1;
-  string status = 2;
-  map<string, string> details = 3;
-  google.protobuf.Timestamp checked_at = 4;
+  ErrorCode error_code = 2;
+  string status = 3;
+  map<string, string> details = 4;
+  google.protobuf.Timestamp checked_at = 5;
+  google.protobuf.Duration check_duration = 6;
 }
 
 message ServiceHealthRequest {
   repeated string service_ids = 1;
+  bool include_details = 2;
 }
 
 message ServiceHealthResponse {
-  map<string, HealthCheckResponse> health_status = 1;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  map<string, HealthCheckResponse> health_status = 3;
 }
 
+// ============================================================
 // 中心控制消息
+// ============================================================
+
 message GlobalConfigRequest {
   string config_scope = 1;
   string version = 2;
+  string tenant_id = 3;
 }
 
 message GlobalConfigResponse {
-  ConfigSnapshot config = 1;
-  repeated string affected_agents = 2;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  ConfigSnapshot config = 3;
+  repeated string affected_agents = 4;
 }
 
 message UpdateGlobalConfigRequest {
@@ -545,30 +1122,77 @@ message UpdateGlobalConfigRequest {
   bytes config_data = 2;
   string changed_by = 3;
   bool dry_run = 4;
+  string change_reason = 5;
+  map<string, string> metadata = 6;
 }
 
+message PushConfigRequest {
+  string agent_id = 1;
+  string config_path = 2;
+  bytes config_data = 3;
+  bool force = 4;
+}
+
+message PushConfigResponse {
+  bool success = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  int64 affected_agents = 4;
+}
+
+// ============================================================
 // 策略管理
+// ============================================================
+
 message PolicyRequest {
   string policy_id = 1;
   string policy_type = 2;
+  string tenant_id = 3;
 }
 
 message PolicyResponse {
-  string policy_id = 1;
-  string policy_type = 2;
-  bytes policy_data = 3;
-  google.protobuf.Timestamp created_at = 4;
-  google.protobuf.Timestamp updated_at = 5;
-  string created_by = 6;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  string policy_id = 3;
+  string policy_type = 4;
+  bytes policy_data = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  string created_by = 8;
+  string updated_by = 9;
+  bool enabled = 10;
 }
 
 message UpdatePolicyRequest {
   string policy_id = 1;
   bytes policy_data = 2;
   string updated_by = 3;
+  bool enabled = 4;
 }
 
-// 告警
+message ListPoliciesRequest {
+  string policy_type = 1;
+  string tenant_id = 2;
+  bool enabled_only = 3;
+  PaginationRequest pagination = 4;
+}
+
+message ListPoliciesResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated PolicyResponse policies = 3;
+  PaginationResponse pagination = 4;
+}
+
+message DeletePolicyRequest {
+  string policy_id = 1;
+  string deleted_by = 2;
+}
+
+// ============================================================
+// 告警管理
+// ============================================================
+
 message AlertReport {
   string alert_id = 1;
   string alert_type = 2;
@@ -578,44 +1202,73 @@ message AlertReport {
   map<string, string> context = 6;
   google.protobuf.Timestamp timestamp = 7;
   bool resolved = 8;
+  google.protobuf.Timestamp resolved_at = 9;
+  string resolved_by = 10;
+  string ticket_id = 11;
 }
 
 message AlertResponse {
   bool accepted = 1;
-  string ticket_id = 2;
-  string escalation_level = 3;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string ticket_id = 4;
+  string escalation_level = 5;
 }
 
 message AlertSubscription {
   string subscriber_id = 1;
   repeated string alert_types = 2;
   Severity min_severity = 3;
+  map<string, string> filters = 4;
+  string channel = 5;
 }
 
+message AcknowledgeAlertRequest {
+  string alert_id = 1;
+  string acknowledged_by = 2;
+  string comment = 3;
+}
+
+message ResolveAlertRequest {
+  string alert_id = 1;
+  string resolved_by = 2;
+  string resolution = 3;
+}
+
+// ============================================================
 // 查询
+// ============================================================
+
 message MetricsQueryRequest {
   string query = 1;
   google.protobuf.Timestamp start_time = 2;
   google.protobuf.Timestamp end_time = 3;
   map<string, string> filters = 4;
-  string aggregation = 5;
-  google.protobuf.Duration interval = 6;
+  repeated TagFilter tag_filters = 5;
+  string aggregation = 6;
+  google.protobuf.Duration interval = 7;
+  int32 limit = 8;
+  string order_by = 9;
 }
 
 message MetricsQueryResponse {
-  repeated TimeSeries series = 1;
-  map<string, string> metadata = 2;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated TimeSeries series = 3;
+  map<string, string> metadata = 4;
 }
 
 message TimeSeries {
   string metric_name = 1;
   map<string, string> tags = 2;
   repeated DataPoint points = 3;
+  map<string, string> metadata = 4;
 }
 
 message DataPoint {
   google.protobuf.Timestamp timestamp = 1;
   double value = 2;
+  map<string, string> labels = 3;
 }
 
 message TracesQueryRequest {
@@ -626,11 +1279,20 @@ message TracesQueryRequest {
   google.protobuf.Timestamp end_time = 5;
   map<string, string> tags = 6;
   int32 limit = 7;
+  int32 offset = 8;
+  repeated string service_names = 9;
+  repeated string operation_names = 10;
+  uint64 min_duration_ns = 11;
+  uint64 max_duration_ns = 12;
+  bool has_errors = 13;
 }
 
 message TracesQueryResponse {
-  repeated Trace traces = 1;
-  int32 total_count = 2;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated Trace traces = 3;
+  int32 total_count = 4;
+  bool has_more = 5;
 }
 
 message Trace {
@@ -638,6 +1300,9 @@ message Trace {
   google.protobuf.Duration duration = 2;
   repeated Span spans = 3;
   map<string, string> root_tags = 4;
+  string root_service = 5;
+  string root_operation = 6;
+  bool has_errors = 7;
 }
 
 message LogsQueryRequest {
@@ -647,52 +1312,360 @@ message LogsQueryRequest {
   repeated LogLevel levels = 4;
   map<string, string> filters = 5;
   int32 limit = 6;
+  int32 offset = 7;
+  string order_by = 8;
+  repeated string services = 9;
+  repeated string hosts = 10;
+  string trace_id = 11;
+  string span_id = 12;
 }
 
 message LogsQueryResponse {
-  repeated LogEntry entries = 1;
-  int32 total_count = 2;
-  bool has_more = 3;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated LogEntry entries = 3;
+  int32 total_count = 4;
+  bool has_more = 5;
 }
 
+message EventsQueryRequest {
+  string event_type = 1;
+  TimeRange time_range = 2;
+  map<string, string> filters = 3;
+  repeated Severity severities = 4;
+  int32 limit = 5;
+  PaginationRequest pagination = 6;
+}
+
+message EventsQueryResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated Event events = 3;
+  int32 total_count = 4;
+  PaginationResponse pagination = 5;
+}
+
+message TopologyQueryRequest {
+  string entity_type = 1;
+  string entity_id = 2;
+  int32 depth = 3;
+  TimeRange time_range = 4;
+  repeated string relation_types = 5;
+  map<string, string> filters = 6;
+}
+
+message TopologyQueryResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated TopologyEntity entities = 3;
+  repeated TopologyRelation relations = 4;
+  map<string, int32> statistics = 5;
+}
+
+// ============================================================
 // 探针管理
+// ============================================================
+
 message ListAgentsRequest {
   map<string, string> filters = 1;
   string sort_by = 2;
   bool sort_desc = 3;
   int32 page_size = 4;
   string page_token = 5;
+  string tenant_id = 6;
+  repeated string agent_ids = 7;
+  string status = 8;
 }
 
 message ListAgentsResponse {
-  repeated AgentInfo agents = 1;
-  string next_page_token = 2;
-  int32 total_count = 3;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated AgentInfo agents = 3;
+  string next_page_token = 4;
+  int32 total_count = 5;
 }
 
 message AgentDetailsRequest {
   string agent_id = 1;
   bool include_metrics = 2;
   bool include_logs = 3;
+  bool include_collectors = 4;
+  TimeRange time_range = 5;
 }
 
 message AgentDetailsResponse {
-  AgentInfo info = 1;
-  AgentStatus status = 2;
-  ResourceUsage resources = 3;
-  repeated Metric recent_metrics = 4;
-  repeated LogEntry recent_logs = 5;
-  ConfigSnapshot current_config = 6;
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  AgentInfo info = 3;
+  AgentStatus status = 4;
+  ResourceUsage resources = 5;
+  repeated Metric recent_metrics = 6;
+  repeated LogEntry recent_logs = 7;
+  ConfigSnapshot current_config = 8;
+  repeated CollectorStatus collectors = 9;
 }
 
 message AgentControlRequest {
   string agent_id = 1;
-  string action = 2; // start, stop, restart, pause, resume, update
+  string action = 2; // start, stop, restart, pause, resume, update, upgrade
   map<string, string> parameters = 3;
+  string requested_by = 4;
+  bool force = 5;
 }
 
 message AgentControlResponse {
   bool success = 1;
-  string job_id = 2;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string job_id = 4;
+  string status = 5;
+  string message = 6;
+  google.protobuf.Timestamp estimated_completion = 7;
+}
+
+message BatchControlAgentsRequest {
+  repeated string agent_ids = 1;
+  string action = 2;
+  map<string, string> parameters = 3;
+  string requested_by = 4;
+}
+
+message BatchControlAgentsResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  int32 success_count = 3;
+  int32 failed_count = 4;
+  map<string, AgentControlResponse> results = 5;
+}
+
+// ============================================================
+// 租户管理
+// ============================================================
+
+message CreateTenantRequest {
+  string name = 1;
+  string description = 2;
+  TenantQuota quota = 3;
+  map<string, string> settings = 4;
+  string created_by = 5;
+}
+
+message UpdateTenantRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
+  TenantQuota quota = 4;
+  map<string, string> settings = 5;
+  string status = 6;
+  string updated_by = 7;
+}
+
+message DeleteTenantRequest {
+  string tenant_id = 1;
+  string deleted_by = 2;
+  bool force = 3;
+}
+
+message GetTenantRequest {
+  string tenant_id = 1;
+}
+
+message ListTenantsRequest {
+  string status = 1;
+  PaginationRequest pagination = 2;
+}
+
+message ListTenantsResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated TenantResponse tenants = 3;
+  PaginationResponse pagination = 4;
+}
+
+message TenantResponse {
+  string tenant_id = 1;
+  string name = 2;
+  string description = 3;
+  string status = 4;
+  TenantQuota quota = 5;
+  TenantUsage usage = 6;
+  map<string, string> settings = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message TenantQuota {
+  int32 max_agents = 1;
+  int32 max_users = 2;
+  int32 max_collectors = 3;
+  int64 max_storage_bytes = 4;
+  int64 max_bandwidth_bps = 5;
+  int32 max_alerts = 6;
+  int32 retention_days = 7;
+}
+
+message TenantUsage {
+  int32 current_agents = 1;
+  int32 current_users = 2;
+  int32 current_collectors = 3;
+  int64 current_storage_bytes = 4;
+  int64 current_bandwidth_bps = 5;
+  int32 current_alerts = 6;
+}
+
+// ============================================================
+// 用户管理
+// ============================================================
+
+message CreateUserRequest {
+  string username = 1;
+  string email = 2;
+  string phone = 3;
+  string password = 4;
+  string role = 5;
+  string tenant_id = 6;
+  repeated string permissions = 7;
+  string created_by = 8;
+}
+
+message UpdateUserRequest {
+  string user_id = 1;
+  string email = 2;
+  string phone = 3;
+  string role = 4;
+  repeated string permissions = 5;
+  string status = 6;
+  string updated_by = 7;
+}
+
+message DeleteUserRequest {
+  string user_id = 1;
+  string deleted_by = 2;
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message ListUsersRequest {
+  string tenant_id = 1;
+  string role = 2;
   string status = 3;
-  string message = 4
+  PaginationRequest pagination = 4;
+}
+
+message ListUsersResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated UserResponse users = 3;
+  PaginationResponse pagination = 4;
+}
+
+message UserResponse {
+  string user_id = 1;
+  string username = 2;
+  string email = 3;
+  string phone = 4;
+  string role = 5;
+  string tenant_id = 6;
+  repeated string permissions = 7;
+  string status = 8;
+  google.protobuf.Timestamp last_login = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message AuthenticateUserRequest {
+  string username = 1;
+  string password = 2;
+  string mfa_code = 3;
+  string client_ip = 4;
+  string user_agent = 5;
+}
+
+message AuthenticateUserResponse {
+  bool success = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string user_id = 4;
+  string username = 5;
+  string role = 6;
+  string tenant_id = 7;
+  string token = 8;
+  int64 token_expiry = 9;
+  string refresh_token = 10;
+  repeated string permissions = 11;
+}
+
+// ============================================================
+// 采集器管理
+// ============================================================
+
+message DeployCollectorRequest {
+  string agent_id = 1;
+  string collector_type = 2;
+  string collector_name = 3;
+  map<string, string> config = 4;
+  string target_host = 5;
+  int32 target_port = 6;
+  string ssh_user = 7;
+  string ssh_key = 8;
+  string install_path = 9;
+  string version = 10;
+  string deployed_by = 11;
+}
+
+message DeployCollectorResponse {
+  bool success = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string deployment_id = 4;
+  string collector_id = 5;
+  string status = 6;
+  google.protobuf.Timestamp estimated_completion = 7;
+}
+
+message ControlCollectorRequest {
+  string collector_id = 1;
+  string action = 2; // start, stop, restart, pause, resume, update, remove
+  map<string, string> parameters = 3;
+  string requested_by = 4;
+}
+
+message ControlCollectorResponse {
+  bool success = 1;
+  ErrorCode error_code = 2;
+  string error_message = 3;
+  string collector_id = 4;
+  string status = 5;
+  string previous_status = 6;
+}
+
+message GetCollectorStatusRequest {
+  string collector_id = 1;
+  string agent_id = 2;
+}
+
+message CollectorStatusResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  CollectorStatus status = 3;
+  repeated Metric metrics = 4;
+  google.protobuf.Timestamp last_updated = 5;
+}
+
+message ListCollectorsRequest {
+  string agent_id = 1;
+  string collector_type = 2;
+  string status = 3;
+  string tenant_id = 4;
+  PaginationRequest pagination = 5;
+}
+
+message ListCollectorsResponse {
+  ErrorCode error_code = 1;
+  string error_message = 2;
+  repeated CollectorStatus collectors = 3;
+  PaginationResponse pagination = 4;
+  map<string, int32> statistics = 5;
+}

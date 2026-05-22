@@ -4,193 +4,603 @@ package cloudflow.agent.v1;
 
 option go_package = "github.com/meinanzilinzhengying/cloud-flow-agent/pkg/api;api";
 
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+
+// ============================================================
+// 错误码定义
+// ============================================================
+
+enum AgentErrorCode {
+  // 成功
+  AGENT_OK = 0;
+  
+  // 通用错误 (1-99)
+  AGENT_UNKNOWN_ERROR = 1;
+  AGENT_INVALID_ARGUMENT = 2;
+  AGENT_DEADLINE_EXCEEDED = 3;
+  AGENT_NOT_FOUND = 4;
+  AGENT_ALREADY_EXISTS = 5;
+  AGENT_PERMISSION_DENIED = 6;
+  AGENT_RESOURCE_EXHAUSTED = 7;
+  AGENT_INTERNAL_ERROR = 8;
+  AGENT_UNAVAILABLE = 9;
+  
+  // Agent 特定错误 (100-199)
+  AGENT_NOT_INITIALIZED = 100;
+  AGENT_ALREADY_RUNNING = 101;
+  AGENT_NOT_RUNNING = 102;
+  AGENT_REGISTRATION_FAILED = 103;
+  AGENT_HEARTBEAT_FAILED = 104;
+  AGENT_CONFIG_INVALID = 105;
+  AGENT_CONFIG_APPLY_FAILED = 106;
+  AGENT_COLLECTOR_START_FAILED = 107;
+  AGENT_COLLECTOR_STOP_FAILED = 108;
+  AGENT_COLLECTOR_NOT_FOUND = 109;
+  AGENT_EBPF_LOAD_FAILED = 110;
+  AGENT_EBPF_ATTACH_FAILED = 111;
+  AGENT_KERNEL_NOT_SUPPORTED = 112;
+  AGENT_PRIVILEGE_INSUFFICIENT = 113;
+  
+  // 数据采集错误 (200-299)
+  AGENT_DATA_COLLECT_FAILED = 200;
+  AGENT_DATA_ENCODE_FAILED = 201;
+  AGENT_DATA_COMPRESS_FAILED = 202;
+  AGENT_DATA_SEND_FAILED = 203;
+  AGENT_DATA_BUFFER_FULL = 204;
+  AGENT_DATA_RATE_LIMITED = 205;
+  
+  // 网络错误 (300-399)
+  AGENT_NETWORK_CONNECT_FAILED = 300;
+  AGENT_NETWORK_TIMEOUT = 301;
+  AGENT_NETWORK_TLS_ERROR = 302;
+  AGENT_NETWORK_DNS_ERROR = 303;
+  
+  // 存储错误 (400-499)
+  AGENT_STORAGE_WRITE_FAILED = 400;
+  AGENT_STORAGE_READ_FAILED = 401;
+  AGENT_STORAGE_FULL = 402;
+}
+
+// 错误详情
+message AgentError {
+  AgentErrorCode code = 1;
+  string message = 2;
+  string details = 3;
+  map<string, string> metadata = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// ============================================================
 // Agent 服务定义
+// ============================================================
+
 service AgentService {
-    // 心跳
-    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-
-    // 上报网络流量
-    rpc ReportNetworkFlow(stream NetworkFlowRequest) returns (ReportResponse);
-
-    // 上报系统指标
-    rpc ReportSystemMetrics(SystemMetricsRequest) returns (ReportResponse);
-
-    // 上报进程事件
-    rpc ReportProcessEvents(stream ProcessEventRequest) returns (ReportResponse);
-
-    // 获取配置
-    rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
-
-    // 更新配置（热配置）
-    rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  // 心跳
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // 注册与认证
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Unregister(UnregisterRequest) returns (UnregisterResponse);
+  
+  // 上报网络流量
+  rpc ReportNetworkFlow(stream NetworkFlowRequest) returns (ReportResponse);
+  
+  // 上报系统指标
+  rpc ReportSystemMetrics(stream SystemMetricsRequest) returns (ReportResponse);
+  
+  // 上报进程事件
+  rpc ReportProcessEvents(stream ProcessEventRequest) returns (ReportResponse);
+  
+  // 上报链路追踪
+  rpc ReportTraces(stream TraceRequest) returns (ReportResponse);
+  
+  // 上报日志
+  rpc ReportLogs(stream LogRequest) returns (ReportResponse);
+  
+  // 上报事件
+  rpc ReportEvents(stream EventRequest) returns (ReportResponse);
+  
+  // 获取配置
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  
+  // 更新配置（热配置）
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  
+  // 订阅配置变更
+  rpc SubscribeConfig(SubscribeConfigRequest) returns (stream ConfigChangeNotification);
+  
+  // 执行命令
+  rpc ExecuteCommand(CommandRequest) returns (CommandResponse);
+  
+  // 流式命令执行
+  rpc StreamCommand(stream CommandRequest) returns (stream CommandResponse);
+  
+  // 获取Agent状态
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  
+  // 获取采集器状态
+  rpc GetCollectorStatus(GetCollectorStatusRequest) returns (GetCollectorStatusResponse);
+  
+  // 控制采集器
+  rpc ControlCollector(ControlCollectorRequest) returns (ControlCollectorResponse);
+  
+  // 获取诊断信息
+  rpc GetDiagnostics(GetDiagnosticsRequest) returns (GetDiagnosticsResponse);
+  
+  // 性能分析
+  rpc Profile(ProfileRequest) returns (stream ProfileData);
 }
 
-// 心跳请求
+// ============================================================
+// 心跳
+// ============================================================
+
 message HeartbeatRequest {
-    string agent_id = 1;
-    string hostname = 2;
-    string host_ip = 3;
-    string version = 4;
-    int64 uptime = 5;
-    AgentStatus status = 6;
+  string agent_id = 1;
+  string hostname = 2;
+  string host_ip = 3;
+  string version = 4;
+  int64 uptime = 5;
+  AgentStatus status = 6;
+  string config_hash = 7;
+  int64 sequence_number = 8;
 }
 
-// 心跳响应
 message HeartbeatResponse {
-    int64 timestamp = 1;
-    bool config_updated = 2;
-    string config_hash = 3;
+  int64 timestamp = 1;
+  bool config_updated = 2;
+  string config_hash = 3;
+  int64 next_heartbeat_interval = 4;
+  repeated Command pending_commands = 5;
+  bool force_restart = 6;
+  string message = 7;
 }
 
+// ============================================================
+// 注册与认证
+// ============================================================
+
+message RegisterRequest {
+  string agent_id = 1;
+  string hostname = 2;
+  string host_ip = 3;
+  string version = 4;
+  string os_type = 5;
+  string arch = 6;
+  map<string, string> capabilities = 7;
+  string auth_token = 8;
+  string signature = 9;
+  int64 timestamp = 10;
+  string nonce = 11;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+  string session_id = 4;
+  string assigned_edge = 5;
+  int64 token_expiry = 6;
+  bytes config = 7;
+  map<string, string> metadata = 8;
+}
+
+message UnregisterRequest {
+  string agent_id = 1;
+  string session_id = 2;
+  string reason = 3;
+}
+
+message UnregisterResponse {
+  bool success = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+}
+
+// ============================================================
 // Agent 状态
+// ============================================================
+
 message AgentStatus {
-    repeated CollectorStatus collectors = 1;
-    ResourceUsage resource_usage = 2;
+  string state = 1; // running, paused, error, shutting_down
+  string message = 2;
+  repeated CollectorStatus collectors = 3;
+  ResourceUsage resource_usage = 4;
+  map<string, string> details = 5;
+  int64 event_count = 6;
+  int64 drop_count = 7;
+  double drop_rate = 8;
 }
 
-// 采集器状态
 message CollectorStatus {
-    string name = 1;
-    string type = 2;
-    bool running = 3;
-    int64 events_count = 4;
-    int64 drop_count = 5;
-    string last_error = 6;
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  bool running = 4;
+  int64 events_count = 5;
+  int64 drop_count = 6;
+  string last_error = 7;
+  google.protobuf.Timestamp last_error_time = 8;
+  double cpu_usage = 9;
+  int64 memory_usage = 10;
 }
 
-// 资源使用
 message ResourceUsage {
-    double cpu_percent = 1;
-    int64 memory_bytes = 2;
-    int64 goroutines = 3;
+  double cpu_percent = 1;
+  int64 memory_bytes = 2;
+  int64 goroutines = 3;
+  int64 open_files = 4;
+  int64 connections = 5;
+  double load_average_1m = 6;
+  double load_average_5m = 7;
+  double load_average_15m = 8;
 }
 
-// 网络流量请求
-message NetworkFlowRequest {
-    repeated NetworkFlow flows = 1;
-}
-
+// ============================================================
 // 网络流量
+// ============================================================
+
+message NetworkFlowRequest {
+  string agent_id = 1;
+  int64 timestamp = 2;
+  repeated NetworkFlow flows = 3;
+  int64 sequence_number = 4;
+}
+
 message NetworkFlow {
-    int64 timestamp = 1;
-    string protocol = 2;
-    string source_ip = 3;
-    uint32 source_port = 4;
-    string dest_ip = 5;
-    uint32 dest_port = 6;
-    string process_name = 7;
-    uint32 process_pid = 8;
-    uint64 bytes_sent = 9;
-    uint64 bytes_recv = 10;
-    uint64 packets_sent = 11;
-    uint64 packets_recv = 12;
-    uint64 duration_ns = 13;
-    string tcp_state = 14;
-    string collector_type = 15;
+  int64 timestamp = 1;
+  string protocol = 2;
+  string source_ip = 3;
+  uint32 source_port = 4;
+  string dest_ip = 5;
+  uint32 dest_port = 6;
+  string process_name = 7;
+  uint32 process_pid = 8;
+  uint64 bytes_sent = 9;
+  uint64 bytes_recv = 10;
+  uint64 packets_sent = 11;
+  uint64 packets_recv = 12;
+  uint64 duration_ns = 13;
+  string tcp_state = 14;
+  string collector_type = 15;
+  string direction = 16;
+  string l7_protocol = 17;
+  map<string, string> tags = 18;
 }
 
-// 系统指标请求
-message SystemMetricsRequest {
-    repeated SystemMetric metrics = 1;
-}
-
+// ============================================================
 // 系统指标
+// ============================================================
+
+message SystemMetricsRequest {
+  string agent_id = 1;
+  int64 timestamp = 2;
+  repeated SystemMetric metrics = 3;
+}
+
 message SystemMetric {
-    int64 timestamp = 1;
-    string host_ip = 2;
-    string hostname = 3;
-
-    // CPU
-    double cpu_usage = 4;
-    double cpu_user = 5;
-    double cpu_system = 6;
-    double cpu_idle = 7;
-    double cpu_steal = 8;
-    double load_1 = 9;
-    double load_5 = 10;
-    double load_15 = 11;
-
-    // 内存
-    uint64 mem_total = 12;
-    uint64 mem_used = 13;
-    uint64 mem_free = 14;
-    uint64 mem_buffers = 15;
-    uint64 mem_cached = 16;
-    double mem_usage = 17;
-    uint64 swap_total = 18;
-    uint64 swap_used = 19;
-    double swap_usage = 20;
-
-    // 磁盘
-    uint64 disk_total = 21;
-    uint64 disk_used = 22;
-    uint64 disk_free = 23;
-    double disk_usage = 24;
-    uint64 disk_read_bytes = 25;
-    uint64 disk_write_bytes = 26;
-    uint64 disk_read_ops = 27;
-    uint64 disk_write_ops = 28;
-
-    // 网络
-    uint64 net_bytes_sent = 29;
-    uint64 net_bytes_recv = 30;
-    uint64 net_packets_sent = 31;
-    uint64 net_packets_recv = 32;
-    uint64 net_tcp_conns = 33;
-    uint64 net_udp_conns = 34;
+  int64 timestamp = 1;
+  string host_ip = 2;
+  string hostname = 3;
+  
+  // CPU
+  double cpu_usage = 4;
+  double cpu_user = 5;
+  double cpu_system = 6;
+  double cpu_idle = 7;
+  double cpu_iowait = 8;
+  double load_1 = 9;
+  double load_5 = 10;
+  double load_15 = 11;
+  
+  // Memory
+  uint64 mem_total = 12;
+  uint64 mem_used = 13;
+  uint64 mem_free = 14;
+  uint64 mem_available = 15;
+  double mem_usage = 16;
+  uint64 swap_total = 17;
+  uint64 swap_used = 18;
+  double swap_usage = 19;
+  
+  // Disk
+  uint64 disk_total = 20;
+  uint64 disk_used = 21;
+  uint64 disk_free = 22;
+  double disk_usage = 23;
+  uint64 disk_read_bytes = 24;
+  uint64 disk_write_bytes = 25;
+  uint64 disk_read_ops = 26;
+  uint64 disk_write_ops = 27;
+  
+  // Network
+  uint64 net_bytes_sent = 28;
+  uint64 net_bytes_recv = 29;
+  uint64 net_packets_sent = 30;
+  uint64 net_packets_recv = 31;
+  uint64 net_tcp_conns = 32;
+  uint64 net_udp_conns = 33;
+  uint64 net_err_in = 34;
+  uint64 net_err_out = 35;
+  uint64 net_drop_in = 36;
+  uint64 net_drop_out = 37;
+  
+  // Process
+  uint32 process_total = 38;
+  uint32 process_running = 39;
+  uint32 process_sleeping = 40;
+  uint32 process_zombie = 41;
 }
 
-// 进程事件请求
-message ProcessEventRequest {
-    repeated ProcessEvent events = 1;
-}
-
+// ============================================================
 // 进程事件
+// ============================================================
+
+message ProcessEventRequest {
+  string agent_id = 1;
+  int64 timestamp = 2;
+  repeated ProcessEvent events = 3;
+}
+
 message ProcessEvent {
-    int64 timestamp = 1;
-    string event_type = 2;
-    uint32 pid = 3;
-    uint32 ppid = 4;
-    uint32 tid = 5;
-    string comm = 6;
-    string exe = 7;
-    string cmdline = 8;
-    string cwd = 9;
-    uint32 uid = 10;
-    uint32 gid = 11;
-    int32 exit_code = 12;
-    uint32 signal = 13;
+  int64 timestamp = 1;
+  string event_type = 2;
+  uint32 pid = 3;
+  uint32 ppid = 4;
+  uint32 tid = 5;
+  string comm = 6;
+  string exe = 7;
+  string cmdline = 8;
+  string cwd = 9;
+  uint32 uid = 10;
+  uint32 gid = 11;
+  int32 exit_code = 12;
+  uint32 signal = 13;
+  map<string, string> env = 14;
+  repeated string args = 15;
 }
 
+// ============================================================
+// 链路追踪
+// ============================================================
+
+message TraceRequest {
+  string agent_id = 1;
+  string service_name = 2;
+  repeated Span spans = 3;
+}
+
+message Span {
+  string trace_id = 1;
+  string span_id = 2;
+  string parent_span_id = 3;
+  string operation_name = 4;
+  google.protobuf.Timestamp start_time = 5;
+  google.protobuf.Duration duration = 6;
+  map<string, string> tags = 7;
+  repeated SpanLog logs = 8;
+  string service_name = 9;
+  string host = 10;
+}
+
+message SpanLog {
+  google.protobuf.Timestamp timestamp = 1;
+  map<string, string> fields = 2;
+}
+
+// ============================================================
+// 日志
+// ============================================================
+
+message LogRequest {
+  string agent_id = 1;
+  string service_name = 2;
+  repeated LogEntry entries = 3;
+}
+
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  string level = 2;
+  string message = 3;
+  string source = 4;
+  map<string, string> fields = 5;
+  string trace_id = 6;
+  string span_id = 7;
+  string logger_name = 8;
+  string thread_name = 9;
+  string class_name = 10;
+  string method_name = 11;
+  int32 line_number = 12;
+}
+
+// ============================================================
+// 事件
+// ============================================================
+
+message EventRequest {
+  string agent_id = 1;
+  repeated Event events = 2;
+}
+
+message Event {
+  string event_id = 1;
+  string event_type = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  string severity = 4;
+  string source = 5;
+  string message = 6;
+  map<string, string> attributes = 7;
+  string entity_id = 8;
+  string entity_type = 9;
+}
+
+// ============================================================
 // 上报响应
+// ============================================================
+
 message ReportResponse {
-    bool success = 1;
-    string message = 2;
-    int64 received_count = 3;
+  bool success = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+  int64 received_count = 4;
+  int64 accepted_count = 5;
+  repeated string rejected_items = 6;
+  int64 sequence_number = 7;
 }
 
-// 获取配置请求
+// ============================================================
+// 配置管理
+// ============================================================
+
 message GetConfigRequest {
-    string agent_id = 1;
-    string current_config_hash = 2;
+  string agent_id = 1;
+  string current_config_hash = 2;
 }
 
-// 获取配置响应
 message GetConfigResponse {
-    bool updated = 1;
-    string config_hash = 2;
-    bytes config_data = 3;
+  bool updated = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+  string config_hash = 4;
+  bytes config_data = 5;
+  string format = 6;
 }
 
-// 更新配置请求
 message UpdateConfigRequest {
-    string agent_id = 1;
-    bytes config_data = 2;
+  string agent_id = 1;
+  bytes config_data = 2;
+  string format = 3;
+  bool dry_run = 4;
 }
 
-// 更新配置响应
 message UpdateConfigResponse {
-    bool success = 1;
-    string message = 2;
-    string new_config_hash = 3;
+  bool success = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+  string new_config_hash = 4;
+  repeated ConfigValidationError validation_errors = 5;
+}
+
+message ConfigValidationError {
+  string path = 1;
+  string message = 2;
+  string error_type = 3;
+}
+
+message SubscribeConfigRequest {
+  string agent_id = 1;
+  string current_config_hash = 2;
+}
+
+message ConfigChangeNotification {
+  string config_hash = 1;
+  bytes config_delta = 2;
+  string change_reason = 3;
+  google.protobuf.Timestamp change_time = 4;
+  bool force_restart = 5;
+}
+
+// ============================================================
+// 命令执行
+// ============================================================
+
+message CommandRequest {
+  string command_id = 1;
+  string command_type = 2;
+  map<string, string> parameters = 3;
+  int64 timeout_seconds = 4;
+}
+
+message CommandResponse {
+  bool success = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+  string output = 4;
+  int32 exit_code = 5;
+  google.protobuf.Duration execution_time = 6;
+  bool is_stream = 7;
+  string stream_data = 8;
+  bool is_last = 9;
+}
+
+// ============================================================
+// 状态查询
+// ============================================================
+
+message GetStatusRequest {
+  string agent_id = 1;
+  bool include_details = 2;
+}
+
+message GetStatusResponse {
+  AgentErrorCode error_code = 1;
+  string error_message = 2;
+  AgentStatus status = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  string version = 5;
+  int64 uptime = 6;
+}
+
+message GetCollectorStatusRequest {
+  string agent_id = 1;
+  string collector_id = 2;
+  string collector_type = 3;
+}
+
+message GetCollectorStatusResponse {
+  AgentErrorCode error_code = 1;
+  string error_message = 2;
+  repeated CollectorStatus collectors = 3;
+}
+
+message ControlCollectorRequest {
+  string agent_id = 1;
+  string collector_id = 2;
+  string action = 3; // start, stop, restart, pause, resume
+  map<string, string> parameters = 4;
+}
+
+message ControlCollectorResponse {
+  bool success = 1;
+  AgentErrorCode error_code = 2;
+  string error_message = 3;
+  string collector_id = 4;
+  string previous_status = 5;
+  string current_status = 6;
+}
+
+// ============================================================
+// 诊断与分析
+// ============================================================
+
+message GetDiagnosticsRequest {
+  string agent_id = 1;
+  string diagnostics_type = 2; // cpu, memory, network, goroutine, all
+  int64 duration_seconds = 3;
+}
+
+message GetDiagnosticsResponse {
+  AgentErrorCode error_code = 1;
+  string error_message = 2;
+  map<string, string> results = 3;
+  bytes report_data = 4;
+  string report_format = 5;
+}
+
+message ProfileRequest {
+  string agent_id = 1;
+  string profile_type = 2; // cpu, heap, goroutine, mutex, block
+  int64 duration_seconds = 3;
+  int64 sample_rate = 4;
+}
+
+message ProfileData {
+  bytes data = 1;
+  string profile_type = 2;
+  bool is_last = 3;
+  uint64 total_size = 4;
+  uint64 chunk_index = 5;
+  uint64 total_chunks = 6;
 }

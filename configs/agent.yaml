@@ -1,204 +1,53 @@
 
 # ============================================================
-# 动态配置管理配置
-# 支持环境变量、配置中心（Consul/Etcd/Nacos）动态加载
+# 资产下钻配置
+# 支持单资产网络/应用指标采集与查询
 # ============================================================
-dynamic_config:
-  enabled: true                   # 启用动态配置管理
-  env_prefix: "CFA_"             # 环境变量前缀
-  env_expand_enabled: true        # 启用环境变量展开（支持 ${VAR} 语法）
-  watch_enabled: true             # 启用配置文件监听热加载
-  watch_interval: 5               # 文件监听间隔（秒）
-  cache_enabled: true             # 启用配置缓存
-  cache_ttl: 60                   # 缓存TTL（秒）
+asset_drilldown:
+  enabled: true                   # 启用资产下钻
   
-  # 配置源优先级（按顺序，优先级从高到低）
-  priority:
-    - "env"                       # 环境变量（最高优先级）
-    - "consul"                    # Consul配置中心
-    - "etcd"                      # Etcd配置中心
-    - "nacos"                     # Nacos配置中心
-    - "file"                      # 配置文件（最低优先级）
-  
-  # 配置源列表
-  sources:
-    # 文件配置源
-    - type: "file"
-      enabled: true
-      priority: 100
-      endpoint: "/etc/cloud-flow/agent.yaml"
-    
-    # 环境变量配置源
-    - type: "env"
-      enabled: true
-      priority: 1
-    
-    # Consul配置中心（示例，默认禁用）
-    - type: "consul"
-      enabled: false
-      priority: 10
-      endpoint: "http://consul.example.com:8500"
-      namespace: "cloud-flow"
-      data_id: "agent-config"
-      auth_type: "token"
-      auth_token: ""
-      timeout: 10
-      retry_count: 3
-    
-    # Etcd配置中心（示例，默认禁用）
-    - type: "etcd"
-      enabled: false
-      priority: 20
-      endpoint: "http://etcd.example.com:2379"
-      namespace: "/cloud-flow/config"
-      auth_type: "none"
-      timeout: 10
-      retry_count: 3
-    
-    # Nacos配置中心（示例，默认禁用）
-    - type: "nacos"
-      enabled: false
-      priority: 30
-      endpoint: "http://nacos.example.com:8848"
-      namespace: "cloud-flow"
-      data_id: "agent-config"
-      group: "DEFAULT_GROUP"
-      auth_type: "none"
-      timeout: 10
-      retry_count: 3
-  
-  # 热更新配置
-  hot_reload:
-    enabled: true                 # 启用热更新
-    auto_apply: true              # 自动应用变更
-    check_interval: 10            # 变更检查间隔（秒）
-    debounce_interval: 500        # 防抖间隔（毫秒）
-    require_confirm: false        # 是否需要确认
-    rollback_on_error: true       # 错误时自动回滚
-    max_rollback_depth: 5         # 最大回滚深度
-    notify_on_change: true        # 变更时通知
-    notify_channels:
-      - "log"
-      - "webhook"
-
-# ============================================================
-# 错误恢复与优雅关闭配置
-# 全局Panic捕获、熔断器、资源限制、健康监控
-# ============================================================
-recovery:
-  enabled: true                   # 启用错误恢复机制
-  
-  # Panic恢复配置
-  panic_recovery:
-    enabled: true                 # 启用Panic恢复
-    log_stack_trace: true         # 记录完整堆栈
-    notify_on_panic: true         # Panic时发送通知
-    max_recovers_per_min: 10      # 每分钟最大恢复次数
-    exit_after_panics: 5          # 连续Panic多少次后退出
-    restart_delay_sec: 5          # 重启延迟（秒）
-  
-  # 优雅关闭配置
-  graceful_shutdown:
-    enabled: true                 # 启用优雅关闭
-    timeout_sec: 30               # 关闭超时（秒）
-    drain_timeout_sec: 10         # 排空超时（秒）
-    cleanup_timeout_sec: 10       # 清理超时（秒）
-    force_exit_after: 60          # 强制退出时间（秒）
-    shutdown_hooks:               # 关闭钩子顺序
-      - "collectors"              # 停止采集器
-      - "processor"               # 停止处理器
-      - "storage"                 # 刷新存储
-      - "network"                 # 关闭网络连接
-  
-  # 熔断恢复配置
-  circuit_breaker:
-    enabled: true                 # 启用熔断器
-    failure_threshold: 5          # 失败阈值
-    success_threshold: 3          # 成功阈值
-    timeout_sec: 30               # 超时（秒）
-    half_open_max_calls: 3        # 半开状态最大调用数
-    adaptive_enabled: true        # 启用自适应熔断
-  
-  # 资源限制配置
-  resource_limit:
-    enabled: true                 # 启用资源限制
-    max_goroutines: 10000         # 最大协程数
-    max_memory_mb: 4096           # 最大内存 (MB)
-    max_cpu_percent: 80.0         # 最大CPU百分比
-    max_fd_count: 65535           # 最大文件描述符数
-    action_on_limit: "throttle"   # 超限动作: throttle/block/kill
-    throttle_percent: 50.0        # 节流百分比
-  
-  # 健康监控配置
-  health_monitor:
-    enabled: true                 # 启用健康监控
-    check_interval_sec: 10        # 检查间隔（秒）
-    goroutine_threshold: 5000     # 协程数告警阈值
-    memory_threshold_mb: 3072     # 内存告警阈值 (MB)
-    gc_threshold_ms: 100          # GC耗时告警阈值（毫秒）
-    auto_recover: true            # 自动恢复
-    recover_actions:              # 恢复动作
-      - "gc"                      # 触发GC
-      - "throttle"                # 节流处理
-      - "alert"                   # 发送告警
-
-# ============================================================
-# 全栈拓扑配置
-# 支持 Pod/VM/物理机 自动发现和请求路径追踪
-# ============================================================
-topology:
-  enabled: true                   # 启用拓扑发现
-  
-  # 拓扑发现配置
-  discovery:
-    enabled: true                 # 启用发现
-    discover_pods: true           # 发现Kubernetes Pod
-    discover_vms: true            # 发现虚拟机
-    discover_physical: true       # 发现物理机
-    discover_containers: true     # 发现容器
-    discover_services: true       # 发现Kubernetes Service
-    discover_network: true        # 发现网络拓扑
-    interval_sec: 60              # 发现间隔（秒）
-    kube_config_path: ""          # Kubeconfig路径（空表示集群内）
-    kube_api_server: ""           # K8s API Server（空表示集群内）
-    cloud_metadata_url: ""        # 云元数据URL
+  # 资产指标采集器配置
+  collector:
+    enabled: true                 # 启用采集
+    interval_sec: 15              # 采集间隔（秒）
+    network_enabled: true         # 采集网络指标
+    app_enabled: true             # 采集应用指标
+    system_enabled: true          # 采集系统指标
     proc_path: "/proc"            # /proc路径
     sys_path: "/sys"              # /sys路径
-    enable_cgroup_scan: true      # 启用cgroup扫描
-    enable_netlink_scan: true     # 启用netlink扫描
+    enable_per_process: true      # 启用进程级采集
+    enable_per_interface: true    # 启用接口级采集
+    max_processes: 100            # 最大进程数
   
-  # 路径追踪配置
-  tracer:
-    enabled: true                 # 启用追踪
-    sample_rate: 1.0              # 采样率 (0-1)
-    max_paths: 10000              # 最大路径缓存数
-    max_hops: 20                  # 最大跳跃数
-    path_timeout_sec: 300         # 路径超时（秒）
-    enable_e2e: true              # 启用端到端追踪
-    enable_hop_tracking: true     # 启用跳跃追踪
-    enable_latency: true          # 启用延迟追踪
-    enable_dns: true              # 启用DNS解析
-    store_raw_packets: false      # 存储原始包
+  # 指标聚合器配置
+  aggregator:
+    enabled: true                 # 启用聚合
+    interval_sec: 60              # 聚合间隔（秒）
+    default_granularity: "1m"     # 默认粒度: 1s/10s/1m/5m/1h/1d
+    retention_days: 7             # 数据保留天数
+    max_data_points: 10000        # 最大数据点数
+    enable_pre_aggregation: true  # 启用预聚合
+    pre_agg_granularities:        # 预聚合粒度列表
+      - "1m"
+      - "5m"
+      - "1h"
   
-  # 拓扑存储配置
+  # 指标存储配置
   storage:
     enabled: true                 # 启用存储
     driver: "sqlite"              # 驱动: sqlite/mysql/postgres
-    dsn: "/var/lib/cloud-flow/topology.db"  # 数据源
+    dsn: "/var/lib/cloud-flow/asset_metrics.db"  # 数据源
     max_connections: 10           # 最大连接数
-    max_entities: 100000          # 最大实体数
-    max_paths: 1000000            # 最大路径数
-    max_relations: 500000         # 最大关系数
     retention_days: 7             # 数据保留天数
     cleanup_interval: 60          # 清理间隔（分钟）
-    enable_index: true            # 启用索引
-    enable_cache: true            # 启用缓存
-    cache_size: 10000             # 缓存大小
+    enable_compression: true      # 启用压缩
+    batch_size: 100               # 批量写入大小
+    write_interval_sec: 10        # 写入间隔（秒）
   
-  # 拓扑API配置
+  # 资产下钻API配置
   api:
     enabled: true                 # 启用API
-    listen_addr: ":8081"          # 监听地址
+    listen_addr: ":8082"          # 监听地址
     auth_enabled: false           # 启用认证
     auth_token: ""                # 认证Token
     rate_limit: 1000              # 限流（请求/分钟）

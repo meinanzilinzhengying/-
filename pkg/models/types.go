@@ -369,6 +369,7 @@ type Config struct {
 	DynamicConfig   DynamicConfigConfig  `yaml:"dynamic_config" json:"dynamic_config"`
 	Recovery        RecoveryConfig       `yaml:"recovery" json:"recovery"`
 	Topology        TopologyConfig       `yaml:"topology" json:"topology"`
+	AssetDrilldown  AssetDrilldownConfig `yaml:"asset_drilldown" json:"asset_drilldown"`
 }
 
 // ============================================================
@@ -1693,6 +1694,68 @@ type TopologyStorageConfig struct {
 
 // TopologyAPIConfig 拓扑API配置
 type TopologyAPIConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`                       // 启用API
+	ListenAddr   string `yaml:"listen_addr" json:"listen_addr"`               // 监听地址
+	AuthEnabled  bool   `yaml:"auth_enabled" json:"auth_enabled"`             // 启用认证
+	AuthToken    string `yaml:"auth_token" json:"auth_token"`                 // 认证Token
+	RateLimit    int    `yaml:"rate_limit" json:"rate_limit"`                 // 限流（请求/分钟）
+	ReadTimeout  int    `yaml:"read_timeout" json:"read_timeout"`             // 读超时（秒）
+	WriteTimeout int    `yaml:"write_timeout" json:"write_timeout"`           // 写超时（秒）
+}
+
+// ============================================================
+// 资产下钻配置模型
+// ============================================================
+
+// AssetDrilldownConfig 资产下钻配置
+type AssetDrilldownConfig struct {
+	Enabled           bool                   `yaml:"enabled" json:"enabled"`                   // 启用资产下钻
+	Collector         AssetCollectorConfig   `yaml:"collector" json:"collector"`               // 采集器配置
+	Aggregator        AssetAggregatorConfig  `yaml:"aggregator" json:"aggregator"`             // 聚合器配置
+	Storage           AssetDrilldownStorageConfig `yaml:"storage" json:"storage"`              // 存储配置
+	API               AssetDrilldownAPIConfig `yaml:"api" json:"api"`                          // API配置
+}
+
+// AssetCollectorConfig 资产采集器配置
+type AssetCollectorConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled"`                       // 启用采集
+	IntervalSec        int           `yaml:"interval_sec" json:"interval_sec"`             // 采集间隔（秒）
+	NetworkEnabled     bool          `yaml:"network_enabled" json:"network_enabled"`       // 采集网络指标
+	AppEnabled         bool          `yaml:"app_enabled" json:"app_enabled"`               // 采集应用指标
+	SystemEnabled      bool          `yaml:"system_enabled" json:"system_enabled"`         // 采集系统指标
+	ProcPath           string        `yaml:"proc_path" json:"proc_path"`                   // /proc路径
+	SysPath            string        `yaml:"sys_path" json:"sys_path"`                     // /sys路径
+	EnablePerProcess   bool          `yaml:"enable_per_process" json:"enable_per_process"` // 启用进程级采集
+	EnablePerInterface bool          `yaml:"enable_per_interface" json:"enable_per_interface"` // 启用接口级采集
+	MaxProcesses       int           `yaml:"max_processes" json:"max_processes"`           // 最大进程数
+}
+
+// AssetAggregatorConfig 资产聚合器配置
+type AssetAggregatorConfig struct {
+	Enabled              bool              `yaml:"enabled" json:"enabled"`                           // 启用聚合
+	IntervalSec          int               `yaml:"interval_sec" json:"interval_sec"`                 // 聚合间隔（秒）
+	DefaultGranularity   string            `yaml:"default_granularity" json:"default_granularity"`   // 默认粒度: 1s/10s/1m/5m/1h/1d
+	RetentionDays        int               `yaml:"retention_days" json:"retention_days"`             // 数据保留天数
+	MaxDataPoints        int               `yaml:"max_data_points" json:"max_data_points"`           // 最大数据点数
+	EnablePreAggregation bool              `yaml:"enable_pre_aggregation" json:"enable_pre_aggregation"` // 启用预聚合
+	PreAggGranularities  []string          `yaml:"pre_agg_granularities" json:"pre_agg_granularities"` // 预聚合粒度列表
+}
+
+// AssetDrilldownStorageConfig 资产存储配置
+type AssetDrilldownStorageConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`                           // 启用存储
+	Driver            string `yaml:"driver" json:"driver"`                             // 驱动: sqlite/mysql/postgres
+	DSN               string `yaml:"dsn" json:"dsn"`                                   // 数据源
+	MaxConnections    int    `yaml:"max_connections" json:"max_connections"`           // 最大连接数
+	RetentionDays     int    `yaml:"retention_days" json:"retention_days"`             // 数据保留天数
+	CleanupInterval   int    `yaml:"cleanup_interval" json:"cleanup_interval"`         // 清理间隔（分钟）
+	EnableCompression bool   `yaml:"enable_compression" json:"enable_compression"`     // 启用压缩
+	BatchSize         int    `yaml:"batch_size" json:"batch_size"`                     // 批量写入大小
+	WriteIntervalSec  int    `yaml:"write_interval_sec" json:"write_interval_sec"`     // 写入间隔（秒）
+}
+
+// AssetDrilldownAPIConfig 资产下钻API配置
+type AssetDrilldownAPIConfig struct {
 	Enabled      bool   `yaml:"enabled" json:"enabled"`                       // 启用API
 	ListenAddr   string `yaml:"listen_addr" json:"listen_addr"`               // 监听地址
 	AuthEnabled  bool   `yaml:"auth_enabled" json:"auth_enabled"`             // 启用认证

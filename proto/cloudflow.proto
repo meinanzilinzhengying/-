@@ -1,0 +1,698 @@
+syntax = "proto3";
+
+package cloudflow;
+
+option go_package = "github.com/meinanzilinzhengying/cloud-flow-agent/proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+
+// ============================================================
+// 云流探针服务
+// ============================================================
+
+service CloudFlowAgent {
+  // 探针注册与心跳
+  rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc UnregisterAgent(UnregisterAgentRequest) returns (google.protobuf.Empty);
+  
+  // 数据采集上报
+  rpc ReportMetrics(stream MetricBatch) returns (ReportResponse);
+  rpc ReportTraces(stream TraceBatch) returns (ReportResponse);
+  rpc ReportLogs(stream LogBatch) returns (ReportResponse);
+  rpc ReportEvents(stream EventBatch) returns (ReportResponse);
+  
+  // 配置管理
+  rpc GetConfig(GetConfigRequest) returns (ConfigResponse);
+  rpc UpdateConfig(UpdateConfigRequest) returns (ConfigResponse);
+  rpc SubscribeConfigChanges(SubscribeConfigRequest) returns (stream ConfigChangeEvent);
+  
+  // 命令执行
+  rpc ExecuteCommand(CommandRequest) returns (CommandResponse);
+  rpc StreamCommands(StreamCommandRequest) returns (stream CommandRequest);
+  
+  // 文件传输
+  rpc UploadFile(stream FileChunk) returns (FileTransferResponse);
+  rpc DownloadFile(DownloadFileRequest) returns (stream FileChunk);
+  
+  // 诊断与调试
+  rpc GetDiagnostics(DiagnosticsRequest) returns (DiagnosticsResponse);
+  rpc CaptureProfile(ProfileRequest) returns (stream ProfileData);
+  
+  // 探针状态查询
+  rpc GetAgentStatus(AgentStatusRequest) returns (AgentStatusResponse);
+  rpc GetAgentMetrics(AgentMetricsRequest) returns (AgentMetricsResponse);
+}
+
+// ============================================================
+// 边缘服务服务
+// ============================================================
+
+service EdgeService {
+  // 数据接收
+  rpc ReceiveMetrics(stream MetricBatch) returns (AckResponse);
+  rpc ReceiveTraces(stream TraceBatch) returns (AckResponse);
+  rpc ReceiveLogs(stream LogBatch) returns (AckResponse);
+  
+  // 负载均衡与路由
+  rpc GetRoutingInfo(RoutingRequest) returns (RoutingResponse);
+  rpc ReportLoad(LoadReport) returns (google.protobuf.Empty);
+  
+  // 服务发现
+  rpc DiscoverServices(ServiceDiscoveryRequest) returns (ServiceDiscoveryResponse);
+  rpc RegisterService(ServiceRegistration) returns (ServiceRegistrationResponse);
+  
+  // 健康检查
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServiceHealth(ServiceHealthRequest) returns (ServiceHealthResponse);
+}
+
+// ============================================================
+// 中心控制服务
+// ============================================================
+
+service ControlCenter {
+  // 全局配置管理
+  rpc GetGlobalConfig(GlobalConfigRequest) returns (GlobalConfigResponse);
+  rpc UpdateGlobalConfig(UpdateGlobalConfigRequest) returns (GlobalConfigResponse);
+  
+  // 策略管理
+  rpc GetPolicy(PolicyRequest) returns (PolicyResponse);
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (PolicyResponse);
+  
+  // 告警管理
+  rpc ReportAlert(AlertReport) returns (AlertResponse);
+  rpc SubscribeAlerts(AlertSubscription) returns (stream AlertReport);
+  
+  // 数据分析
+  rpc QueryMetrics(MetricsQueryRequest) returns (MetricsQueryResponse);
+  rpc QueryTraces(TracesQueryRequest) returns (TracesQueryResponse);
+  rpc QueryLogs(LogsQueryRequest) returns (LogsQueryResponse);
+  
+  // 探针管理
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc GetAgentDetails(AgentDetailsRequest) returns (AgentDetailsResponse);
+  rpc ControlAgent(AgentControlRequest) returns (AgentControlResponse);
+}
+
+// ============================================================
+// 消息定义
+// ============================================================
+
+// 探针信息
+message AgentInfo {
+  string agent_id = 1;
+  string hostname = 2;
+  string ip_address = 3;
+  string version = 4;
+  map<string, string> tags = 5;
+  AgentCapabilities capabilities = 6;
+  google.protobuf.Timestamp register_time = 7;
+}
+
+message AgentCapabilities {
+  bool supports_ebpf = 1;
+  bool supports_tracing = 2;
+  bool supports_metrics = 3;
+  bool supports_logs = 4;
+  repeated string supported_protocols = 5;
+}
+
+// 注册请求/响应
+message RegisterAgentRequest {
+  AgentInfo agent_info = 1;
+  string auth_token = 2;
+  string signature = 3;
+}
+
+message RegisterAgentResponse {
+  bool success = 1;
+  string session_id = 2;
+  string assigned_edge = 3;
+  int64 token_expiry = 4;
+  string error_message = 5;
+  ConfigSnapshot initial_config = 6;
+}
+
+// 心跳
+message HeartbeatRequest {
+  string agent_id = 1;
+  string session_id = 2;
+  AgentStatus status = 3;
+  ResourceUsage resources = 4;
+}
+
+message HeartbeatResponse {
+  bool accepted = 1;
+  int64 next_heartbeat_interval = 2; // 秒
+  repeated Command pending_commands = 3;
+  bool config_updated = 4;
+}
+
+message UnregisterAgentRequest {
+  string agent_id = 1;
+  string session_id = 2;
+  string reason = 3;
+}
+
+// 状态与资源
+message AgentStatus {
+  string state = 1; // running, paused, error, shutting_down
+  string message = 2;
+  map<string, string> details = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message ResourceUsage {
+  double cpu_percent = 1;
+  uint64 memory_bytes = 2;
+  uint64 disk_bytes = 3;
+  uint32 goroutines = 4;
+  uint32 open_files = 5;
+  uint32 connections = 6;
+}
+
+// 指标数据
+message MetricBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  repeated Metric metrics = 4;
+  map<string, string> metadata = 5;
+}
+
+message Metric {
+  string name = 1;
+  double value = 2;
+  MetricType type = 3;
+  map<string, string> tags = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  uint64 count = 6; // 聚合计数
+  double sum = 7;
+  double min = 8;
+  double max = 9;
+}
+
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_GAUGE = 1;
+  METRIC_TYPE_COUNTER = 2;
+  METRIC_TYPE_HISTOGRAM = 3;
+  METRIC_TYPE_SUMMARY = 4;
+}
+
+// 链路追踪
+message TraceBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  repeated Span spans = 3;
+}
+
+message Span {
+  string trace_id = 1;
+  string span_id = 2;
+  string parent_span_id = 3;
+  string operation_name = 4;
+  google.protobuf.Timestamp start_time = 5;
+  google.protobuf.Duration duration = 6;
+  map<string, string> tags = 7;
+  repeated SpanLog logs = 8;
+  SpanContext context = 9;
+}
+
+message SpanContext {
+  string service_name = 1;
+  string service_version = 2;
+  string host = 3;
+  string ip = 4;
+}
+
+message SpanLog {
+  google.protobuf.Timestamp timestamp = 1;
+  map<string, string> fields = 2;
+}
+
+// 日志数据
+message LogBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  repeated LogEntry entries = 3;
+}
+
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  LogLevel level = 2;
+  string message = 3;
+  string source = 4;
+  map<string, string> fields = 5;
+  string trace_id = 6;
+  string span_id = 7;
+}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+  LOG_LEVEL_FATAL = 5;
+}
+
+// 事件数据
+message EventBatch {
+  string agent_id = 1;
+  string batch_id = 2;
+  repeated Event events = 3;
+}
+
+message Event {
+  string event_id = 1;
+  string event_type = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  map<string, string> attributes = 4;
+  Severity severity = 5;
+  string description = 6;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
+  SEVERITY_CRITICAL = 4;
+}
+
+// 配置管理
+message GetConfigRequest {
+  string agent_id = 1;
+  string config_version = 2;
+}
+
+message ConfigResponse {
+  bool success = 1;
+  ConfigSnapshot config = 2;
+  string error_message = 3;
+}
+
+message UpdateConfigRequest {
+  string agent_id = 1;
+  string config_path = 2;
+  bytes config_data = 3;
+  string signature = 4;
+}
+
+message SubscribeConfigRequest {
+  string agent_id = 1;
+  repeated string interested_paths = 2;
+}
+
+message ConfigChangeEvent {
+  string change_id = 1;
+  string config_path = 2;
+  bytes old_value = 3;
+  bytes new_value = 4;
+  google.protobuf.Timestamp change_time = 5;
+}
+
+message ConfigSnapshot {
+  string version = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  bytes config_data = 3;
+  string checksum = 4;
+}
+
+// 命令执行
+message Command {
+  string command_id = 1;
+  string command_type = 2;
+  map<string, string> parameters = 3;
+  int64 timeout_seconds = 4;
+  string issued_by = 5;
+  google.protobuf.Timestamp issued_at = 6;
+}
+
+message CommandRequest {
+  string agent_id = 1;
+  Command command = 2;
+}
+
+message CommandResponse {
+  string command_id = 1;
+  bool success = 2;
+  string output = 3;
+  string error_message = 4;
+  int32 exit_code = 5;
+  google.protobuf.Duration execution_time = 6;
+}
+
+message StreamCommandRequest {
+  string agent_id = 1;
+  string command_filter = 2;
+}
+
+// 文件传输
+message FileChunk {
+  string transfer_id = 1;
+  string file_name = 2;
+  uint64 offset = 3;
+  bytes data = 4;
+  bool is_last = 5;
+  string checksum = 6;
+}
+
+message FileTransferResponse {
+  bool success = 1;
+  string transfer_id = 2;
+  uint64 bytes_received = 3;
+  string error_message = 4;
+}
+
+message DownloadFileRequest {
+  string agent_id = 1;
+  string file_path = 2;
+  uint64 offset = 3;
+  uint64 chunk_size = 4;
+}
+
+// 诊断
+message DiagnosticsRequest {
+  string agent_id = 1;
+  string diagnostics_type = 2; // cpu, memory, network, goroutine, all
+  int64 duration_seconds = 3;
+}
+
+message DiagnosticsResponse {
+  bool success = 1;
+  string diagnostics_id = 2;
+  map<string, string> results = 3;
+  string report_url = 4;
+}
+
+message ProfileRequest {
+  string agent_id = 1;
+  string profile_type = 2; // cpu, heap, goroutine, mutex, block
+  int64 duration_seconds = 3;
+}
+
+message ProfileData {
+  bytes data = 1;
+  string profile_type = 2;
+  bool is_last = 3;
+}
+
+// 探针状态查询
+message AgentStatusRequest {
+  string agent_id = 1;
+}
+
+message AgentStatusResponse {
+  bool online = 1;
+  AgentInfo info = 2;
+  AgentStatus status = 3;
+  ResourceUsage resources = 4;
+  google.protobuf.Timestamp last_heartbeat = 5;
+}
+
+message AgentMetricsRequest {
+  string agent_id = 1;
+  string metric_pattern = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+}
+
+message AgentMetricsResponse {
+  repeated Metric metrics = 1;
+  map<string, double> aggregates = 2;
+}
+
+// 通用响应
+message ReportResponse {
+  bool accepted = 1;
+  string batch_id = 2;
+  int64 items_received = 3;
+  int64 items_accepted = 4;
+  repeated string rejected_items = 5;
+  string error_message = 6;
+}
+
+message AckResponse {
+  bool acknowledged = 1;
+  string batch_id = 2;
+  int64 sequence_number = 3;
+  string error_message = 4;
+}
+
+// 边缘服务消息
+message RoutingRequest {
+  string agent_id = 1;
+  string service_type = 2;
+}
+
+message RoutingResponse {
+  repeated Endpoint endpoints = 1;
+  string routing_strategy = 2;
+  google.protobuf.Duration ttl = 3;
+}
+
+message Endpoint {
+  string address = 1;
+  int32 port = 2;
+  int32 weight = 3;
+  bool healthy = 4;
+  map<string, string> metadata = 5;
+}
+
+message LoadReport {
+  string agent_id = 1;
+  string edge_id = 2;
+  double cpu_load = 3;
+  double memory_usage = 4;
+  int32 active_connections = 5;
+  int64 requests_per_second = 6;
+}
+
+// 服务发现
+message ServiceDiscoveryRequest {
+  string service_name = 1;
+  map<string, string> tags = 2;
+}
+
+message ServiceDiscoveryResponse {
+  repeated ServiceInstance instances = 1;
+}
+
+message ServiceInstance {
+  string instance_id = 1;
+  string service_name = 2;
+  string address = 3;
+  int32 port = 4;
+  map<string, string> tags = 5;
+  bool healthy = 6;
+  google.protobuf.Timestamp last_heartbeat = 7;
+}
+
+message ServiceRegistration {
+  string instance_id = 1;
+  string service_name = 2;
+  string address = 3;
+  int32 port = 4;
+  map<string, string> tags = 5;
+  google.protobuf.Duration ttl = 6;
+}
+
+message ServiceRegistrationResponse {
+  bool success = 1;
+  string lease_id = 2;
+  google.protobuf.Duration lease_duration = 3;
+}
+
+// 健康检查
+message HealthCheckRequest {
+  string service_id = 1;
+  string check_type = 2;
+}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string status = 2;
+  map<string, string> details = 3;
+  google.protobuf.Timestamp checked_at = 4;
+}
+
+message ServiceHealthRequest {
+  repeated string service_ids = 1;
+}
+
+message ServiceHealthResponse {
+  map<string, HealthCheckResponse> health_status = 1;
+}
+
+// 中心控制消息
+message GlobalConfigRequest {
+  string config_scope = 1;
+  string version = 2;
+}
+
+message GlobalConfigResponse {
+  ConfigSnapshot config = 1;
+  repeated string affected_agents = 2;
+}
+
+message UpdateGlobalConfigRequest {
+  string config_scope = 1;
+  bytes config_data = 2;
+  string changed_by = 3;
+  bool dry_run = 4;
+}
+
+// 策略管理
+message PolicyRequest {
+  string policy_id = 1;
+  string policy_type = 2;
+}
+
+message PolicyResponse {
+  string policy_id = 1;
+  string policy_type = 2;
+  bytes policy_data = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  string created_by = 6;
+}
+
+message UpdatePolicyRequest {
+  string policy_id = 1;
+  bytes policy_data = 2;
+  string updated_by = 3;
+}
+
+// 告警
+message AlertReport {
+  string alert_id = 1;
+  string alert_type = 2;
+  Severity severity = 3;
+  string source = 4;
+  string message = 5;
+  map<string, string> context = 6;
+  google.protobuf.Timestamp timestamp = 7;
+  bool resolved = 8;
+}
+
+message AlertResponse {
+  bool accepted = 1;
+  string ticket_id = 2;
+  string escalation_level = 3;
+}
+
+message AlertSubscription {
+  string subscriber_id = 1;
+  repeated string alert_types = 2;
+  Severity min_severity = 3;
+}
+
+// 查询
+message MetricsQueryRequest {
+  string query = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  map<string, string> filters = 4;
+  string aggregation = 5;
+  google.protobuf.Duration interval = 6;
+}
+
+message MetricsQueryResponse {
+  repeated TimeSeries series = 1;
+  map<string, string> metadata = 2;
+}
+
+message TimeSeries {
+  string metric_name = 1;
+  map<string, string> tags = 2;
+  repeated DataPoint points = 3;
+}
+
+message DataPoint {
+  google.protobuf.Timestamp timestamp = 1;
+  double value = 2;
+}
+
+message TracesQueryRequest {
+  string trace_id = 1;
+  string service_name = 2;
+  string operation_name = 3;
+  google.protobuf.Timestamp start_time = 4;
+  google.protobuf.Timestamp end_time = 5;
+  map<string, string> tags = 6;
+  int32 limit = 7;
+}
+
+message TracesQueryResponse {
+  repeated Trace traces = 1;
+  int32 total_count = 2;
+}
+
+message Trace {
+  string trace_id = 1;
+  google.protobuf.Duration duration = 2;
+  repeated Span spans = 3;
+  map<string, string> root_tags = 4;
+}
+
+message LogsQueryRequest {
+  string query = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  repeated LogLevel levels = 4;
+  map<string, string> filters = 5;
+  int32 limit = 6;
+}
+
+message LogsQueryResponse {
+  repeated LogEntry entries = 1;
+  int32 total_count = 2;
+  bool has_more = 3;
+}
+
+// 探针管理
+message ListAgentsRequest {
+  map<string, string> filters = 1;
+  string sort_by = 2;
+  bool sort_desc = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+}
+
+message ListAgentsResponse {
+  repeated AgentInfo agents = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message AgentDetailsRequest {
+  string agent_id = 1;
+  bool include_metrics = 2;
+  bool include_logs = 3;
+}
+
+message AgentDetailsResponse {
+  AgentInfo info = 1;
+  AgentStatus status = 2;
+  ResourceUsage resources = 3;
+  repeated Metric recent_metrics = 4;
+  repeated LogEntry recent_logs = 5;
+  ConfigSnapshot current_config = 6;
+}
+
+message AgentControlRequest {
+  string agent_id = 1;
+  string action = 2; // start, stop, restart, pause, resume, update
+  map<string, string> parameters = 3;
+}
+
+message AgentControlResponse {
+  bool success = 1;
+  string job_id = 2;
+  string status = 3;
+  string message = 4

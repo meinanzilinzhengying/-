@@ -1,16 +1,15 @@
-//go:build linux
+/*
+ * Cloud Flow Agent - gRPC Client
+ *
+ * gRPC 客户端实现，用于与边缘服务和中心控制通信
+ */
 
-// Package grpc 提供 gRPC 客户端功能
 package grpc
 
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"fmt"
-	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -18,43 +17,112 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
-
-	"github.com/meinanzilinzhengying/cloud-flow-agent/pkg/api"
-	"github.com/meinanzilinzhengying/cloud-flow-agent/pkg/models"
+	"google.golang.org/grpc/metadata"
 )
 
-// Client gRPC 客户端
-type Client struct {
-	config    *models.EdgeConfig
-	conn      *grpc.ClientConn
-	client    api.AgentServiceClient
-	mu        sync.RWMutex
-	connected bool
+// ClientConfig gRPC 客户端配置
+type ClientConfig struct {
+	// 服务器地址
+	ServerAddress string
 
-	// 重连相关
-	retryCount int
-	stopChan   chan struct{}
+	// 连接配置
+	DialTimeout       time.Duration
+	KeepaliveTime     time.Duration
+	KeepaliveTimeout  time.Duration
+	MaxRecvMsgSize    int
+	MaxSendMsgSize    int
+
+	// TLS 配置
+	EnableTLS         bool
+	TLSCertFile       string
+	TLSKeyFile        string
+	TLSCAFile         string
+	InsecureSkipVerify bool
+
+	// 认证配置
+	AuthToken         string
+	AuthInterceptor   bool
+
+	// 重试配置
+	MaxRetries        int
+	RetryBackoff      time.Duration
 }
 
-// NewClient 创建 gRPC 客户端
-func NewClient(config *models.EdgeConfig) *Client {
-	return &Client{
-		config:   config,
-		stopChan: make(chan struct{}),
+// DefaultClientConfig 默认配置
+func DefaultClientConfig() *ClientConfig {
+	return &ClientConfig{
+		ServerAddress:      "localhost:50051",
+		DialTimeout:        10 * time.Second,
+		KeepaliveTime:      30 * time.Second,
+		KeepaliveTimeout:   10 * time.Second,
+		MaxRecvMsgSize:     64 * 1024 * 1024, // 64MB
+		MaxSendMsgSize:     64 * 1024 * 1024, // 64MB
+		EnableTLS:          false,
+		MaxRetries:         3,
+		RetryBackoff:       1 * time.Second,
 	}
 }
 
-// Connect 连接到 Edge 服务
-func (c *Client) Connect(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// GRPCClient gRPC 客户端
+type GRPCClient struct {
+	mu sync.RWMutex
 
-	address := fmt.Sprintf("%s:%d", c.config.Address, c.config.Port)
+	config *ClientConfig
+	conn   *grpc.ClientConn
+	
+	// 服务客户端
+	// agentClient  CloudFlowAgentClient
+	// edgeClient   EdgeServiceClient
+	// centerClient ControlCenterClient
 
-	var opts []grpc.DialOption
+	// 连接状态
+	connected  bool
+	lastError  error
+	
+	// 上下文控制
+	ctx    context.Context
+	cancel context.CancelFunc
+}
 
-	// 配置 TLS
-	if c.config.TLSEnabled {
+// NewGRPCClient 创建 gRPC 客户端
+func NewGRPCClient(config *ClientConfig) (*GRPCClient, error) {
+	if config == nil {
+		config = DefaultClientConfig()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	client := &GRPCClient{
+		config: config,
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	// 建立连接
+	if err := client.connect(); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// connect 建立连接
+func (c *GRPCClient) connect() error {
+	opts := []grpc.DialOption{
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(c.config.MaxRecvMsgSize),
+			grpc.MaxCallSendMsgSize(c.config.MaxSendMsgSize),
+		),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                c.config.KeepaliveTime,
+			Timeout:             c.config.KeepaliveTimeout,
+			PermitWithoutStream: true,
+		}),
+	}
+
+	// TLS 配置
+	if c.config.EnableTLS {
 		creds, err := c.loadTLSCredentials()
 		if err != nil {
 			return fmt.Errorf("failed to load TLS credentials: %w", err)
@@ -64,354 +132,153 @@ func (c *Client) Connect(ctx context.Context) error {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	// 配置 keepalive
-	kaParams := keepalive.ClientParameters{
-		Time:                10 * time.Second,
-		Timeout:             time.Duration(c.config.Timeout) * time.Second,
-		PermitWithoutStream: true,
+	// 认证拦截器
+	if c.config.AuthInterceptor && c.config.AuthToken != "" {
+		opts = append(opts, grpc.WithUnaryInterceptor(c.authInterceptor))
+		opts = append(opts, grpc.WithStreamInterceptor(c.authStreamInterceptor))
 	}
-	opts = append(opts, grpc.WithKeepaliveParams(kaParams))
-
-	// 配置重试
-	opts = append(opts, grpc.WithDefaultCallOptions(
-		grpc.MaxRetry(3),
-	))
 
 	// 建立连接
-	conn, err := grpc.DialContext(ctx, address, opts...)
+	ctx, cancel := context.WithTimeout(c.ctx, c.config.DialTimeout)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, c.config.ServerAddress, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", address, err)
+		return fmt.Errorf("failed to connect to %s: %w", c.config.ServerAddress, err)
 	}
 
+	c.mu.Lock()
 	c.conn = conn
-	c.client = api.NewAgentServiceClient(conn)
 	c.connected = true
+	c.mu.Unlock()
 
 	return nil
 }
 
 // loadTLSCredentials 加载 TLS 凭证
-func (c *Client) loadTLSCredentials() (credentials.TransportCredentials, error) {
-	// 加载 CA 证书
-	caCert, err := os.ReadFile(c.config.CAFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+func (c *GRPCClient) loadTLSCredentials() (credentials.TransportCredentials, error) {
+	if c.config.TLSCertFile != "" && c.config.TLSKeyFile != "" {
+		// 双向 TLS
+		cert, err := tls.LoadX509KeyPair(c.config.TLSCertFile, c.config.TLSKeyFile)
+		if err != nil {
+			return nil, err
+		}
+
+		config := &tls.Config{
+			Certificates:       []tls.Certificate{cert},
+			InsecureSkipVerify: c.config.InsecureSkipVerify,
+		}
+
+		return credentials.NewTLS(config), nil
 	}
 
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caCert) {
-		return nil, errors.New("failed to append CA certificate")
-	}
-
-	// 加载客户端证书
-	cert, err := tls.LoadX509KeyPair(c.config.CertFile, c.config.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
-	}
-
+	// 单向 TLS
 	config := &tls.Config{
-		RootCAs:      caPool,
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		InsecureSkipVerify: c.config.InsecureSkipVerify,
 	}
 
 	return credentials.NewTLS(config), nil
 }
 
-// Close 关闭连接
-func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	close(c.stopChan)
-
-	if c.conn != nil {
-		return c.conn.Close()
-	}
-	return nil
+// authInterceptor 认证拦截器（Unary）
+func (c *GRPCClient) authInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	md := metadata.Pairs("authorization", "Bearer "+c.config.AuthToken)
+	ctx = metadata.NewOutgoingContext(ctx, md)
+	return invoker(ctx, method, req, reply, cc, opts...)
 }
 
-// IsConnected 检查是否已连接
-func (c *Client) IsConnected() bool {
+// authStreamInterceptor 认证拦截器（Stream）
+func (c *GRPCClient) authStreamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	md := metadata.Pairs("authorization", "Bearer "+c.config.AuthToken)
+	ctx = metadata.NewOutgoingContext(ctx, md)
+	return streamer(ctx, desc, cc, method, opts...)
+}
+
+// GetConnection 获取连接
+func (c *GRPCClient) GetConnection() *grpc.ClientConn {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.conn
+}
+
+// IsConnected 检查连接状态
+func (c *GRPCClient) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
 }
 
-// Heartbeat 发送心跳
-func (c *Client) Heartbeat(ctx context.Context, req *api.HeartbeatRequest) (*api.HeartbeatResponse, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+// Reconnect 重新连接
+func (c *GRPCClient) Reconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if c.client == nil {
-		return nil, errors.New("not connected")
+	// 关闭旧连接
+	if c.conn != nil {
+		c.conn.Close()
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.config.Timeout)*time.Second)
+	c.connected = false
+
+	// 建立新连接
+	return c.connect()
+}
+
+// Close 关闭连接
+func (c *GRPCClient) Close() error {
+	c.cancel()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+
+	return nil
+}
+
+// WithRetry 带重试的调用
+func (c *GRPCClient) WithRetry(ctx context.Context, fn func() error) error {
+	var lastErr error
+
+	for i := 0; i <= c.config.MaxRetries; i++ {
+		if err := fn(); err != nil {
+			lastErr = err
+			
+			// 检查是否需要重试
+			if i < c.config.MaxRetries {
+				select {
+				case <-time.After(c.config.RetryBackoff * time.Duration(i+1)):
+					continue
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		} else {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("max retries exceeded: %w", lastErr)
+}
+
+// WaitForReady 等待连接就绪
+func (c *GRPCClient) WaitForReady(timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return c.client.Heartbeat(ctx, req)
-}
-
-// ReportNetworkFlow 上报网络流量
-func (c *Client) ReportNetworkFlow(ctx context.Context, flows []*api.NetworkFlow) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.client == nil {
-		return errors.New("not connected")
-	}
-
-	stream, err := c.client.ReportNetworkFlow(ctx)
-	if err != nil {
-		return err
-	}
-
-	// 批量发送
-	batchSize := 100
-	for i := 0; i < len(flows); i += batchSize {
-		end := i + batchSize
-		if end > len(flows) {
-			end = len(flows)
-		}
-
-		req := &api.NetworkFlowRequest{
-			Flows: flows[i:end],
-		}
-
-		if err := stream.Send(req); err != nil {
-			return err
-		}
-	}
-
-	_, err = stream.CloseAndRecv()
-	return err
-}
-
-// ReportSystemMetrics 上报系统指标
-func (c *Client) ReportSystemMetrics(ctx context.Context, metrics []*api.SystemMetric) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.client == nil {
-		return errors.New("not connected")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.config.Timeout)*time.Second)
-	defer cancel()
-
-	req := &api.SystemMetricsRequest{
-		Metrics: metrics,
-	}
-
-	_, err := c.client.ReportSystemMetrics(ctx, req)
-	return err
-}
-
-// ReportProcessEvents 上报进程事件
-func (c *Client) ReportProcessEvents(ctx context.Context, events []*api.ProcessEvent) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.client == nil {
-		return errors.New("not connected")
-	}
-
-	stream, err := c.client.ReportProcessEvents(ctx)
-	if err != nil {
-		return err
-	}
-
-	batchSize := 100
-	for i := 0; i < len(events); i += batchSize {
-		end := i + batchSize
-		if end > len(events) {
-			end = len(events)
-		}
-
-		req := &api.ProcessEventRequest{
-			Events: events[i:end],
-		}
-
-		if err := stream.Send(req); err != nil {
-			return err
-		}
-	}
-
-	_, err = stream.CloseAndRecv()
-	return err
-}
-
-// GetConfig 获取配置
-func (c *Client) GetConfig(ctx context.Context, agentID, currentHash string) ([]byte, string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.client == nil {
-		return nil, "", errors.New("not connected")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.config.Timeout)*time.Second)
-	defer cancel()
-
-	req := &api.GetConfigRequest{
-		AgentId:          agentID,
-		CurrentConfigHash: currentHash,
-	}
-
-	resp, err := c.client.GetConfig(ctx, req)
-	if err != nil {
-		return nil, "", err
-	}
-
-	return resp.ConfigData, resp.ConfigHash, nil
-}
-
-// UpdateConfig 更新配置
-func (c *Client) UpdateConfig(ctx context.Context, agentID string, configData []byte) (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.client == nil {
-		return "", errors.New("not connected")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.config.Timeout)*time.Second)
-	defer cancel()
-
-	req := &api.UpdateConfigRequest{
-		AgentId:    agentID,
-		ConfigData: configData,
-	}
-
-	resp, err := c.client.UpdateConfig(ctx, req)
-	if err != nil {
-		return "", err
-	}
-
-	return resp.NewConfigHash, nil
-}
-
-// StreamNetworkFlow 流式上报网络流量
-func (c *Client) StreamNetworkFlow(ctx context.Context, flowChan <-chan *api.NetworkFlow) error {
-	c.mu.RLock()
-	if c.client == nil {
-		c.mu.RUnlock()
-		return errors.New("not connected")
-	}
-	c.mu.RUnlock()
-
-	stream, err := c.client.ReportNetworkFlow(ctx)
-	if err != nil {
-		return err
-	}
-
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-
-	var batch []*api.NetworkFlow
 
 	for {
 		select {
 		case <-ctx.Done():
-			// 发送剩余数据
-			if len(batch) > 0 {
-				req := &api.NetworkFlowRequest{Flows: batch}
-				if err := stream.Send(req); err != nil && err != io.EOF {
-					return err
-				}
-			}
-			_, _ = stream.CloseAndRecv()
-			return ctx.Err()
-
-		case flow, ok := <-flowChan:
-			if !ok {
-				// 通道关闭，发送剩余数据
-				if len(batch) > 0 {
-					req := &api.NetworkFlowRequest{Flows: batch}
-					_ = stream.Send(req)
-				}
-				_, _ = stream.CloseAndRecv()
-				return nil
-			}
-
-			batch = append(batch, flow)
-			if len(batch) >= 100 {
-				req := &api.NetworkFlowRequest{Flows: batch}
-				if err := stream.Send(req); err != nil {
-					return err
-				}
-				batch = batch[:0]
-			}
-
+			return false
 		case <-ticker.C:
-			// 定期发送
-			if len(batch) > 0 {
-				req := &api.NetworkFlowRequest{Flows: batch}
-				if err := stream.Send(req); err != nil {
-					return err
-				}
-				batch = batch[:0]
+			if c.IsConnected() {
+				return true
 			}
 		}
 	}
-}
-
-// Reconnect 重新连接
-func (c *Client) Reconnect(ctx context.Context) error {
-	c.mu.Lock()
-	if c.conn != nil {
-		c.conn.Close()
-	}
-	c.connected = false
-	c.mu.Unlock()
-
-	return c.Connect(ctx)
-}
-
-// StartHeartbeatLoop 启动心跳循环
-func (c *Client) StartHeartbeatLoop(ctx context.Context, agentID string, getStatus func() *api.AgentStatus) <-chan error {
-	errChan := make(chan error, 1)
-
-	go func() {
-		defer close(errChan)
-
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-c.stopChan:
-				return
-			case <-ticker.C:
-				status := getStatus()
-				req := &api.HeartbeatRequest{
-					AgentId: agentID,
-					Status:  status,
-				}
-
-				_, err := c.Heartbeat(ctx, req)
-				if err != nil {
-					// 尝试重连
-					c.retryCount++
-					if c.retryCount > c.config.RetryMax {
-						errChan <- fmt.Errorf("max retries exceeded: %w", err)
-						return
-					}
-
-					time.Sleep(time.Duration(c.config.RetryDelay) * time.Second)
-					if err := c.Reconnect(ctx); err != nil {
-						errChan <- err
-						return
-					}
-				} else {
-					c.retryCount = 0
-				}
-			}
-		}
-	}()
-
-	return errChan
 }

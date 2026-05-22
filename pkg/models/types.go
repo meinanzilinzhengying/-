@@ -364,6 +364,8 @@ type Config struct {
 	OfflineCache     OfflineCacheConfig   `yaml:"offline_cache" json:"offline_cache"`
 	Auth            AuthConfig           `yaml:"auth" json:"auth"`
 	LoadBalancer    LoadBalancerConfig   `yaml:"load_balancer" json:"load_balancer"`
+	GRPC            GRPCConfig           `yaml:"grpc" json:"grpc"`
+	Metrics         MetricsConfig        `yaml:"metrics" json:"metrics"`
 }
 
 // ============================================================
@@ -1130,4 +1132,45 @@ type LoadBalancerConfig struct {
 	MaxConnPerBackend int   `yaml:"max_conn_per_backend" json:"max_conn_per_backend"`
 	ConnTimeout     int    `yaml:"conn_timeout" json:"conn_timeout"`     // 秒
 	EnableWeighted  bool   `yaml:"enable_weighted" json:"enable_weighted"`
+}
+
+// ============================================================
+// gRPC 配置模型
+// ============================================================
+
+// GRPCConfig gRPC 客户端配置
+type GRPCConfig struct {
+	Enabled            bool     `yaml:"enabled" json:"enabled"`
+	ServerAddress      string   `yaml:"server_address" json:"server_address"`
+	DialTimeout        int      `yaml:"dial_timeout" json:"dial_timeout"`           // 秒
+	KeepaliveTime      int      `yaml:"keepalive_time" json:"keepalive_time"`       // 秒
+	KeepaliveTimeout   int      `yaml:"keepalive_timeout" json:"keepalive_timeout"` // 秒
+	MaxRecvMsgSize     int      `yaml:"max_recv_msg_size" json:"max_recv_msg_size"` // MB
+	MaxSendMsgSize     int      `yaml:"max_send_msg_size" json:"max_send_msg_size"` // MB
+	EnableTLS          bool     `yaml:"enable_tls" json:"enable_tls"`
+	TLSCertFile        string   `yaml:"tls_cert_file" json:"tls_cert_file"`
+	TLSKeyFile         string   `yaml:"tls_key_file" json:"tls_key_file"`
+	TLSCAFile          string   `yaml:"tls_ca_file" json:"tls_ca_file"`
+	InsecureSkipVerify bool     `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
+	AuthToken          string   `yaml:"auth_token" json:"auth_token"`
+	AuthInterceptor    bool     `yaml:"auth_interceptor" json:"auth_interceptor"`
+	MaxRetries         int      `yaml:"max_retries" json:"max_retries"`
+	RetryBackoff       int      `yaml:"retry_backoff" json:"retry_backoff"`         // 秒
+}
+
+// ============================================================
+// 监控指标配置模型
+// ============================================================
+
+// MetricsConfig 监控指标配置
+type MetricsConfig struct {
+	Enabled            bool     `yaml:"enabled" json:"enabled"`
+	CollectionInterval int      `yaml:"collection_interval" json:"collection_interval"` // 秒
+	ReportInterval     int      `yaml:"report_interval" json:"report_interval"`         // 秒
+	MaxMetrics         int      `yaml:"max_metrics" json:"max_metrics"`
+	BufferSize         int      `yaml:"buffer_size" json:"buffer_size"`
+	ReportEndpoint     string   `yaml:"report_endpoint" json:"report_endpoint"`
+	EnableSystemMetrics bool    `yaml:"enable_system_metrics" json:"enable_system_metrics"`
+	EnableRuntimeMetrics bool   `yaml:"enable_runtime_metrics" json:"enable_runtime_metrics"`
+	EnableNetworkMetrics bool   `yaml:"enable_network_metrics" json:"enable_network_metrics"`
 }

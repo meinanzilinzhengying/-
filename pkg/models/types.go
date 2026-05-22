@@ -335,6 +335,25 @@ type Config struct {
 	Resilience  ResilienceConfig  `yaml:"resilience" json:"resilience"`
 	VXLAN       VXLANConfig       `yaml:"vxlan" json:"vxlan"`
 	Mirror      MirrorConfig      `yaml:"mirror" json:"mirror"`
+	Protocol    ProtocolConfig    `yaml:"protocol" json:"protocol"`
+}
+
+// ============================================================
+// 协议解析插件配置模型
+// ============================================================
+
+// ProtocolPluginConfig 单个协议解析插件配置
+type ProtocolPluginConfig struct {
+	Name     string `yaml:"name" json:"name"`           // 协议名称: oracle/postgresql/redis/kafka/dubbo
+	Enabled  bool   `yaml:"enabled" json:"enabled"`       // 是否启用
+	Ports    []uint16 `yaml:"ports" json:"ports"`         // 自定义端口（覆盖默认）
+}
+
+// ProtocolConfig 协议解析配置
+type ProtocolConfig struct {
+	Enabled  bool                 `yaml:"enabled" json:"enabled"`   // 启用协议解析
+	Plugins  []ProtocolPluginConfig `yaml:"plugins" json:"plugins"` // 协议插件列表
+	BufferSize int                `yaml:"buffer_size" json:"buffer_size"` // 解析缓冲区大小
 }
 
 // AgentConfig Agent 配置

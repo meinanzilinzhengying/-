@@ -293,3 +293,37 @@ mirror:
     #   port: 47
     #   erspan_id: 1
     #   enabled: true
+
+# ============================================================
+# 协议解析插件配置
+# 支持 Oracle、PostgreSQL、Redis、Kafka、Dubbo 协议深度解析
+# ============================================================
+protocol:
+  enabled: true               # 启用协议解析（默认开启）
+  buffer_size: 10000          # 解析缓冲区大小
+
+  plugins:
+    # Oracle TNS 协议解析
+    - name: "oracle"
+      enabled: true
+      ports: [1521, 1522, 1526, 1575]
+
+    # PostgreSQL 协议解析
+    - name: "postgresql"
+      enabled: true
+      ports: [5432, 5433, 5434]
+
+    # Redis RESP 协议解析
+    - name: "redis"
+      enabled: true
+      ports: [6379, 6380, 6381]
+
+    # Kafka 协议解析
+    - name: "kafka"
+      enabled: true
+      ports: [9092, 9093, 9094]
+
+    # Apache Dubbo 协议解析
+    - name: "dubbo"
+      enabled: true
+      ports: [20880, 20881, 20882]

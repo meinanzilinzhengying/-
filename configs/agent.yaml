@@ -327,3 +327,36 @@ protocol:
     - name: "dubbo"
       enabled: true
       ports: [20880, 20881, 20882]
+
+# ============================================================
+# 丢包监控配置
+# 监控网络接口丢包情况，支持接口统计和TCP探测两种方式
+# ============================================================
+packet_loss:
+  enabled: true               # 启用丢包监控（默认开启）
+  check_interval: 30          # 检查间隔（秒）
+  interface: ""               # 监控的接口，空表示所有接口
+  threshold_percent: 1.0      # 丢包率告警阈值（%）
+  threshold_packets: 100      # 丢包数告警阈值
+  alert_cooldown: 300         # 告警冷却时间（秒）
+  enable_tcp_check: true      # 启用TCP探测检测
+  tcp_check_target: "8.8.8.8" # TCP探测目标地址
+  tcp_check_port: 53          # TCP探测目标端口
+
+# ============================================================
+# 时钟同步配置
+# NTP时间同步与自动校准
+# ============================================================
+time_sync:
+  enabled: true               # 启用时钟同步（默认开启）
+  sync_interval: 3600         # 同步间隔（秒）
+  servers:                    # NTP服务器列表
+    - "pool.ntp.org"
+    - "time.windows.com"
+    - "time.apple.com"
+    - "cn.pool.ntp.org"
+  timeout: 10                 # 超时时间（秒）
+  max_drift_sec: 300          # 最大允许时钟偏差（秒）
+  auto_correct: false         # 自动校准系统时间（默认关闭，仅监控）
+  drift_threshold: 1          # 偏差告警阈值（秒）
+  retry_attempts: 3           # 重试次数

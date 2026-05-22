@@ -336,6 +336,8 @@ type Config struct {
 	VXLAN       VXLANConfig       `yaml:"vxlan" json:"vxlan"`
 	Mirror      MirrorConfig      `yaml:"mirror" json:"mirror"`
 	Protocol    ProtocolConfig    `yaml:"protocol" json:"protocol"`
+	PacketLoss  PacketLossConfig  `yaml:"packet_loss" json:"packet_loss"`
+	TimeSync    TimeSyncConfig    `yaml:"time_sync" json:"time_sync"`
 }
 
 // ============================================================
@@ -439,4 +441,37 @@ type LoggingConfig struct {
 	MaxBackups int `yaml:"max_backups" json:"max_backups"` // 最大备份文件数
 	MaxAge    int `yaml:"max_age" json:"max_age"`       // 最大保留天数
 	Compress  bool `yaml:"compress" json:"compress"`     // 是否压缩
+}
+
+// ============================================================
+// 丢包监控配置模型
+// ============================================================
+
+// PacketLossConfig 丢包监控配置
+type PacketLossConfig struct {
+	Enabled          bool          `yaml:"enabled" json:"enabled"`
+	CheckInterval    int           `yaml:"check_interval" json:"check_interval"`    // 检查间隔（秒）
+	Interface        string        `yaml:"interface" json:"interface"`              // 监控的接口，空表示所有
+	ThresholdPercent float64       `yaml:"threshold_percent" json:"threshold_percent"` // 丢包率阈值（%）
+	ThresholdPackets uint64        `yaml:"threshold_packets" json:"threshold_packets"` // 丢包数阈值
+	AlertCooldown    int           `yaml:"alert_cooldown" json:"alert_cooldown"`    // 告警冷却（秒）
+	EnableTCPCheck   bool          `yaml:"enable_tcp_check" json:"enable_tcp_check"` // 启用TCP检测
+	TCPCheckTarget   string        `yaml:"tcp_check_target" json:"tcp_check_target"` // TCP检测目标
+	TCPCheckPort     uint16        `yaml:"tcp_check_port" json:"tcp_check_port"`    // TCP检测端口
+}
+
+// ============================================================
+// 时钟同步配置模型
+// ============================================================
+
+// TimeSyncConfig 时钟同步配置
+type TimeSyncConfig struct {
+	Enabled        bool     `yaml:"enabled" json:"enabled"`
+	SyncInterval   int      `yaml:"sync_interval" json:"sync_interval"`     // 同步间隔（秒）
+	Servers        []string `yaml:"servers" json:"servers"`                 // NTP服务器列表
+	Timeout        int      `yaml:"timeout" json:"timeout"`                 // 超时（秒）
+	MaxDriftSec    int      `yaml:"max_drift_sec" json:"max_drift_sec"`     // 最大允许偏差（秒）
+	AutoCorrect    bool     `yaml:"auto_correct" json:"auto_correct"`       // 自动校准
+	DriftThreshold int      `yaml:"drift_threshold" json:"drift_threshold"` // 偏差告警阈值（秒）
+	RetryAttempts  int      `yaml:"retry_attempts" json:"retry_attempts"`   // 重试次数
 }

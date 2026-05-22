@@ -1355,6 +1355,150 @@ alert_manager:
         max_per_hour: 10
 
 # ============================================================
+# 查询优化配置
+# 解决1亿行数据查询无索引、查询超时卡死问题
+# ============================================================
+query_optimizer:
+  enabled: true                   # 启用查询优化（默认开启）
+  max_query_time: 30              # 最大查询时间（秒）
+  cache_enabled: true             # 启用查询缓存
+  cache_ttl: 300                  # 缓存TTL（秒）
+  cache_max_size: 10000           # 缓存最大条目数
+  auto_index_enabled: true        # 启用自动索引建议
+  partition_enabled: true         # 启用数据分区
+  max_result_size: 100000         # 最大结果集大小
+  query_parallelism: 4            # 查询并行度
+
+  # 索引配置（预定义常用索引）
+  indexes:
+    # 指标数据索引
+    - table_name: "metrics"
+      index_name: "idx_metrics_timestamp"
+      columns: ["timestamp", "metric_name"]
+      index_type: "btree"
+      unique: false
+    - table_name: "metrics"
+      index_name: "idx_metrics_name"
+      columns: ["metric_name", "timestamp"]
+      index_type: "btree"
+      unique: false
+    - table_name: "metrics"
+      index_name: "idx_metrics_tags"
+      columns: ["tags"]
+      index_type: "hash"
+      unique: false
+
+    # 日志数据索引
+    - table_name: "logs"
+      index_name: "idx_logs_timestamp"
+      columns: ["timestamp", "level"]
+      index_type: "btree"
+      unique: false
+    - table_name: "logs"
+      index_name: "idx_logs_source"
+      columns: ["source", "timestamp"]
+      index_type: "btree"
+      unique: false
+
+    # 链路数据索引
+    - table_name: "traces"
+      index_name: "idx_traces_trace_id"
+      columns: ["trace_id", "span_id"]
+      index_type: "btree"
+      unique: false
+    - table_name: "traces"
+      index_name: "idx_traces_timestamp"
+      columns: ["timestamp", "service_name"]
+      index_type: "btree"
+      unique: false
+
+    # 数据库观测索引
+    - table_name: "database_metrics"
+      index_name: "idx_db_timestamp"
+      columns: ["timestamp", "database_type"]
+      index_type: "btree"
+      unique: false
+    - table_name: "database_metrics"
+      index_name: "idx_db_fingerprint"
+      columns: ["sql_fingerprint", "timestamp"]
+      index_type: "btree"
+      unique: false
+
+    # 告警历史索引
+    - table_name: "alert_history"
+      index_name: "idx_alert_timestamp"
+      columns: ["timestamp", "alert_type"]
+      index_type: "btree"
+      unique: false
+    - table_name: "alert_history"
+      index_name: "idx_alert_status"
+      columns: ["status", "timestamp"]
+      index_type: "btree"
+      unique: false
+
+  # 分区配置（按时间分区，解决大数据量查询）
+  partitions:
+    # 指标数据按天分区
+    - table_name: "metrics"
+      partition_key: "timestamp"
+      partition_type: "time"
+      partitions:
+        - name: "p_current"
+          condition: "CURRENT"
+          start_key: "now() - interval '1 day'"
+          end_key: "now()"
+        - name: "p_history"
+          condition: "HISTORY"
+          start_key: "now() - interval '60 days'"
+          end_key: "now() - interval '1 day'"
+        - name: "p_archive"
+          condition: "ARCHIVE"
+          start_key: "now() - interval '180 days'"
+          end_key: "now() - interval '60 days'"
+
+    # 日志数据按天分区
+    - table_name: "logs"
+      partition_key: "timestamp"
+      partition_type: "time"
+      partitions:
+        - name: "p_current"
+          condition: "CURRENT"
+          start_key: "now() - interval '1 day'"
+          end_key: "now()"
+        - name: "p_history"
+          condition: "HISTORY"
+          start_key: "now() - interval '30 days'"
+          end_key: "now() - interval '1 day'"
+
+    # 链路数据按天分区
+    - table_name: "traces"
+      partition_key: "timestamp"
+      partition_type: "time"
+      partitions:
+        - name: "p_current"
+          condition: "CURRENT"
+          start_key: "now() - interval '1 day'"
+          end_key: "now()"
+        - name: "p_history"
+          condition: "HISTORY"
+          start_key: "now() - interval '60 days'"
+          end_key: "now() - interval '1 day'"
+
+    # 告警历史按周分区
+    - table_name: "alert_history"
+      partition_key: "timestamp"
+      partition_type: "time"
+      partitions:
+        - name: "p_current"
+          condition: "CURRENT"
+          start_key: "now() - interval '7 days'"
+          end_key: "now()"
+        - name: "p_history"
+          condition: "HISTORY"
+          start_key: "now() - interval '90 days'"
+          end_key: "now() - interval '7 days'"
+
+# ============================================================
 # RBAC权限控制配置
 # 支持租户隔离、用户组、角色权限分级
 # ============================================================

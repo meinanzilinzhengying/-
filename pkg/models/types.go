@@ -1417,3 +1417,47 @@ type RoleConfig struct {
 	Description string   `yaml:"description" json:"description"`                   // 描述
 	Permissions []string `yaml:"permissions" json:"permissions"`                   // 权限列表
 }
+
+// ============================================================
+// 查询优化配置模型
+// ============================================================
+
+// QueryOptimizerConfig 查询优化器配置
+type QueryOptimizerConfig struct {
+	Enabled          bool   `yaml:"enabled" json:"enabled"`                           // 启用查询优化
+	MaxQueryTime     int    `yaml:"max_query_time" json:"max_query_time"`             // 最大查询时间（秒）
+	CacheEnabled     bool   `yaml:"cache_enabled" json:"cache_enabled"`               // 启用缓存
+	CacheTTL         int    `yaml:"cache_ttl" json:"cache_ttl"`                       // 缓存TTL（秒）
+	CacheMaxSize     int    `yaml:"cache_max_size" json:"cache_max_size"`             // 缓存最大条目数
+	AutoIndexEnabled bool   `yaml:"auto_index_enabled" json:"auto_index_enabled"`     // 自动索引
+	PartitionEnabled bool   `yaml:"partition_enabled" json:"partition_enabled"`       // 启用分区
+	MaxResultSize    int    `yaml:"max_result_size" json:"max_result_size"`           // 最大结果集大小
+	QueryParallelism int    `yaml:"query_parallelism" json:"query_parallelism"`       // 查询并行度
+	Indexes          []IndexConfig `yaml:"indexes" json:"indexes"`                      // 索引配置
+	Partitions       []PartitionConfig `yaml:"partitions" json:"partitions"`            // 分区配置
+}
+
+// IndexConfig 索引配置
+type IndexConfig struct {
+	TableName string   `yaml:"table_name" json:"table_name"`                     // 表名
+	IndexName string   `yaml:"index_name" json:"index_name"`                     // 索引名
+	Columns   []string `yaml:"columns" json:"columns"`                           // 索引列
+	IndexType string   `yaml:"index_type" json:"index_type"`                     // 索引类型: btree/hash/bitmap/lsm
+	Unique    bool     `yaml:"unique" json:"unique"`                             // 唯一索引
+}
+
+// PartitionConfig 分区配置
+type PartitionConfig struct {
+	TableName     string            `yaml:"table_name" json:"table_name"`             // 表名
+	PartitionKey  string            `yaml:"partition_key" json:"partition_key"`       // 分区键
+	PartitionType string            `yaml:"partition_type" json:"partition_type"`     // 分区类型: range/hash/list/time
+	Partitions    []PartitionDef    `yaml:"partitions" json:"partitions"`             // 分区定义
+}
+
+// PartitionDef 分区定义
+type PartitionDef struct {
+	Name      string `yaml:"name" json:"name"`                                   // 分区名
+	Condition string `yaml:"condition" json:"condition"`                         // 分区条件
+	StartKey  string `yaml:"start_key" json:"start_key"`                         // 起始键
+	EndKey    string `yaml:"end_key" json:"end_key"`                             // 结束键
+}

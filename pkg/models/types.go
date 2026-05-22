@@ -339,6 +339,7 @@ type Config struct {
 	PacketLoss  PacketLossConfig  `yaml:"packet_loss" json:"packet_loss"`
 	TimeSync    TimeSyncConfig    `yaml:"time_sync" json:"time_sync"`
 	Profiler    ProfilerConfig    `yaml:"profiler" json:"profiler"`
+	JVMMem      JVMMemConfig      `yaml:"jvm_memory" json:"jvm_memory"`
 }
 
 // ============================================================
@@ -505,4 +506,24 @@ type ProfilerWaitTypes struct {
 	Sleep     bool `yaml:"sleep" json:"sleep"`       // 睡眠等待
 	Park      bool `yaml:"park" json:"park"`         // park等待
 	Monitor   bool `yaml:"monitor" json:"monitor"`   // Java monitor
+}
+
+// ============================================================
+// Java内存分析器配置模型
+// ============================================================
+
+// JVMMemConfig Java内存分析配置
+type JVMMemConfig struct {
+	Enabled           bool                `yaml:"enabled" json:"enabled"`
+	SampleRate        int                 `yaml:"sample_rate" json:"sample_rate"`           // 采样率 (0-100%)
+	TargetPIDs        []uint32            `yaml:"target_pids" json:"target_pids"`           // 目标JVM进程
+	TrackByteBuffer   bool                `yaml:"track_bytebuffer" json:"track_bytebuffer"` // 追踪ByteBuffer
+	TrackJNIMemory    bool                `yaml:"track_jni_memory" json:"track_jni_memory"` // 追踪JNI内存
+	TrackDirectMemory bool                `yaml:"track_direct_memory" json:"track_direct_memory"` // 追踪堆外内存
+	LeakCheckInterval int                 `yaml:"leak_check_interval" json:"leak_check_interval"` // 泄漏检查间隔（秒）
+	LeakThreshold     float64             `yaml:"leak_threshold" json:"leak_threshold"`     // 泄漏阈值（增长率/小时）
+	MinLeakSize       uint64              `yaml:"min_leak_size" json:"min_leak_size"`       // 最小泄漏大小（字节）
+	MaxStackDepth     int                 `yaml:"max_stack_depth" json:"max_stack_depth"`   // 最大栈深度
+	SymbolResolution  bool                `yaml:"symbol_resolution" json:"symbol_resolution"` // 符号解析
+	ReportInterval    int                 `yaml:"report_interval" json:"report_interval"`   // 报告间隔（秒）
 }

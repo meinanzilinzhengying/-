@@ -390,3 +390,21 @@ profiler:
     sleep: true               # 睡眠等待
     park: true                # park等待（Go/Java）
     monitor: true             # Java monitor
+
+# ============================================================
+# Java内存分析器配置
+# 支持ByteBuffer和JNI内存统计、泄漏检测、调用栈定位
+# ============================================================
+jvm_memory:
+  enabled: true               # 启用Java内存分析（默认开启）
+  sample_rate: 100            # 采样率 (0-100%)
+  target_pids: []             # 目标JVM进程ID，空表示自动检测
+  track_bytebuffer: true      # 追踪ByteBuffer.allocateDirect/free
+  track_jni_memory: true      # 追踪JNI内存分配
+  track_direct_memory: true   # 追踪DirectMemory/Unsafe.allocateMemory
+  leak_check_interval: 300    # 泄漏检查间隔（秒）
+  leak_threshold: 10.0        # 泄漏阈值（增长率%/小时）
+  min_leak_size: 1048576      # 最小泄漏大小（字节，默认1MB）
+  max_stack_depth: 64         # 最大栈深度
+  symbol_resolution: true     # 启用符号解析
+  report_interval: 60         # 报告间隔（秒）

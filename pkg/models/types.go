@@ -1298,3 +1298,51 @@ type CompressionConfig struct {
 	CompressProfiles  bool             `yaml:"compress_profiles" json:"compress_profiles"`       // 压缩剖析
 	CompressPCAP      bool             `yaml:"compress_pcap" json:"compress_pcap"`             // 压缩抓包
 }
+
+// ============================================================
+// 告警系统配置模型
+// ============================================================
+
+// AlertManagerConfig 告警管理器配置
+type AlertManagerConfig struct {
+	Enabled          bool              `yaml:"enabled" json:"enabled"`                           // 启用告警管理器
+	EvalInterval     int               `yaml:"eval_interval" json:"eval_interval"`               // 评估间隔（秒）
+	MaxInstances     int               `yaml:"max_instances" json:"max_instances"`               // 最大告警实例数
+	HistoryRetention int               `yaml:"history_retention" json:"history_retention"`       // 历史保留（小时）
+	AutoResolve      bool              `yaml:"auto_resolve" json:"auto_resolve"`                 // 自动恢复
+	Rules            []AlertRuleConfig `yaml:"rules" json:"rules"`                               // 告警规则列表
+}
+
+// AlertRuleConfig 告警规则配置
+type AlertRuleConfig struct {
+	ID           string                 `yaml:"id" json:"id"`                                     // 规则ID
+	Name         string                 `yaml:"name" json:"name"`                                 // 规则名称
+	Type         string                 `yaml:"type" json:"type"`                                 // 告警类型
+	Severity     string                 `yaml:"severity" json:"severity"`                         // 严重级别: critical/warning/info
+	Enabled      bool                   `yaml:"enabled" json:"enabled"`                           // 启用
+	Description  string                 `yaml:"description" json:"description"`                   // 描述
+	Conditions   []AlertConditionConfig `yaml:"conditions" json:"conditions"`                     // 触发条件
+	EvalInterval int                    `yaml:"eval_interval" json:"eval_interval"`               // 评估间隔（秒）
+	EvalWindow   int                    `yaml:"eval_window" json:"eval_window"`                   // 评估窗口（秒）
+	MinDuration  int                    `yaml:"min_duration" json:"min_duration"`                 // 最小持续时间（秒）
+	ResolveAfter int                    `yaml:"resolve_after" json:"resolve_after"`               // 恢复判定时间（秒）
+	Labels       map[string]string      `yaml:"labels" json:"labels"`                             // 标签
+	Annotations  map[string]string      `yaml:"annotations" json:"annotations"`                   // 注解
+	Notification AlertNotificationConfig `yaml:"notification" json:"notification"`                 // 通知配置
+}
+
+// AlertConditionConfig 告警条件配置
+type AlertConditionConfig struct {
+	Metric    string  `yaml:"metric" json:"metric"`                               // 指标名称
+	Operator  string  `yaml:"operator" json:"operator"`                           // 操作符: >, <, ==, >=, <=, !=
+	Threshold float64 `yaml:"threshold" json:"threshold"`                         // 阈值
+	Duration  int     `yaml:"duration" json:"duration"`                           // 持续时间（秒）
+}
+
+// AlertNotificationConfig 告警通知配置
+type AlertNotificationConfig struct {
+	Channels       []string `yaml:"channels" json:"channels"`                       // 通知渠道
+	Cooldown       int      `yaml:"cooldown" json:"cooldown"`                       // 冷却时间（秒）
+	RepeatInterval int      `yaml:"repeat_interval" json:"repeat_interval"`         // 重复间隔（秒）
+	MaxPerHour     int      `yaml:"max_per_hour" json:"max_per_hour"`               // 每小时最大通知数
+}

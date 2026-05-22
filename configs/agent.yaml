@@ -1311,3 +1311,306 @@ compression:
   compress_traces: true           # 压缩链路
   compress_profiles: true         # 压缩剖析
   compress_pcap: false           # 不压缩抓包（PCAP已是压缩格式）
+
+# ============================================================
+# 告警系统配置
+# 支持网络质量告警（时延/丢包/重传）、多维度规则引擎
+# ============================================================
+alert_manager:
+  enabled: true                   # 启用告警管理器（默认开启）
+  eval_interval: 30               # 评估间隔（秒）
+  max_instances: 1000             # 最大告警实例数
+  history_retention: 168          # 历史保留（小时，默认7天）
+  auto_resolve: true              # 自动恢复
+
+  # 告警规则列表
+  rules:
+    # 网络时延告警
+    - id: "network_latency_high"
+      name: "网络时延过高"
+      type: "latency"
+      severity: "warning"
+      enabled: true
+      description: "网络往返时延超过阈值"
+      conditions:
+        - metric: "network_rtt_ms"
+          operator: ">"
+          threshold: 100
+          duration: 120
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 120
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "connectivity"
+      annotations:
+        summary: "网络时延过高: {{ $value }}ms"
+        description: "网络往返时延持续超过100ms，可能影响业务响应"
+        runbook_url: "https://wiki/runbooks/network-latency"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 300
+        repeat_interval: 3600
+        max_per_hour: 10
+
+    # 网络时延严重告警
+    - id: "network_latency_critical"
+      name: "网络时延严重超标"
+      type: "latency"
+      severity: "critical"
+      enabled: true
+      description: "网络往返时延严重超标"
+      conditions:
+        - metric: "network_rtt_ms"
+          operator: ">"
+          threshold: 500
+          duration: 60
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 60
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "connectivity"
+      annotations:
+        summary: "网络时延严重超标: {{ $value }}ms"
+        description: "网络往返时延超过500ms，严重影响业务"
+        runbook_url: "https://wiki/runbooks/network-latency-critical"
+      notification:
+        channels: ["webhook", "log", "sms"]
+        cooldown: 60
+        repeat_interval: 1800
+        max_per_hour: 20
+
+    # 丢包率告警
+    - id: "packet_loss_warning"
+      name: "网络丢包率过高"
+      type: "packet_loss"
+      severity: "warning"
+      enabled: true
+      description: "网络丢包率超过阈值"
+      conditions:
+        - metric: "packet_loss_percent"
+          operator: ">"
+          threshold: 1.0
+          duration: 120
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 120
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "connectivity"
+      annotations:
+        summary: "网络丢包率: {{ $value }}%"
+        description: "网络丢包率超过1%，可能导致数据传输不完整"
+        runbook_url: "https://wiki/runbooks/packet-loss"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 300
+        repeat_interval: 3600
+        max_per_hour: 10
+
+    # 丢包率严重告警
+    - id: "packet_loss_critical"
+      name: "网络丢包率严重"
+      type: "packet_loss"
+      severity: "critical"
+      enabled: true
+      description: "网络丢包率严重超标"
+      conditions:
+        - metric: "packet_loss_percent"
+          operator: ">"
+          threshold: 5.0
+          duration: 60
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 60
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "connectivity"
+      annotations:
+        summary: "网络丢包率严重: {{ $value }}%"
+        description: "网络丢包率超过5%，严重影响数据传输"
+        runbook_url: "https://wiki/runbooks/packet-loss-critical"
+      notification:
+        channels: ["webhook", "log", "sms"]
+        cooldown: 60
+        repeat_interval: 1800
+        max_per_hour: 20
+
+    # TCP重传率告警
+    - id: "tcp_retransmit_warning"
+      name: "TCP重传率过高"
+      type: "retransmit"
+      severity: "warning"
+      enabled: true
+      description: "TCP重传率超过阈值"
+      conditions:
+        - metric: "tcp_retransmit_percent"
+          operator: ">"
+          threshold: 2.0
+          duration: 180
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 180
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "tcp"
+      annotations:
+        summary: "TCP重传率: {{ $value }}%"
+        description: "TCP重传率超过2%，可能存在网络拥塞或丢包"
+        runbook_url: "https://wiki/runbooks/tcp-retransmit"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 300
+        repeat_interval: 3600
+        max_per_hour: 10
+
+    # TCP重传率严重告警
+    - id: "tcp_retransmit_critical"
+      name: "TCP重传率严重"
+      type: "retransmit"
+      severity: "critical"
+      enabled: true
+      description: "TCP重传率严重超标"
+      conditions:
+        - metric: "tcp_retransmit_percent"
+          operator: ">"
+          threshold: 10.0
+          duration: 60
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 60
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "tcp"
+      annotations:
+        summary: "TCP重传率严重: {{ $value }}%"
+        description: "TCP重传率超过10%，网络质量严重恶化"
+        runbook_url: "https://wiki/runbooks/tcp-retransmit-critical"
+      notification:
+        channels: ["webhook", "log", "sms"]
+        cooldown: 60
+        repeat_interval: 1800
+        max_per_hour: 20
+
+    # 网络抖动告警
+    - id: "network_jitter_high"
+      name: "网络抖动过高"
+      type: "jitter"
+      severity: "warning"
+      enabled: true
+      description: "网络时延抖动超过阈值"
+      conditions:
+        - metric: "network_jitter_ms"
+          operator: ">"
+          threshold: 20
+          duration: 120
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 120
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "quality"
+      annotations:
+        summary: "网络抖动: {{ $value }}ms"
+        description: "网络时延抖动超过20ms，可能影响实时业务"
+        runbook_url: "https://wiki/runbooks/network-jitter"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 300
+        repeat_interval: 3600
+        max_per_hour: 10
+
+    # 带宽利用率告警
+    - id: "bandwidth_high"
+      name: "带宽利用率过高"
+      type: "bandwidth"
+      severity: "warning"
+      enabled: true
+      description: "网络带宽利用率超过阈值"
+      conditions:
+        - metric: "bandwidth_usage_percent"
+          operator: ">"
+          threshold: 80
+          duration: 300
+      eval_interval: 60
+      eval_window: 600
+      min_duration: 300
+      resolve_after: 600
+      labels:
+        category: "network"
+        service: "capacity"
+      annotations:
+        summary: "带宽利用率: {{ $value }}%"
+        description: "网络带宽利用率超过80%，接近容量上限"
+        runbook_url: "https://wiki/runbooks/bandwidth"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 600
+        repeat_interval: 7200
+        max_per_hour: 5
+
+    # TCP连接数告警
+    - id: "tcp_connections_high"
+      name: "TCP连接数过高"
+      type: "connection"
+      severity: "warning"
+      enabled: true
+      description: "TCP连接数超过阈值"
+      conditions:
+        - metric: "tcp_connections_count"
+          operator: ">"
+          threshold: 10000
+          duration: 300
+      eval_interval: 60
+      eval_window: 600
+      min_duration: 300
+      resolve_after: 600
+      labels:
+        category: "network"
+        service: "connections"
+      annotations:
+        summary: "TCP连接数: {{ $value }}"
+        description: "TCP连接数超过10000，可能存在连接泄漏"
+        runbook_url: "https://wiki/runbooks/tcp-connections"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 600
+        repeat_interval: 7200
+        max_per_hour: 5
+
+    # TCP零窗口告警
+    - id: "tcp_zero_window"
+      name: "TCP零窗口事件"
+      type: "tcp_state"
+      severity: "warning"
+      enabled: true
+      description: "检测到TCP零窗口事件"
+      conditions:
+        - metric: "tcp_zero_window_count"
+          operator: ">"
+          threshold: 10
+          duration: 60
+      eval_interval: 30
+      eval_window: 300
+      min_duration: 60
+      resolve_after: 300
+      labels:
+        category: "network"
+        service: "tcp"
+      annotations:
+        summary: "TCP零窗口事件: {{ $value }}"
+        description: "检测到TCP零窗口事件，接收端缓冲区已满"
+        runbook_url: "https://wiki/runbooks/tcp-zero-window"
+      notification:
+        channels: ["webhook", "log"]
+        cooldown: 300
+        repeat_interval: 3600
+        max_per_hour: 10

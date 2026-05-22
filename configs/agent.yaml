@@ -818,3 +818,126 @@ log_mgr:
   rotation_check_sec: 30          # 轮转检查间隔（秒）
   enable_compression: true        # 启用旧日志压缩
   format: "json"                  # 日志格式: text/json
+
+# ============================================================
+# libbpf eBPF 加载器配置
+# 使用 libbpf 框架重构，支持 CO-RE 提升兼容性
+# ============================================================
+libbpf:
+  enabled: true                   # 启用 libbpf（默认开启）
+  object_path: "/opt/cloud-flow/bpf/probe.o"  # BPF 对象文件路径
+  btf_path: ""                    # BTF 文件路径（留空自动检测）
+  use_core: true                  # 启用 CO-RE (Compile Once, Run Everywhere)
+  pin_maps: false                 # 固定 maps 到 BPF 文件系统
+  pin_path: "/sys/fs/bpf/cloud-flow"  # 固定路径
+
+  # Map 大小覆盖
+  map_sizes:
+    conn_map: 100000              # 连接跟踪表大小
+    events_rb: 262144             # Ring buffer 大小 (256KB)
+    pid_filter_map: 10000         # PID 过滤器大小
+
+# ============================================================
+# 探针热更新配置
+# 无需重启 Agent，运行时动态 attach/detach 探针
+# ============================================================
+hot_reload:
+  enabled: true                   # 启用热更新（默认开启）
+  auto_apply: true                # 自动应用配置变更
+  check_interval: 30              # 变更检查间隔（秒）
+  attach_timeout: 10              # attach 超时（秒）
+  detach_timeout: 5               # detach 超时（秒）
+  retry_count: 3                  # 失败重试次数
+  retry_interval: 1               # 重试间隔（秒）
+  allow_partial_failure: true     # 允许部分失败
+
+  # 预定义探针列表
+  probes:
+    # TCP 连接探针
+    - id: "tcp_connect"
+      name: "TCP Connect"
+      type: "fentry"
+      program: "trace_tcp_connect"
+      target: "tcp_connect"
+      enabled: true
+      priority: 100
+      description: "跟踪 TCP 连接建立"
+
+    - id: "tcp_close"
+      name: "TCP Close"
+      type: "fentry"
+      program: "trace_tcp_close"
+      target: "tcp_close"
+      enabled: true
+      priority: 100
+      description: "跟踪 TCP 连接关闭"
+
+    - id: "tcp_sendmsg"
+      name: "TCP Send"
+      type: "fentry"
+      program: "trace_tcp_sendmsg"
+      target: "tcp_sendmsg"
+      enabled: true
+      priority: 90
+      description: "跟踪 TCP 数据发送"
+
+    - id: "tcp_recvmsg"
+      name: "TCP Recv"
+      type: "fentry"
+      program: "trace_tcp_recvmsg"
+      target: "tcp_recvmsg"
+      enabled: false
+      priority: 90
+      description: "跟踪 TCP 数据接收"
+
+    # 进程探针
+    - id: "process_exec"
+      name: "Process Exec"
+      type: "tracepoint"
+      program: "trace_sched_process_exec"
+      category: "sched"
+      target: "sched_process_exec"
+      enabled: true
+      priority: 80
+      description: "跟踪进程执行"
+
+    - id: "process_exit"
+      name: "Process Exit"
+      type: "tracepoint"
+      program: "trace_sched_process_exit"
+      category: "sched"
+      target: "sched_process_exit"
+      enabled: true
+      priority: 80
+      description: "跟踪进程退出"
+
+  # 预定义指标列表
+  metrics:
+    - id: "tcp_connections"
+      name: "TCP Connections"
+      description: "TCP 连接数统计"
+      unit: "count"
+      type: "counter"
+      probes:
+        - "tcp_connect"
+        - "tcp_close"
+      enabled: true
+
+    - id: "tcp_bytes_sent"
+      name: "TCP Bytes Sent"
+      description: "TCP 发送字节数"
+      unit: "bytes"
+      type: "counter"
+      probes:
+        - "tcp_sendmsg"
+      enabled: true
+
+    - id: "process_events"
+      name: "Process Events"
+      description: "进程事件统计"
+      unit: "count"
+      type: "counter"
+      probes:
+        - "process_exec"
+        - "process_exit"
+      enabled: true

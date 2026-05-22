@@ -357,6 +357,8 @@ type Config struct {
 	DynConfig        DynConfigConfig       `yaml:"dyn_config" json:"dyn_config"`
 	WebAPI           WebAPIConfig          `yaml:"web_api" json:"web_api"`
 	LogMgr           LogConfig             `yaml:"log_mgr" json:"log_mgr"`
+	LibBPF           LibBPFConfig          `yaml:"libbpf" json:"libbpf"`
+	HotReload        HotReloadConfig       `yaml:"hot_reload" json:"hot_reload"`
 }
 
 // ============================================================
@@ -940,4 +942,65 @@ type LogConfig struct {
 	RotationCheckSec  int    `yaml:"rotation_check_sec" json:"rotation_check_sec"`   // 轮转检查间隔（秒）
 	EnableCompression bool   `yaml:"enable_compression" json:"enable_compression"`   // 启用压缩
 	Format            string `yaml:"format" json:"format"`                         // 日志格式: text/json
+}
+
+// ============================================================
+// libbpf 配置模型
+// ============================================================
+
+// LibBPFConfig libbpf 加载器配置
+type LibBPFConfig struct {
+	Enabled         bool              `yaml:"enabled" json:"enabled"`
+	ObjectPath      string            `yaml:"object_path" json:"object_path"`           // BPF 对象文件路径
+	BTFPath         string            `yaml:"btf_path" json:"btf_path"`                 // BTF 文件路径
+	UseCORE         bool              `yaml:"use_core" json:"use_core"`                 // 启用 CO-RE
+	MapSizes        map[string]int    `yaml:"map_sizes" json:"map_sizes"`               // Map 大小覆盖
+	ProgramTypes    map[string]string `yaml:"program_types" json:"program_types"`       // 程序类型覆盖
+	PinMaps         bool              `yaml:"pin_maps" json:"pin_maps"`                 // 固定 maps 到 BPF 文件系统
+	PinPath         string            `yaml:"pin_path" json:"pin_path"`                 // 固定路径
+}
+
+// ============================================================
+// 探针热更新配置模型
+// ============================================================
+
+// HotReloadConfig 探针热更新配置
+type HotReloadConfig struct {
+	Enabled             bool          `yaml:"enabled" json:"enabled"`
+	AutoApply           bool          `yaml:"auto_apply" json:"auto_apply"`             // 自动应用变更
+	CheckInterval       int           `yaml:"check_interval" json:"check_interval"`     // 变更检查间隔（秒）
+	AttachTimeout       int           `yaml:"attach_timeout" json:"attach_timeout"`     // attach 超时（秒）
+	DetachTimeout       int           `yaml:"detach_timeout" json:"detach_timeout"`     // detach 超时（秒）
+	RetryCount          int           `yaml:"retry_count" json:"retry_count"`           // 失败重试次数
+	RetryInterval       int           `yaml:"retry_interval" json:"retry_interval"`     // 重试间隔（秒）
+	AllowPartialFailure bool          `yaml:"allow_partial_failure" json:"allow_partial_failure"`
+	Probes              []ProbeConfig `yaml:"probes" json:"probes"`                     // 预定义探针列表
+	Metrics             []MetricConfig `yaml:"metrics" json:"metrics"`                   // 预定义指标列表
+}
+
+// ProbeConfig 探针配置
+type ProbeConfig struct {
+	ID          string                 `yaml:"id" json:"id"`
+	Name        string                 `yaml:"name" json:"name"`
+	Type        string                 `yaml:"type" json:"type"`                         // kprobe/kretprobe/tracepoint/fentry/fexit/raw_tracepoint
+	Program     string                 `yaml:"program" json:"program"`                   // eBPF 程序名
+	Target      string                 `yaml:"target" json:"target"`                     // 目标函数/tracepoint
+	Category    string                 `yaml:"category,omitempty" json:"category,omitempty"` // tracepoint category
+	Enabled     bool                   `yaml:"enabled" json:"enabled"`
+	Priority    int                    `yaml:"priority" json:"priority"`
+	Description string                 `yaml:"description" json:"description"`
+	Labels      map[string]string      `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Params      map[string]interface{} `yaml:"params,omitempty" json:"params,omitempty"`
+}
+
+// MetricConfig 指标配置
+type MetricConfig struct {
+	ID          string            `yaml:"id" json:"id"`
+	Name        string            `yaml:"name" json:"name"`
+	Description string            `yaml:"description" json:"description"`
+	Unit        string            `yaml:"unit" json:"unit"`
+	Type        string            `yaml:"type" json:"type"`                         // counter/gauge/histogram
+	Probes      []string          `yaml:"probes" json:"probes"`                     // 依赖的探针ID
+	Enabled     bool              `yaml:"enabled" json:"enabled"`
+	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }

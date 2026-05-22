@@ -359,6 +359,8 @@ type Config struct {
 	LogMgr           LogConfig             `yaml:"log_mgr" json:"log_mgr"`
 	LibBPF           LibBPFConfig          `yaml:"libbpf" json:"libbpf"`
 	HotReload        HotReloadConfig       `yaml:"hot_reload" json:"hot_reload"`
+	ConnPool         ConnPoolConfig        `yaml:"conn_pool" json:"conn_pool"`
+	Aggregation      AggregationConfig     `yaml:"aggregation" json:"aggregation"`
 }
 
 // ============================================================
@@ -1003,4 +1005,65 @@ type MetricConfig struct {
 	Probes      []string          `yaml:"probes" json:"probes"`                     // 依赖的探针ID
 	Enabled     bool              `yaml:"enabled" json:"enabled"`
 	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+}
+
+// ============================================================
+// 连接池配置模型
+// ============================================================
+
+// ConnPoolConfig 连接池配置
+type ConnPoolConfig struct {
+	Enabled             bool              `yaml:"enabled" json:"enabled"`
+	MaxConnections      int               `yaml:"max_connections" json:"max_connections"`
+	InitialCap          int               `yaml:"initial_cap" json:"initial_cap"`
+	MaxIdle             int               `yaml:"max_idle" json:"max_idle"`
+	IdleTimeout         int               `yaml:"idle_timeout" json:"idle_timeout"`           // 秒
+	MaxLifetime         int               `yaml:"max_lifetime" json:"max_lifetime"`           // 秒
+	EnableRateLimit     bool              `yaml:"enable_rate_limit" json:"enable_rate_limit"`
+	RateLimitPerConn    int               `yaml:"rate_limit_per_conn" json:"rate_limit_per_conn"`
+	BurstSize           int               `yaml:"burst_size" json:"burst_size"`
+	GlobalRateLimit     int               `yaml:"global_rate_limit" json:"global_rate_limit"`
+	QueueSize           int               `yaml:"queue_size" json:"queue_size"`
+	QueueTimeout        int               `yaml:"queue_timeout" json:"queue_timeout"`         // 秒
+	MaxMemoryMB         int64             `yaml:"max_memory_mb" json:"max_memory_mb"`
+	MemoryCheckInterval int               `yaml:"memory_check_interval" json:"memory_check_interval"` // 秒
+	HealthCheckInterval int               `yaml:"health_check_interval" json:"health_check_interval"` // 秒
+	HealthCheckTimeout  int               `yaml:"health_check_timeout" json:"health_check_timeout"`   // 秒
+	EnableAdaptive      bool              `yaml:"enable_adaptive" json:"enable_adaptive"`
+	ScaleUpThreshold    float64           `yaml:"scale_up_threshold" json:"scale_up_threshold"`
+	ScaleDownThreshold  float64           `yaml:"scale_down_threshold" json:"scale_down_threshold"`
+	ScaleUpFactor       int               `yaml:"scale_up_factor" json:"scale_up_factor"`
+	ScaleDownFactor     int               `yaml:"scale_down_factor" json:"scale_down_factor"`
+}
+
+// ============================================================
+// 数据聚合配置模型
+// ============================================================
+
+// AggregationConfig 数据聚合配置
+type AggregationConfig struct {
+	Enabled           bool                   `yaml:"enabled" json:"enabled"`
+	DefaultLevel      string                 `yaml:"default_level" json:"default_level"`         // none/second/minute/hour/day
+	WindowSize        int                    `yaml:"window_size" json:"window_size"`             // 秒
+	BufferSize        int                    `yaml:"buffer_size" json:"buffer_size"`
+	FlushInterval     int                    `yaml:"flush_interval" json:"flush_interval"`       // 秒
+	MaxDimensions     int                    `yaml:"max_dimensions" json:"max_dimensions"`
+	MaxCardinality    int                    `yaml:"max_cardinality" json:"max_cardinality"`
+	EnableCompression bool                   `yaml:"enable_compression" json:"enable_compression"`
+	CompressionLevel  int                    `yaml:"compression_level" json:"compression_level"`
+	AggLevels         []AggLevelConfig       `yaml:"agg_levels" json:"agg_levels"`
+	SamplingEnabled   bool                   `yaml:"sampling_enabled" json:"sampling_enabled"`
+	SamplingRate      float64                `yaml:"sampling_rate" json:"sampling_rate"`
+	AdaptiveSampling  bool                   `yaml:"adaptive_sampling" json:"adaptive_sampling"`
+	MemoryThresholdMB int64                  `yaml:"memory_threshold_mb" json:"memory_threshold_mb"`
+	DowngradeRatio    float64                `yaml:"downgrade_ratio" json:"downgrade_ratio"`
+}
+
+// AggLevelConfig 聚合级别配置
+type AggLevelConfig struct {
+	Level         string   `yaml:"level" json:"level"`                   // second/minute/hour/day
+	WindowSize    int      `yaml:"window_size" json:"window_size"`       // 秒
+	RetentionTime int      `yaml:"retention_time" json:"retention_time"` // 秒
+	AggTypes      []string `yaml:"agg_types" json:"agg_types"`           // sum/avg/min/max/count/p99/p95/p90
+	Dimensions    []string `yaml:"dimensions" json:"dimensions"`
 }

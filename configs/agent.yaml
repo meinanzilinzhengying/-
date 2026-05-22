@@ -941,3 +941,100 @@ hot_reload:
         - "process_exec"
         - "process_exit"
       enabled: true
+
+# ============================================================
+# 连接池配置
+# 支持大规模探针接入（5000+），防止 OOM 崩溃
+# ============================================================
+conn_pool:
+  enabled: true                   # 启用连接池（默认开启）
+  max_connections: 10000         # 最大连接数
+  initial_cap: 100               # 初始连接数
+  max_idle: 500                  # 最大空闲连接
+  idle_timeout: 300              # 空闲超时（秒）
+  max_lifetime: 3600             # 最大生命周期（秒）
+  enable_rate_limit: true        # 启用限流
+  rate_limit_per_conn: 1000      # 每连接每秒限制
+  burst_size: 100                # 突发流量大小
+  global_rate_limit: 1000000     # 全局每秒限制
+  queue_size: 10000              # 等待队列大小
+  queue_timeout: 5               # 队列等待超时（秒）
+  max_memory_mb: 4096            # 最大内存限制(MB)
+  memory_check_interval: 10      # 内存检查间隔（秒）
+  health_check_interval: 30      # 健康检查间隔（秒）
+  health_check_timeout: 5        # 健康检查超时（秒）
+  enable_adaptive: true          # 启用自适应调整
+  scale_up_threshold: 0.8        # 扩容阈值(连接使用率)
+  scale_down_threshold: 0.3      # 缩容阈值
+  scale_up_factor: 2             # 扩容因子
+  scale_down_factor: 2           # 缩容因子
+
+# ============================================================
+# 数据聚合配置
+# 多级聚合减少中心端存储压力
+# ============================================================
+aggregation:
+  enabled: true                   # 启用聚合（默认开启）
+  default_level: "minute"        # 默认聚合级别
+  window_size: 60                # 聚合窗口大小（秒）
+  buffer_size: 100000            # 缓冲区大小
+  flush_interval: 30             # 刷新间隔（秒）
+  max_dimensions: 10             # 最大维度数
+  max_cardinality: 10000         # 最大基数
+  enable_compression: true       # 启用压缩
+  compression_level: 6           # 压缩级别 1-9
+
+  # 多级聚合配置
+  agg_levels:
+    - level: "second"
+      window_size: 1             # 1秒窗口
+      retention_time: 300        # 保留5分钟
+      agg_types:
+        - "sum"
+        - "avg"
+        - "count"
+        - "max"
+        - "min"
+      dimensions:
+        - "host"
+        - "service"
+        - "metric"
+
+    - level: "minute"
+      window_size: 60            # 1分钟窗口
+      retention_time: 86400      # 保留24小时
+      agg_types:
+        - "sum"
+        - "avg"
+        - "count"
+        - "max"
+        - "min"
+        - "p99"
+        - "p95"
+      dimensions:
+        - "host"
+        - "service"
+        - "metric"
+        - "region"
+
+    - level: "hour"
+      window_size: 3600          # 1小时窗口
+      retention_time: 604800     # 保留7天
+      agg_types:
+        - "sum"
+        - "avg"
+        - "count"
+        - "max"
+        - "min"
+        - "p99"
+      dimensions:
+        - "service"
+        - "region"
+        - "metric"
+
+  # 采样配置
+  sampling_enabled: true         # 启用采样
+  sampling_rate: 1.0             # 采样率 (0-1)
+  adaptive_sampling: true        # 自适应采样
+  memory_threshold_mb: 2048      # 内存阈值(MB)
+  downgrade_ratio: 0.5           # 降级比例

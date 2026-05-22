@@ -361,6 +361,9 @@ type Config struct {
 	HotReload        HotReloadConfig       `yaml:"hot_reload" json:"hot_reload"`
 	ConnPool         ConnPoolConfig        `yaml:"conn_pool" json:"conn_pool"`
 	Aggregation      AggregationConfig     `yaml:"aggregation" json:"aggregation"`
+	OfflineCache     OfflineCacheConfig   `yaml:"offline_cache" json:"offline_cache"`
+	Auth            AuthConfig           `yaml:"auth" json:"auth"`
+	LoadBalancer    LoadBalancerConfig   `yaml:"load_balancer" json:"load_balancer"`
 }
 
 // ============================================================
@@ -1066,4 +1069,65 @@ type AggLevelConfig struct {
 	RetentionTime int      `yaml:"retention_time" json:"retention_time"` // 秒
 	AggTypes      []string `yaml:"agg_types" json:"agg_types"`           // sum/avg/min/max/count/p99/p95/p90
 	Dimensions    []string `yaml:"dimensions" json:"dimensions"`
+}
+
+// ============================================================
+// 断网续传配置模型
+// ============================================================
+
+// OfflineCacheConfig 断网续传配置
+type OfflineCacheConfig struct {
+	Enabled          bool  `yaml:"enabled" json:"enabled"`
+	CacheDir        string `yaml:"cache_dir" json:"cache_dir"`
+	MaxSizeMB       int64  `yaml:"max_size_mb" json:"max_size_mb"`
+	MaxItems        int    `yaml:"max_items" json:"max_items"`
+	MaxAge          int    `yaml:"max_age" json:"max_age"`             // 天
+	SegmentSize     int    `yaml:"segment_size" json:"segment_size"`
+	Compression     bool   `yaml:"compression" json:"compression"`
+	FlushInterval   int    `yaml:"flush_interval" json:"flush_interval"` // 秒
+	MaxRetries      int    `yaml:"max_retries" json:"max_retries"`
+	RetryInterval   int    `yaml:"retry_interval" json:"retry_interval"` // 秒
+	BatchSize       int    `yaml:"batch_size" json:"batch_size"`
+	Parallelism     int    `yaml:"parallelism" json:"parallelism"`
+	AutoSync        bool   `yaml:"auto_sync" json:"auto_sync"`
+}
+
+// ============================================================
+// 探针认证配置模型
+// ============================================================
+
+// AuthConfig 探针认证配置
+type AuthConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`
+	TokenExpiry       int      `yaml:"token_expiry" json:"token_expiry"`           // 小时
+	MaxTokenPerProbe  int      `yaml:"max_token_per_probe" json:"max_token_per_probe"`
+	RateLimitPerMin   int      `yaml:"rate_limit_per_min" json:"rate_limit_per_min"`
+	RequireTLS        bool     `yaml:"require_tls" json:"require_tls"`
+	AllowedCipherSuites []string `yaml:"allowed_cipher_suites" json:"allowed_cipher_suites"`
+	HMACKey           string   `yaml:"hmac_key" json:"hmac_key"`
+	JWTSecret         string   `yaml:"jwt_secret" json:"jwt_secret"`
+	AdminAPIKey       string   `yaml:"admin_api_key" json:"admin_api_key"`
+}
+
+// ============================================================
+// 负载均衡配置模型
+// ============================================================
+
+// LoadBalancerConfig 负载均衡配置
+type LoadBalancerConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`
+	Algorithm       string `yaml:"algorithm" json:"algorithm"`           // round_robin/weighted/least_conn/ip_hash/consistent_hash
+	HealthCheck     bool   `yaml:"health_check" json:"health_check"`
+	CheckInterval   int    `yaml:"check_interval" json:"check_interval"` // 秒
+	CheckTimeout    int    `yaml:"check_timeout" json:"check_timeout"`  // 秒
+	CheckPath       string `yaml:"check_path" json:"check_path"`
+	CircuitBreaker  bool   `yaml:"circuit_breaker" json:"circuit_breaker"`
+	CBThreshold     int    `yaml:"cb_threshold" json:"cb_threshold"`      // 熔断阈值
+	CBTimeout       int    `yaml:"cb_timeout" json:"cb_timeout"`         // 秒
+	RateLimitEnabled bool  `yaml:"rate_limit_enabled" json:"rate_limit_enabled"`
+	RateLimitPerSec int    `yaml:"rate_limit_per_sec" json:"rate_limit_per_sec"`
+	BurstSize       int    `yaml:"burst_size" json:"burst_size"`
+	MaxConnPerBackend int   `yaml:"max_conn_per_backend" json:"max_conn_per_backend"`
+	ConnTimeout     int    `yaml:"conn_timeout" json:"conn_timeout"`     // 秒
+	EnableWeighted  bool   `yaml:"enable_weighted" json:"enable_weighted"`
 }

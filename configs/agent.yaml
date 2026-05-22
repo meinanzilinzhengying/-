@@ -1038,3 +1038,61 @@ aggregation:
   adaptive_sampling: true        # 自适应采样
   memory_threshold_mb: 2048      # 内存阈值(MB)
   downgrade_ratio: 0.5           # 降级比例
+
+# ============================================================
+# 断网续传配置
+# 网络波动时数据本地缓存，恢复后自动同步
+# ============================================================
+offline_cache:
+  enabled: true                   # 启用断网续传（默认开启）
+  cache_dir: "/var/lib/cloud-flow/cache"  # 缓存目录
+  max_size_mb: 10240             # 最大缓存大小 (MB) = 10GB
+  max_items: 1000000              # 最大缓存条目数
+  max_age: 7                      # 最大保留天数
+  segment_size: 1000             # 分段大小
+  compression: true               # 启用压缩
+  flush_interval: 30             # 刷新间隔（秒）
+  max_retries: 10                # 最大重试次数
+  retry_interval: 30             # 重试间隔（秒）
+  batch_size: 1000               # 批量大小
+  parallelism: 4                  # 并行度
+  auto_sync: true                # 网络恢复后自动同步
+
+# ============================================================
+# 探针认证配置
+# 确保只有授权探针才能接入，防止安全漏洞
+# ============================================================
+auth:
+  enabled: true                   # 启用认证（默认开启）
+  token_expiry: 24               # Token 有效期（小时）
+  max_token_per_probe: 5         # 每个探针最大 Token 数
+  rate_limit_per_min: 1000       # 每分钟请求限制
+  require_tls: true              # 要求 TLS 加密
+  allowed_cipher_suites:          # 允许的加密套件
+    - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+    - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+    - "TLS_RSA_WITH_AES_256_GCM_SHA384"
+  hmac_key: ""                   # HMAC 签名密钥（留空自动生成）
+  jwt_secret: ""                 # JWT 密钥（留空自动生成）
+  admin_api_key: ""              # 管理 API 密钥（留空自动生成）
+
+# ============================================================
+# 负载均衡配置
+# 多节点边缘服务横向扩展能力
+# ============================================================
+load_balancer:
+  enabled: true                   # 启用负载均衡（默认开启）
+  algorithm: "weighted"          # 负载均衡算法: round_robin/weighted/least_conn/ip_hash
+  health_check: true            # 启用健康检查
+  check_interval: 10            # 健康检查间隔（秒）
+  check_timeout: 5               # 健康检查超时（秒）
+  check_path: "/health"         # 健康检查路径
+  circuit_breaker: true         # 启用熔断
+  cb_threshold: 5               # 熔断阈值（连续失败次数）
+  cb_timeout: 30                # 熔断超时（秒）
+  rate_limit_enabled: true      # 启用限流
+  rate_limit_per_sec: 100000     # 每秒请求限制
+  burst_size: 1000              # 突发大小
+  max_conn_per_backend: 100     # 每个后端最大连接数
+  conn_timeout: 10              # 连接超时（秒）
+  enable_weighted: true          # 启用权重

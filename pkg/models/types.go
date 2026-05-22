@@ -349,7 +349,14 @@ type Config struct {
 	Kernel      KernelConfig      `yaml:"kernel" json:"kernel"`
 	Isolation   IsolationConfig   `yaml:"isolation" json:"isolation"`
 	EBPFResource EBPFResourceConfig `yaml:"ebpf_resource" json:"ebpf_resource"`
-	TCPMetrics  TCPMetricsConfig  `yaml:"tcp_metrics" json:"tcp_metrics"`
+	TCPMetrics      TCPMetricsConfig      `yaml:"tcp_metrics" json:"tcp_metrics"`
+	Transport        TransportConfig       `yaml:"transport" json:"transport"`
+	CircuitBreaker   CircuitBreakerConfig  `yaml:"circuit_breaker" json:"circuit_breaker"`
+	SelfMonitor      SelfMonitorConfig     `yaml:"self_monitor" json:"self_monitor"`
+	ReliableTransport ReliableTransportConfig `yaml:"reliable_transport" json:"reliable_transport"`
+	DynConfig        DynConfigConfig       `yaml:"dyn_config" json:"dyn_config"`
+	WebAPI           WebAPIConfig          `yaml:"web_api" json:"web_api"`
+	LogMgr           LogConfig             `yaml:"log_mgr" json:"log_mgr"`
 }
 
 // ============================================================
@@ -890,4 +897,47 @@ type ReliableTransportConfig struct {
 	DedupeEnabled bool `yaml:"dedupe_enabled" json:"dedupe_enabled"`
 	DedupeSize   int  `yaml:"dedupe_size" json:"dedupe_size"`
 	DedupeWindow int  `yaml:"dedupe_window" json:"dedupe_window"`
+}
+
+// ============================================================
+// 动态配置与Web管理配置模型
+// ============================================================
+
+// DynConfigConfig 动态配置管理
+type DynConfigConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`
+	WatchEnabled bool   `yaml:"watch_enabled" json:"watch_enabled"`     // 启用文件监听热加载
+	WatchInterval int   `yaml:"watch_interval" json:"watch_interval"`   // 监听间隔（秒）
+}
+
+// WebAPIConfig Web管理API配置
+type WebAPIConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`
+	ListenAddr   string `yaml:"listen_addr" json:"listen_addr"`       // 监听地址
+	AuthEnabled  bool   `yaml:"auth_enabled" json:"auth_enabled"`     // 启用认证
+	AuthToken    string `yaml:"auth_token" json:"auth_token"`         // 认证Token
+	RateLimit    int    `yaml:"rate_limit" json:"rate_limit"`         // 每分钟请求限制
+	ReadTimeout  int    `yaml:"read_timeout" json:"read_timeout"`     // 读超时（秒）
+	WriteTimeout int    `yaml:"write_timeout" json:"write_timeout"`   // 写超时（秒）
+}
+
+// ============================================================
+// 日志管理配置模型
+// ============================================================
+
+// LogConfig 日志管理配置
+type LogConfig struct {
+	Level             string `yaml:"level" json:"level"`                         // 最低日志级别
+	OutputMode        string `yaml:"output_mode" json:"output_mode"`               // stdout/file/both
+	LogDir            string `yaml:"log_dir" json:"log_dir"`                         // 日志目录
+	LogFile           string `yaml:"log_file" json:"log_file"`                       // 日志文件名
+	MaxFileSize       int64  `yaml:"max_file_size" json:"max_file_size"`             // 单文件最大大小 (MB)
+	MaxTotalSize      int64  `yaml:"max_total_size" json:"max_total_size"`           // 总日志最大大小 (MB)
+	MaxRetentionDays  int    `yaml:"max_retention_days" json:"max_retention_days"`     // 最大保留天数
+	MaxFileCount      int    `yaml:"max_file_count" json:"max_file_count"`           // 最大文件数
+	EnableColor       bool   `yaml:"enable_color" json:"enable_color"`               // 启用颜色
+	EnableRotation    bool   `yaml:"enable_rotation" json:"enable_rotation"`         // 启用轮转
+	RotationCheckSec  int    `yaml:"rotation_check_sec" json:"rotation_check_sec"`   // 轮转检查间隔（秒）
+	EnableCompression bool   `yaml:"enable_compression" json:"enable_compression"`   // 启用压缩
+	Format            string `yaml:"format" json:"format"`                         // 日志格式: text/json
 }

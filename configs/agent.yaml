@@ -777,3 +777,44 @@ reliable_transport:
   dedupe_enabled: true            # 启用去重
   dedupe_size: 10000              # 去重缓存大小
   dedupe_window: 300             # 去重窗口（秒）
+
+# ============================================================
+# 动态配置管理
+# 采样率、指标项运行时动态调整，无需重启Agent
+# ============================================================
+dyn_config:
+  enabled: true                   # 启用动态配置（默认开启）
+  watch_enabled: true             # 启用配置文件监听热加载
+  watch_interval: 5               # 文件监听间隔（秒）
+
+# ============================================================
+# Web管理API配置
+# 提供RESTful API用于运行时配置管理
+# ============================================================
+web_api:
+  enabled: true                   # 启用Web管理API（默认开启）
+  listen_addr: "0.0.0.0:9500"    # 监听地址
+  auth_enabled: true              # 启用Token认证
+  auth_token: ""                  # 认证Token（留空自动生成，启动时打印日志）
+  rate_limit: 60                  # 每分钟最大请求数
+  read_timeout: 10                # 读超时（秒）
+  write_timeout: 10               # 写超时（秒）
+
+# ============================================================
+# 日志管理配置
+# 日志分级、轮转、自动清理，防止磁盘占满
+# ============================================================
+log_mgr:
+  level: "info"                   # 最低日志级别: debug/info/warn/error/fatal
+  output_mode: "both"             # 输出模式: stdout/file/both
+  log_dir: "/var/log/cloud-flow"  # 日志目录
+  log_file: "agent.log"           # 日志文件名
+  max_file_size: 100              # 单文件最大大小 (MB)
+  max_total_size: 1024            # 总日志最大大小 (MB)
+  max_retention_days: 30          # 最大保留天数
+  max_file_count: 20              # 最大文件数
+  enable_color: true              # 启用颜色输出
+  enable_rotation: true           # 启用日志轮转
+  rotation_check_sec: 30          # 轮转检查间隔（秒）
+  enable_compression: true        # 启用旧日志压缩
+  format: "json"                  # 日志格式: text/json

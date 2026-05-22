@@ -1,392 +1,518 @@
-// Package kernel 提供内核能力检测功能
+// Package kernel 内核与架构兼容性检测
+// 支持 x86/ARM/鲲鹏/海光，内核版本校验，低内核自动降级
 package kernel
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
-
-	"github.com/meinanzilinzhengying/cloud-flow-agent/pkg/models"
 )
+
+// ============================================================
+// 架构类型定义
+// ============================================================
+
+// ArchType 系统架构类型
+type ArchType string
 
 const (
-	// MinKernelVersion 最低内核版本要求
-	MinKernelMajor = 3
-	MinKernelMinor = 10
-
-	// EBPFMinKernelVersion eBPF 最低内核版本
-	EBPFMinKernelMajor = 4
-	EBPFMinKernelMinor  = 4
-
-	// BTFMinKernelVersion BTF 最低内核版本
-	BTFMinKernelMajor = 5
-	BTFMinKernelMinor  = 2
-
-	// RingBufMinKernelVersion Ring Buffer 最低内核版本
-	RingBufMinKernelMajor = 5
-	RingBufMinKernelMinor  = 8
+	ArchX86_64   ArchType = "x86_64"   // x86 64位 (Intel/AMD)
+	ArchARM64    ArchType = "aarch64"  // ARM 64位
+	ArchKunpeng  ArchType = "kunpeng"  // 鲲鹏 (ARM架构)
+	ArchHygon    ArchType = "hygon"    // 海光 (x86架构)
+	ArchUnknown  ArchType = "unknown"
 )
+
+// String 返回架构名称
+func (a ArchType) String() string {
+	switch a {
+	case ArchX86_64:
+		return "x86_64 (Intel/AMD)"
+	case ArchARM64:
+		return "aarch64 (ARM64)"
+	case ArchKunpeng:
+		return "Kunpeng (鲲鹏)"
+	case ArchHygon:
+		return "Hygon (海光)"
+	default:
+		return "Unknown"
+	}
+}
+
+// IsSupported 检查架构是否受支持
+func (a ArchType) IsSupported() bool {
+	switch a {
+	case ArchX86_64, ArchARM64, ArchKunpeng, ArchHygon:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsX86 是否为x86架构
+func (a ArchType) IsX86() bool {
+	return a == ArchX86_64 || a == ArchHygon
+}
+
+// IsARM 是否为ARM架构
+func (a ArchType) IsARM() bool {
+	return a == ArchARM64 || a == ArchKunpeng
+}
+
+// ============================================================
+// 内核能力
+// ============================================================
+
+// KernelCapability 内核能力检测
+type KernelCapability struct {
+	Version         string    `json:"version"`          // 内核版本字符串
+	Major           int       `json:"major"`            // 主版本号
+	Minor           int       `json:"minor"`            // 次版本号
+	Patch           int       `json:"patch"`            // 补丁版本号
+	Arch            ArchType  `json:"arch"`             // 系统架构
+	SupportsEBPF    bool      `json:"supports_ebpf"`    // 是否支持 eBPF
+	SupportsBTF     bool      `json:"supports_btf"`     // 是否支持 BTF
+	SupportsRingBuf bool      `json:"supports_ringbuf"` // 是否支持 Ring Buffer
+	SupportsKprobe  bool      `json:"supports_kprobe"`  // 是否支持 Kprobe
+	SupportsUprobe  bool      `json:"supports_uprobe"`  // 是否支持 Uprobe
+	SupportsTracepoint bool   `json:"supports_tracepoint"` // 是否支持 Tracepoint
+	MinRequired     bool      `json:"min_required"`     // 是否满足最低要求
+	DetectedAt      int64     `json:"detected_at"`      // 检测时间戳
+}
+
+// FeatureLevel 功能等级
+type FeatureLevel int
+
+const (
+	FeatureLevelNone     FeatureLevel = iota // 无eBPF支持
+	FeatureLevelBasic                        // 基础eBPF (kernel >= 4.1)
+	FeatureLevelEnhanced                     // 增强eBPF (kernel >= 4.14)
+	FeatureLevelAdvanced                     // 高级eBPF (kernel >= 5.2)
+	FeatureLevelFull                         // 完整eBPF (kernel >= 5.8)
+)
+
+// String 返回功能等级描述
+func (f FeatureLevel) String() string {
+	switch f {
+	case FeatureLevelNone:
+		return "None (无eBPF支持)"
+	case FeatureLevelBasic:
+		return "Basic (基础eBPF)"
+	case FeatureLevelEnhanced:
+		return "Enhanced (增强eBPF)"
+	case FeatureLevelAdvanced:
+		return "Advanced (高级eBPF)"
+	case FeatureLevelFull:
+		return "Full (完整eBPF)"
+	default:
+		return "Unknown"
+	}
+}
+
+// ============================================================
+// 检测器
+// ============================================================
 
 // Detector 内核检测器
 type Detector struct {
-	cached *models.KernelCapability
+	capability *KernelCapability
 }
 
-// NewDetector 创建内核检测器
+// NewDetector 创建检测器
 func NewDetector() *Detector {
 	return &Detector{}
 }
 
-// Detect 检测内核能力
-func (d *Detector) Detect() (*models.KernelCapability, error) {
-	if d.cached != nil {
-		return d.cached, nil
-	}
-
-	cap := &models.KernelCapability{
-		DetectedAt: time.Now(),
+// Detect 执行检测
+func (d *Detector) Detect() (*KernelCapability, error) {
+	cap := &KernelCapability{
+		DetectedAt: time.Now().Unix(),
 	}
 
 	// 检测架构
-	cap.Arch = detectArch()
+	cap.Arch = d.detectArch()
+	if !cap.Arch.IsSupported() {
+		return cap, fmt.Errorf("不支持的架构: %s", cap.Arch)
+	}
 
 	// 检测内核版本
-	version, err := detectKernelVersion()
+	version, major, minor, patch, err := d.detectKernelVersion()
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect kernel version: %w", err)
+		return cap, fmt.Errorf("检测内核版本失败: %w", err)
 	}
-	cap.Version = version.String()
-	cap.Major = version.Major
-	cap.Minor = version.Minor
-	cap.Patch = version.Patch
+	cap.Version = version
+	cap.Major = major
+	cap.Minor = minor
+	cap.Patch = patch
 
-	// 检测最低版本要求
-	cap.MinRequired = isMinRequired(version)
+	// 检查最低版本要求 (3.10+)
+	cap.MinRequired = d.checkMinRequirement(major, minor)
 
-	// 检测 eBPF 支持
-	cap.SupportsEBPF = supportsEBPF(version)
+	// 检测eBPF支持
+	cap.SupportsEBPF = d.checkEBPFSupport(major, minor)
+	cap.SupportsBTF = d.checkBTFSupport(major, minor)
+	cap.SupportsRingBuf = d.checkRingBufSupport(major, minor)
+	cap.SupportsKprobe = d.checkKprobeSupport(major, minor)
+	cap.SupportsUprobe = d.checkUprobeSupport(major, minor)
+	cap.SupportsTracepoint = d.checkTracepointSupport(major, minor)
 
-	// 检测 BTF 支持
-	cap.SupportsBTF = supportsBTF(version)
-
-	// 检测 Ring Buffer 支持
-	cap.SupportsRingBuf = supportsRingBuf(version)
-
-	d.cached = cap
+	d.capability = cap
 	return cap, nil
 }
 
-// Version 内核版本
-type Version struct {
-	Major int
-	Minor int
-	Patch int
-}
-
-func (v *Version) String() string {
-	return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
-}
-
-// Compare 比较版本，返回 -1, 0, 1
-func (v *Version) Compare(other *Version) int {
-	if v.Major != other.Major {
-		if v.Major < other.Major {
-			return -1
-		}
-		return 1
-	}
-	if v.Minor != other.Minor {
-		if v.Minor < other.Minor {
-			return -1
-		}
-		return 1
-	}
-	if v.Patch != other.Patch {
-		if v.Patch < other.Patch {
-			return -1
-		}
-		return 1
-	}
-	return 0
-}
-
 // detectArch 检测系统架构
-func detectArch() models.ArchType {
-	arch := runtime.GOARCH
-	switch arch {
+func (d *Detector) detectArch() ArchType {
+	// 首先检查runtime.GOARCH
+	goarch := runtime.GOARCH
+	
+	// 读取 /proc/cpuinfo 获取更详细的信息
+	cpuinfo, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		// 降级使用GOARCH
+		return d.mapGOARCH(goarch)
+	}
+	
+	cpuinfoStr := string(cpuinfo)
+	
+	// 检测鲲鹏 (Kunpeng)
+	if strings.Contains(cpuinfoStr, "Kunpeng") || 
+	   strings.Contains(cpuinfoStr, "HUAWEI") ||
+	   strings.Contains(cpuinfoStr, "kunpeng") {
+		return ArchKunpeng
+	}
+	
+	// 检测海光 (Hygon)
+	if strings.Contains(cpuinfoStr, "Hygon") || 
+	   strings.Contains(cpuinfoStr, "hygon") {
+		return ArchHygon
+	}
+	
+	// 检测ARM64
+	if strings.Contains(cpuinfoStr, "ARM") || 
+	   strings.Contains(cpuinfoStr, "aarch64") ||
+	   goarch == "arm64" {
+		return ArchARM64
+	}
+	
+	// 检测x86_64
+	if strings.Contains(cpuinfoStr, "x86_64") || 
+	   strings.Contains(cpuinfoStr, "Intel") ||
+	   strings.Contains(cpuinfoStr, "AMD") ||
+	   goarch == "amd64" {
+		return ArchX86_64
+	}
+	
+	return ArchUnknown
+}
+
+// mapGOARCH 映射GOARCH到ArchType
+func (d *Detector) mapGOARCH(goarch string) ArchType {
+	switch goarch {
 	case "amd64":
-		return models.ArchX86_64
+		return ArchX86_64
 	case "arm64":
-		return models.ArchARM64
+		return ArchARM64
 	default:
-		return models.ArchUnknown
+		return ArchUnknown
 	}
 }
 
 // detectKernelVersion 检测内核版本
-func detectKernelVersion() (*Version, error) {
-	// 方法1: 读取 /proc/version_signature (Ubuntu/Debian)
-	if v, err := readVersionSignature(); err == nil {
-		return v, nil
+func (d *Detector) detectKernelVersion() (string, int, int, int, error) {
+	// 方法1: 使用 syscall.Utsname
+	var uname syscall.Utsname
+	if err := syscall.Uname(&uname); err == nil {
+		version := utsnameToString(uname.Release)
+		major, minor, patch := parseVersion(version)
+		return version, major, minor, patch, nil
 	}
-
+	
 	// 方法2: 读取 /proc/version
-	if v, err := readProcVersion(); err == nil {
-		return v, nil
-	}
-
-	// 方法3: 使用 uname -r
-	if v, err := readUnameRelease(); err == nil {
-		return v, nil
-	}
-
-	return nil, fmt.Errorf("failed to detect kernel version")
-}
-
-// readVersionSignature 读取 /proc/version_signature
-func readVersionSignature() (*Version, error) {
-	data, err := os.ReadFile("/proc/version_signature")
-	if err != nil {
-		return nil, err
-	}
-
-	// 格式: Ubuntu 4.15.0-76.86-generic 4.15.18
-	// 或: CentOS Linux 7 (Core) 3.10.0-1160.el7.x86_64
-	parts := strings.Fields(string(data))
-	for _, part := range parts {
-		if v := parseVersionString(part); v != nil {
-			return v, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no valid version found in version_signature")
-}
-
-// readProcVersion 读取 /proc/version
-func readProcVersion() (*Version, error) {
 	data, err := os.ReadFile("/proc/version")
 	if err != nil {
-		return nil, err
+		return "", 0, 0, 0, err
 	}
-
-	// 格式: Linux version 5.4.0-42-generic (buildd@lgw01-amd64-001) ...
-	re := regexp.MustCompile(`Linux version (\d+\.\d+\.\d+)`)
+	
+	// 解析版本字符串
+	// 格式: Linux version 5.15.0-105-generic ...
+	re := regexp.MustCompile(`Linux version (\d+)\.(\d+)\.(\d+)`)
 	matches := re.FindStringSubmatch(string(data))
-	if len(matches) > 1 {
-		return parseVersionString(matches[1]), nil
+	if len(matches) >= 4 {
+		major, _ := strconv.Atoi(matches[1])
+		minor, _ := strconv.Atoi(matches[2])
+		patch, _ := strconv.Atoi(matches[3])
+		version := fmt.Sprintf("%d.%d.%d", major, minor, patch)
+		return version, major, minor, patch, nil
 	}
-
-	return nil, fmt.Errorf("no valid version found in /proc/version")
+	
+	return "", 0, 0, 0, fmt.Errorf("无法解析内核版本")
 }
 
-// readUnameRelease 使用 uname 获取内核版本
-func readUnameRelease() (*Version, error) {
-	data, err := os.ReadFile("/proc/sys/kernel/osrelease")
-	if err != nil {
-		return nil, err
-	}
-
-	// 格式: 5.4.0-42-generic 或 4.19.90-24
-	re := regexp.MustCompile(`(\d+\.\d+\.\d+)`)
-	matches := re.FindStringSubmatch(string(data))
-	if len(matches) > 1 {
-		return parseVersionString(matches[1]), nil
-	}
-
-	return nil, fmt.Errorf("no valid version found in osrelease")
-}
-
-// parseVersionString 解析版本字符串
-func parseVersionString(s string) *Version {
-	re := regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
-	matches := re.FindStringSubmatch(s)
-	if len(matches) != 4 {
-		return nil
-	}
-
-	major, _ := strconv.Atoi(matches[1])
-	minor, _ := strconv.Atoi(matches[2])
-	patch, _ := strconv.Atoi(matches[3])
-
-	return &Version{
-		Major: major,
-		Minor: minor,
-		Patch: patch,
-	}
-}
-
-// isMinRequired 检测是否满足最低版本要求
-func isMinRequired(v *Version) bool {
-	minVersion := &Version{Major: MinKernelMajor, Minor: MinKernelMinor, Patch: 0}
-	return v.Compare(minVersion) >= 0
-}
-
-// supportsEBPF 检测是否支持 eBPF
-func supportsEBPF(v *Version) bool {
-	// 检查内核版本
-	minVersion := &Version{Major: EBPFMinKernelMajor, Minor: EBPFMinKernelMinor, Patch: 0}
-	if v.Compare(minVersion) < 0 {
-		return false
-	}
-
-	// 检查 /sys/kernel/debug/tracing/available_events
-	if _, err := os.Stat("/sys/kernel/debug/tracing"); err != nil {
-		// 可能需要挂载 debugfs
-		return false
-	}
-
-	// 检查 BPF syscall 是否可用
-	if !checkBPFSystemCall() {
-		return false
-	}
-
-	return true
-}
-
-// supportsBTF 检测是否支持 BTF
-func supportsBTF(v *Version) bool {
-	// 检查内核版本
-	minVersion := &Version{Major: BTFMinKernelMajor, Minor: BTFMinKernelMinor, Patch: 0}
-	if v.Compare(minVersion) < 0 {
-		return false
-	}
-
-	// 检查 /sys/kernel/btf/vmlinux
-	if _, err := os.Stat("/sys/kernel/btf/vmlinux"); err != nil {
-		return false
-	}
-
-	return true
-}
-
-// supportsRingBuf 检测是否支持 Ring Buffer
-func supportsRingBuf(v *Version) bool {
-	minVersion := &Version{Major: RingBufMinKernelMajor, Minor: RingBufMinKernelMinor, Patch: 0}
-	return v.Compare(minVersion) >= 0
-}
-
-// checkBPFSystemCall 检查 BPF 系统调用是否可用
-func checkBPFSystemCall() bool {
-	// 检查 /proc/sys/kernel/unprivileged_bpf_disabled
-	// 0: 允许非特权用户使用 BPF
-	// 1: 禁止非特权用户使用 BPF
-	// 2: 禁止非特权用户使用 BPF (不可更改)
-	data, err := os.ReadFile("/proc/sys/kernel/unprivileged_bpf_disabled")
-	if err != nil {
-		// 文件不存在，假设 BPF 可用
+// checkMinRequirement 检查最低版本要求
+func (d *Detector) checkMinRequirement(major, minor int) bool {
+	// 最低要求: Linux 3.10
+	if major > 3 {
 		return true
 	}
-
-	// 即使禁止非特权用户，root 用户仍可使用
-	// 所以这里总是返回 true
-	_ = data
-	return true
+	if major == 3 && minor >= 10 {
+		return true
+	}
+	return false
 }
 
-// CheckKernelConfig 检查内核配置
-func (d *Detector) CheckKernelConfig() (map[string]bool, error) {
-	config := make(map[string]bool)
-
-	// 检查 /boot/config-$(uname -r)
-	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
-	if err != nil {
-		return config, err
+// checkEBPFSupport 检查eBPF支持
+func (d *Detector) checkEBPFSupport(major, minor int) bool {
+	// eBPF 需要 kernel >= 3.18
+	// 但完整功能需要 >= 4.1
+	if major > 4 {
+		return true
 	}
-
-	configPath := fmt.Sprintf("/boot/config-%s", strings.TrimSpace(string(release)))
-	file, err := os.Open(configPath)
-	if err != nil {
-		// 尝试 /proc/config.gz
-		return checkKernelConfigFromGz()
+	if major == 4 && minor >= 1 {
+		return true
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "CONFIG_") {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) == 2 {
-				key := parts[0]
-				value := parts[1]
-				config[key] = value == "y" || value == "m"
-			}
-		}
+	if major == 3 && minor >= 18 {
+		return true // 基础支持
 	}
-
-	return config, nil
+	return false
 }
 
-// checkKernelConfigFromGz 从 /proc/config.gz 读取内核配置
-func checkKernelConfigFromGz() (map[string]bool, error) {
-	config := make(map[string]bool)
-
-	// 这里需要解压 gzip，简化处理
-	// 实际实现可以使用 compress/gzip 包
-	return config, fmt.Errorf("reading from /proc/config.gz not implemented")
+// checkBTFSupport 检查BTF支持
+func (d *Detector) checkBTFSupport(major, minor int) bool {
+	// BTF 需要 kernel >= 5.2
+	if major > 5 {
+		return true
+	}
+	if major == 5 && minor >= 2 {
+		return true
+	}
+	return false
 }
 
-// GetCPUInfo 获取 CPU 信息
-func GetCPUInfo() (string, string, error) {
-	file, err := os.Open("/proc/cpuinfo")
-	if err != nil {
-		return "", "", err
+// checkRingBufSupport 检查Ring Buffer支持
+func (d *Detector) checkRingBufSupport(major, minor int) bool {
+	// Ring Buffer 需要 kernel >= 5.8
+	if major > 5 {
+		return true
 	}
-	defer file.Close()
-
-	var vendor, model string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "vendor_id") {
-			parts := strings.Split(line, ":")
-			if len(parts) == 2 {
-				vendor = strings.TrimSpace(parts[1])
-			}
-		}
-		if strings.HasPrefix(line, "model name") {
-			parts := strings.Split(line, ":")
-			if len(parts) == 2 {
-				model = strings.TrimSpace(parts[1])
-			}
-		}
+	if major == 5 && minor >= 8 {
+		return true
 	}
-
-	// 检测国产芯片
-	if strings.Contains(strings.ToLower(vendor), "hygon") {
-		vendor = "Hygon (海光)"
-	} else if strings.Contains(strings.ToLower(model), "kunpeng") || strings.Contains(strings.ToLower(model), "鲲鹏") {
-		vendor = "Kunpeng (鲲鹏)"
-	}
-
-	return vendor, model, nil
+	return false
 }
 
-// GetOSInfo 获取操作系统信息
-func GetOSInfo() (string, string, error) {
-	// 读取 /etc/os-release
-	file, err := os.Open("/etc/os-release")
+// checkKprobeSupport 检查Kprobe支持
+func (d *Detector) checkKprobeSupport(major, minor int) bool {
+	// Kprobe 需要 kernel >= 4.1
+	if major > 4 {
+		return true
+	}
+	if major == 4 && minor >= 1 {
+		return true
+	}
+	return false
+}
+
+// checkUprobeSupport 检查Uprobe支持
+func (d *Detector) checkUprobeSupport(major, minor int) bool {
+	// Uprobe 需要 kernel >= 4.17
+	if major > 4 {
+		return true
+	}
+	if major == 4 && minor >= 17 {
+		return true
+	}
+	return false
+}
+
+// checkTracepointSupport 检查Tracepoint支持
+func (d *Detector) checkTracepointSupport(major, minor int) bool {
+	// Tracepoint 需要 kernel >= 4.7
+	if major > 4 {
+		return true
+	}
+	if major == 4 && minor >= 7 {
+		return true
+	}
+	return false
+}
+
+// GetFeatureLevel 获取功能等级
+func (d *Detector) GetFeatureLevel() FeatureLevel {
+	if d.capability == nil {
+		return FeatureLevelNone
+	}
+	
+	major := d.capability.Major
+	minor := d.capability.Minor
+	
+	if major >= 5 && minor >= 8 {
+		return FeatureLevelFull
+	}
+	if major >= 5 && minor >= 2 {
+		return FeatureLevelAdvanced
+	}
+	if major >= 4 && minor >= 14 {
+		return FeatureLevelEnhanced
+	}
+	if major >= 4 && minor >= 1 {
+		return FeatureLevelBasic
+	}
+	return FeatureLevelNone
+}
+
+// GetCapability 获取检测到的能力
+func (d *Detector) GetCapability() *KernelCapability {
+	return d.capability
+}
+
+// ============================================================
+// 兼容性报告
+// ============================================================
+
+// CompatibilityReport 兼容性报告
+type CompatibilityReport struct {
+	Compatible      bool     `json:"compatible"`
+	Arch            ArchType `json:"arch"`
+	KernelVersion   string   `json:"kernel_version"`
+	FeatureLevel    string   `json:"feature_level"`
+	SupportedFeatures []string `json:"supported_features"`
+	MissingFeatures []string `json:"missing_features,omitempty"`
+	Recommendations []string `json:"recommendations,omitempty"`
+}
+
+// GenerateReport 生成兼容性报告
+func (d *Detector) GenerateReport() *CompatibilityReport {
+	if d.capability == nil {
+		return &CompatibilityReport{
+			Compatible: false,
+			Recommendations: []string{"请先执行内核检测"},
+		}
+	}
+	
+	cap := d.capability
+	report := &CompatibilityReport{
+		Compatible:    cap.MinRequired && cap.SupportsEBPF,
+		Arch:          cap.Arch,
+		KernelVersion: cap.Version,
+		FeatureLevel:  d.GetFeatureLevel().String(),
+	}
+	
+	// 支持的功能
+	if cap.SupportsEBPF {
+		report.SupportedFeatures = append(report.SupportedFeatures, "eBPF")
+	}
+	if cap.SupportsBTF {
+		report.SupportedFeatures = append(report.SupportedFeatures, "BTF")
+	}
+	if cap.SupportsRingBuf {
+		report.SupportedFeatures = append(report.SupportedFeatures, "Ring Buffer")
+	}
+	if cap.SupportsKprobe {
+		report.SupportedFeatures = append(report.SupportedFeatures, "Kprobe")
+	}
+	if cap.SupportsUprobe {
+		report.SupportedFeatures = append(report.SupportedFeatures, "Uprobe")
+	}
+	if cap.SupportsTracepoint {
+		report.SupportedFeatures = append(report.SupportedFeatures, "Tracepoint")
+	}
+	
+	// 缺失的功能和建议
+	if !cap.MinRequired {
+		report.MissingFeatures = append(report.MissingFeatures, "内核版本过低")
+		report.Recommendations = append(report.Recommendations, 
+			fmt.Sprintf("内核版本 %s 低于最低要求 3.10，请升级内核", cap.Version))
+	}
+	
+	if !cap.SupportsEBPF {
+		report.MissingFeatures = append(report.MissingFeatures, "eBPF")
+		report.Recommendations = append(report.Recommendations, 
+			"当前内核不支持eBPF，将使用传统采集方式")
+	}
+	
+	if !cap.SupportsBTF {
+		report.MissingFeatures = append(report.MissingFeatures, "BTF")
+		report.Recommendations = append(report.Recommendations, 
+			"建议升级内核到5.2+以获得BTF支持，简化eBPF程序部署")
+	}
+	
+	if !cap.SupportsRingBuf {
+		report.MissingFeatures = append(report.MissingFeatures, "Ring Buffer")
+		report.Recommendations = append(report.Recommendations, 
+			"建议升级内核到5.8+以获得Ring Buffer支持，提升高流量场景性能")
+	}
+	
+	return report
+}
+
+// ============================================================
+// 工具函数
+// ============================================================
+
+// utsnameToString 将Utsname数组转换为字符串
+func utsnameToString(arr [65]int8) string {
+	var buf [65]byte
+	for i, b := range arr {
+		if b == 0 {
+			break
+		}
+		buf[i] = byte(b)
+	}
+	return string(buf[:])
+}
+
+// parseVersion 解析版本字符串
+func parseVersion(version string) (int, int, int) {
+	re := regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
+	matches := re.FindStringSubmatch(version)
+	if len(matches) >= 4 {
+		major, _ := strconv.Atoi(matches[1])
+		minor, _ := strconv.Atoi(matches[2])
+		patch, _ := strconv.Atoi(matches[3])
+		return major, minor, patch
+	}
+	return 0, 0, 0
+}
+
+// ValidateBeforeStart 启动前验证
+func ValidateBeforeStart() error {
+	detector := NewDetector()
+	cap, err := detector.Detect()
 	if err != nil {
-		return "", "", err
+		return fmt.Errorf("内核检测失败: %w", err)
 	}
-	defer file.Close()
-
-	var name, version string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "NAME=") {
-			name = strings.Trim(strings.TrimPrefix(line, "NAME="), "\"")
-		}
-		if strings.HasPrefix(line, "VERSION=") {
-			version = strings.Trim(strings.TrimPrefix(line, "VERSION="), "\"")
-		}
+	
+	if !cap.Arch.IsSupported() {
+		return fmt.Errorf("不支持的架构: %s", cap.Arch)
 	}
+	
+	if !cap.MinRequired {
+		return fmt.Errorf("内核版本 %s 低于最低要求 3.10", cap.Version)
+	}
+	
+	return nil
+}
 
-	return name, version, nil
+// GetCollectorType 根据内核能力获取推荐的采集器类型
+func GetCollectorType() string {
+	detector := NewDetector()
+	cap, err := detector.Detect()
+	if err != nil {
+		return "traditional" // 降级到传统采集器
+	}
+	
+	if !cap.SupportsEBPF {
+		return "traditional"
+	}
+	
+	if cap.SupportsRingBuf {
+		return "ebpf_advanced"
+	}
+	
+	return "ebpf_basic"
 }

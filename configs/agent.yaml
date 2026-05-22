@@ -577,3 +577,61 @@ pcap_storage:
     target_interface: ""          # 目标接口
     pause_on_error: false         # 错误时暂停
     max_concurrent: 5             # 最大并发回放数
+
+# ============================================================
+# 内核兼容性与架构支持配置
+# 支持 x86/ARM/鲲鹏/海光，内核版本校验，低内核自动降级
+# ============================================================
+kernel:
+  enabled: true                   # 启用内核检测（默认开启）
+  min_kernel_version: "3.10.0"    # 最低内核版本要求
+  check_on_startup: true          # 启动时检查
+  auto_detect_arch: true          # 自动检测架构
+  fallback_to_legacy: true        # 不支持eBPF时降级到传统采集
+  supported_archs:                # 支持的架构列表
+    - "x86_64"
+    - "aarch64"
+    - "kunpeng"
+    - "hygon"
+
+# ============================================================
+# 业务安全隔离配置
+# 部署/启停/卸载进程隔离，cgroup限制，零业务干扰
+# ============================================================
+isolation:
+  enabled: true                   # 启用隔离（默认开启）
+  cgroup_path: "/sys/fs/cgroup"   # cgroup挂载路径
+  cpu_quota_percent: 10           # CPU限制百分比
+  memory_limit_mb: 512            # 内存限制MB
+  io_weight: 10                   # IO权重 (10-1000)
+  nice_level: 19                  # nice值 (19=最低优先级)
+  oom_priority: 1000              # OOM优先级 (1000=优先被杀)
+  no_new_privileges: true         # 禁止提权
+  zero_interference: true         # 零干扰模式
+
+# ============================================================
+# eBPF资源限制配置
+# CPU/内存上限控制，自适应采样，流量感知
+# ============================================================
+ebpf_resource:
+  enabled: true                   # 启用资源限制（默认开启）
+  cpu_max_percent: 20.0           # CPU最大使用率 (%)
+  memory_max_mb: 256              # 内存最大使用 (MB)
+  sample_rate_base: 1000          # 基础采样率 (Hz)
+  sample_rate_min: 100            # 最小采样率 (Hz)
+  sample_rate_max: 10000          # 最大采样率 (Hz)
+  adaptive_enabled: true          # 启用自适应采样
+  traffic_threshold: 100000       # 流量阈值 (pps)
+  check_interval_sec: 5           # 检查间隔（秒）
+
+# ============================================================
+# TCP核心网络指标配置
+# TCP建连时延、零窗口、队列溢出检测
+# ============================================================
+tcp_metrics:
+  enabled: true                   # 启用TCP指标采集（默认开启）
+  collect_interval_sec: 5         # 采集间隔（秒）
+  collect_latency: true           # 采集建连时延
+  detect_zero_window: true        # 检测零窗口
+  detect_queue_overflow: true     # 检测队列溢出
+  max_history_size: 1440          # 最大历史记录数（约2小时）

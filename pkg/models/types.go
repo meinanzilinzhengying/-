@@ -346,6 +346,10 @@ type Config struct {
 	Tracing     TracingConfig     `yaml:"tracing" json:"tracing"`
 	HealthScore HealthScoreConfig `yaml:"health_score" json:"health_score"`
 	PCAPStorage PCAPStorageConfig `yaml:"pcap_storage" json:"pcap_storage"`
+	Kernel      KernelConfig      `yaml:"kernel" json:"kernel"`
+	Isolation   IsolationConfig   `yaml:"isolation" json:"isolation"`
+	EBPFResource EBPFResourceConfig `yaml:"ebpf_resource" json:"ebpf_resource"`
+	TCPMetrics  TCPMetricsConfig  `yaml:"tcp_metrics" json:"tcp_metrics"`
 }
 
 // ============================================================
@@ -690,4 +694,54 @@ type PCAPReplayConfig struct {
 	TargetInterface string   `yaml:"target_interface" json:"target_interface"`         // 目标接口
 	PauseOnError    bool     `yaml:"pause_on_error" json:"pause_on_error"`             // 错误时暂停
 	MaxConcurrent   int      `yaml:"max_concurrent" json:"max_concurrent"`             // 最大并发回放数
+}
+
+// ============================================================
+// 架构兼容性与安全隔离配置模型
+// ============================================================
+
+// KernelConfig 内核兼容性配置
+type KernelConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	MinKernelVersion  string `yaml:"min_kernel_version" json:"min_kernel_version"`     // 最低内核版本
+	CheckOnStartup    bool   `yaml:"check_on_startup" json:"check_on_startup"`         // 启动时检查
+	AutoDetectArch    bool   `yaml:"auto_detect_arch" json:"auto_detect_arch"`           // 自动检测架构
+	FallbackToLegacy  bool   `yaml:"fallback_to_legacy" json:"fallback_to_legacy"`       // 降级到传统采集
+	SupportedArchs    []string `yaml:"supported_archs" json:"supported_archs"`           // 支持的架构列表
+}
+
+// IsolationConfig 安全隔离配置
+type IsolationConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	CgroupPath        string `yaml:"cgroup_path" json:"cgroup_path"`                   // cgroup挂载路径
+	CPUQuotaPercent   int    `yaml:"cpu_quota_percent" json:"cpu_quota_percent"`       // CPU限制百分比
+	MemoryLimitMB     int    `yaml:"memory_limit_mb" json:"memory_limit_mb"`           // 内存限制MB
+	IOWeight          int    `yaml:"io_weight" json:"io_weight"`                       // IO权重
+	NiceLevel         int    `yaml:"nice_level" json:"nice_level"`                     // nice值
+	OOMPriority       int    `yaml:"oom_priority" json:"oom_priority"`                 // OOM优先级
+	NoNewPrivileges   bool   `yaml:"no_new_privileges" json:"no_new_privileges"`       // 禁止提权
+	ZeroInterference  bool   `yaml:"zero_interference" json:"zero_interference"`       // 零干扰模式
+}
+
+// EBPFResourceConfig eBPF资源限制配置
+type EBPFResourceConfig struct {
+	Enabled          bool    `yaml:"enabled" json:"enabled"`
+	CPUMaxPercent    float64 `yaml:"cpu_max_percent" json:"cpu_max_percent"`           // CPU最大使用率
+	MemoryMaxMB      int     `yaml:"memory_max_mb" json:"memory_max_mb"`               // 内存最大使用
+	SampleRateBase   int     `yaml:"sample_rate_base" json:"sample_rate_base"`         // 基础采样率
+	SampleRateMin    int     `yaml:"sample_rate_min" json:"sample_rate_min"`           // 最小采样率
+	SampleRateMax    int     `yaml:"sample_rate_max" json:"sample_rate_max"`           // 最大采样率
+	AdaptiveEnabled  bool    `yaml:"adaptive_enabled" json:"adaptive_enabled"`         // 启用自适应采样
+	TrafficThreshold int64   `yaml:"traffic_threshold" json:"traffic_threshold"`       // 流量阈值
+	CheckIntervalSec int     `yaml:"check_interval_sec" json:"check_interval_sec"`     // 检查间隔
+}
+
+// TCPMetricsConfig TCP核心指标配置
+type TCPMetricsConfig struct {
+	Enabled            bool `yaml:"enabled" json:"enabled"`
+	CollectIntervalSec int  `yaml:"collect_interval_sec" json:"collect_interval_sec"` // 采集间隔
+	CollectLatency     bool `yaml:"collect_latency" json:"collect_latency"`           // 采集建连时延
+	DetectZeroWindow   bool `yaml:"detect_zero_window" json:"detect_zero_window"`     // 检测零窗口
+	DetectQueueOverflow bool `yaml:"detect_queue_overflow" json:"detect_queue_overflow"` // 检测队列溢出
+	MaxHistorySize     int  `yaml:"max_history_size" json:"max_history_size"`         // 最大历史记录数
 }

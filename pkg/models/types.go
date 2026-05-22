@@ -342,6 +342,7 @@ type Config struct {
 	JVMMem      JVMMemConfig      `yaml:"jvm_memory" json:"jvm_memory"`
 	AIModel     AIModelConfig     `yaml:"ai_model" json:"ai_model"`
 	Alert       AlertConfig       `yaml:"alert" json:"alert"`
+	RCA         RCAConfig         `yaml:"rca" json:"rca"`
 }
 
 // ============================================================
@@ -557,4 +558,21 @@ type AlertConfig struct {
 	MaxAlertsPerMin    int      `yaml:"max_alerts_per_min" json:"max_alerts_per_min"`   // 每分钟最大告警数
 	SuppressDuplicates bool     `yaml:"suppress_duplicates" json:"suppress_duplicates"` // 抑制重复告警
 	NotificationChannels []string `yaml:"notification_channels" json:"notification_channels"` // 通知渠道
+}
+
+// ============================================================
+// 根因分析配置模型
+// ============================================================
+
+// RCAConfig 根因分析配置
+type RCAConfig struct {
+	Enabled              bool   `yaml:"enabled" json:"enabled"`
+	CorrelationWindow    int    `yaml:"correlation_window" json:"correlation_window"`       // 告警关联时间窗口（秒）
+	MaxCorrelationDepth  int    `yaml:"max_correlation_depth" json:"max_correlation_depth"` // 最大关联深度
+	MinCorrelationScore  float64 `yaml:"min_correlation_score" json:"min_correlation_score"` // 最小关联分数
+	EnableTopologyAware  bool   `yaml:"enable_topology_aware" json:"enable_topology_aware"` // 启用拓扑感知
+	EnableMetricCorrelate bool  `yaml:"enable_metric_correlate" json:"enable_metric_correlate"` // 启用指标关联
+	MaxIncidentAge       int    `yaml:"max_incident_age" json:"max_incident_age"`       // 最大事件保留时间（秒）
+	AnalysisInterval     int    `yaml:"analysis_interval" json:"analysis_interval"`     // 分析间隔（秒）
+	MaxRootCauses        int    `yaml:"max_root_causes" json:"max_root_causes"`         // 最大根因数量
 }

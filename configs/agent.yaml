@@ -445,3 +445,18 @@ alert:
   notification_channels:      # 通知渠道
     - "log"
     - "webhook"
+
+# ============================================================
+# 多节点根因分析配置
+# 跨节点告警关联、因果链推导、自动修复建议
+# ============================================================
+rca:
+  enabled: true               # 启用根因分析（默认开启）
+  correlation_window: 300     # 告警关联时间窗口（秒）
+  max_correlation_depth: 5    # 最大关联深度
+  min_correlation_score: 0.5  # 最小关联分数（0-1）
+  enable_topology_aware: true # 启用拓扑感知关联
+  enable_metric_correlate: true # 启用指标关联
+  max_incident_age: 3600      # 最大事件保留时间（秒）
+  analysis_interval: 30       # 分析间隔（秒）
+  max_root_causes: 3          # 最大根因数量

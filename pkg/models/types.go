@@ -368,6 +368,7 @@ type Config struct {
 	Metrics         MetricsConfig        `yaml:"metrics" json:"metrics"`
 	DynamicConfig   DynamicConfigConfig  `yaml:"dynamic_config" json:"dynamic_config"`
 	Recovery        RecoveryConfig       `yaml:"recovery" json:"recovery"`
+	Topology        TopologyConfig       `yaml:"topology" json:"topology"`
 }
 
 // ============================================================
@@ -1626,4 +1627,77 @@ type HealthMonitorConfig struct {
 	GCThresholdMS     int     `yaml:"gc_threshold_ms" json:"gc_threshold_ms"`           // GC耗时阈值（毫秒）
 	AutoRecover       bool    `yaml:"auto_recover" json:"auto_recover"`                 // 自动恢复
 	RecoverActions    []string `yaml:"recover_actions" json:"recover_actions"`          // 恢复动作
+}
+
+// ============================================================
+// 全栈拓扑配置模型
+// ============================================================
+
+// TopologyConfig 全栈拓扑配置
+type TopologyConfig struct {
+	Enabled      bool                   `yaml:"enabled" json:"enabled"`           // 启用拓扑发现
+	Discovery    TopologyDiscoveryConfig `yaml:"discovery" json:"discovery"`      // 发现配置
+	Tracer       TopologyTracerConfig    `yaml:"tracer" json:"tracer"`            // 追踪配置
+	Storage      TopologyStorageConfig   `yaml:"storage" json:"storage"`          // 存储配置
+	API          TopologyAPIConfig       `yaml:"api" json:"api"`                  // API配置
+}
+
+// TopologyDiscoveryConfig 拓扑发现配置
+type TopologyDiscoveryConfig struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`                       // 启用发现
+	DiscoverPods       bool   `yaml:"discover_pods" json:"discover_pods"`           // 发现Pod
+	DiscoverVMs        bool   `yaml:"discover_vms" json:"discover_vms"`             // 发现VM
+	DiscoverPhysical   bool   `yaml:"discover_physical" json:"discover_physical"`   // 发现物理机
+	DiscoverContainers bool   `yaml:"discover_containers" json:"discover_containers"` // 发现容器
+	DiscoverServices   bool   `yaml:"discover_services" json:"discover_services"`   // 发现Service
+	DiscoverNetwork    bool   `yaml:"discover_network" json:"discover_network"`     // 发现网络拓扑
+	IntervalSec        int    `yaml:"interval_sec" json:"interval_sec"`             // 发现间隔（秒）
+	KubeConfigPath     string `yaml:"kube_config_path" json:"kube_config_path"`     // Kubeconfig路径
+	KubeAPIServer      string `yaml:"kube_api_server" json:"kube_api_server"`       // K8s API Server
+	CloudMetadataURL   string `yaml:"cloud_metadata_url" json:"cloud_metadata_url"` // 云元数据URL
+	ProcPath           string `yaml:"proc_path" json:"proc_path"`                   // /proc路径
+	SysPath            string `yaml:"sys_path" json:"sys_path"`                     // /sys路径
+	EnableCgroupScan   bool   `yaml:"enable_cgroup_scan" json:"enable_cgroup_scan"` // 启用cgroup扫描
+	EnableNetlinkScan  bool   `yaml:"enable_netlink_scan" json:"enable_netlink_scan"` // 启用netlink扫描
+}
+
+// TopologyTracerConfig 拓扑追踪配置
+type TopologyTracerConfig struct {
+	Enabled           bool    `yaml:"enabled" json:"enabled"`                         // 启用追踪
+	SampleRate        float64 `yaml:"sample_rate" json:"sample_rate"`                 // 采样率 (0-1)
+	MaxPaths          int     `yaml:"max_paths" json:"max_paths"`                     // 最大路径缓存数
+	MaxHops           int     `yaml:"max_hops" json:"max_hops"`                       // 最大跳跃数
+	PathTimeoutSec    int     `yaml:"path_timeout_sec" json:"path_timeout_sec"`       // 路径超时（秒）
+	EnableE2E         bool    `yaml:"enable_e2e" json:"enable_e2e"`                   // 启用端到端追踪
+	EnableHopTracking bool    `yaml:"enable_hop_tracking" json:"enable_hop_tracking"` // 启用跳跃追踪
+	EnableLatency     bool    `yaml:"enable_latency" json:"enable_latency"`           // 启用延迟追踪
+	EnableDNS         bool    `yaml:"enable_dns" json:"enable_dns"`                   // 启用DNS解析
+	StoreRawPackets   bool    `yaml:"store_raw_packets" json:"store_raw_packets"`     // 存储原始包
+}
+
+// TopologyStorageConfig 拓扑存储配置
+type TopologyStorageConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`                           // 启用存储
+	Driver          string `yaml:"driver" json:"driver"`                             // 驱动: sqlite/mysql/postgres
+	DSN             string `yaml:"dsn" json:"dsn"`                                   // 数据源
+	MaxConnections  int    `yaml:"max_connections" json:"max_connections"`           // 最大连接数
+	MaxEntities     int    `yaml:"max_entities" json:"max_entities"`                 // 最大实体数
+	MaxPaths        int    `yaml:"max_paths" json:"max_paths"`                       // 最大路径数
+	MaxRelations    int    `yaml:"max_relations" json:"max_relations"`               // 最大关系数
+	RetentionDays   int    `yaml:"retention_days" json:"retention_days"`             // 数据保留天数
+	CleanupInterval int    `yaml:"cleanup_interval" json:"cleanup_interval"`         // 清理间隔（分钟）
+	EnableIndex     bool   `yaml:"enable_index" json:"enable_index"`                 // 启用索引
+	EnableCache     bool   `yaml:"enable_cache" json:"enable_cache"`                 // 启用缓存
+	CacheSize       int    `yaml:"cache_size" json:"cache_size"`                     // 缓存大小
+}
+
+// TopologyAPIConfig 拓扑API配置
+type TopologyAPIConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`                       // 启用API
+	ListenAddr   string `yaml:"listen_addr" json:"listen_addr"`               // 监听地址
+	AuthEnabled  bool   `yaml:"auth_enabled" json:"auth_enabled"`             // 启用认证
+	AuthToken    string `yaml:"auth_token" json:"auth_token"`                 // 认证Token
+	RateLimit    int    `yaml:"rate_limit" json:"rate_limit"`                 // 限流（请求/分钟）
+	ReadTimeout  int    `yaml:"read_timeout" json:"read_timeout"`             // 读超时（秒）
+	WriteTimeout int    `yaml:"write_timeout" json:"write_timeout"`           // 写超时（秒）
 }

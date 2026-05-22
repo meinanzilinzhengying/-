@@ -141,3 +141,66 @@ recovery:
       - "gc"                      # 触发GC
       - "throttle"                # 节流处理
       - "alert"                   # 发送告警
+
+# ============================================================
+# 全栈拓扑配置
+# 支持 Pod/VM/物理机 自动发现和请求路径追踪
+# ============================================================
+topology:
+  enabled: true                   # 启用拓扑发现
+  
+  # 拓扑发现配置
+  discovery:
+    enabled: true                 # 启用发现
+    discover_pods: true           # 发现Kubernetes Pod
+    discover_vms: true            # 发现虚拟机
+    discover_physical: true       # 发现物理机
+    discover_containers: true     # 发现容器
+    discover_services: true       # 发现Kubernetes Service
+    discover_network: true        # 发现网络拓扑
+    interval_sec: 60              # 发现间隔（秒）
+    kube_config_path: ""          # Kubeconfig路径（空表示集群内）
+    kube_api_server: ""           # K8s API Server（空表示集群内）
+    cloud_metadata_url: ""        # 云元数据URL
+    proc_path: "/proc"            # /proc路径
+    sys_path: "/sys"              # /sys路径
+    enable_cgroup_scan: true      # 启用cgroup扫描
+    enable_netlink_scan: true     # 启用netlink扫描
+  
+  # 路径追踪配置
+  tracer:
+    enabled: true                 # 启用追踪
+    sample_rate: 1.0              # 采样率 (0-1)
+    max_paths: 10000              # 最大路径缓存数
+    max_hops: 20                  # 最大跳跃数
+    path_timeout_sec: 300         # 路径超时（秒）
+    enable_e2e: true              # 启用端到端追踪
+    enable_hop_tracking: true     # 启用跳跃追踪
+    enable_latency: true          # 启用延迟追踪
+    enable_dns: true              # 启用DNS解析
+    store_raw_packets: false      # 存储原始包
+  
+  # 拓扑存储配置
+  storage:
+    enabled: true                 # 启用存储
+    driver: "sqlite"              # 驱动: sqlite/mysql/postgres
+    dsn: "/var/lib/cloud-flow/topology.db"  # 数据源
+    max_connections: 10           # 最大连接数
+    max_entities: 100000          # 最大实体数
+    max_paths: 1000000            # 最大路径数
+    max_relations: 500000         # 最大关系数
+    retention_days: 7             # 数据保留天数
+    cleanup_interval: 60          # 清理间隔（分钟）
+    enable_index: true            # 启用索引
+    enable_cache: true            # 启用缓存
+    cache_size: 10000             # 缓存大小
+  
+  # 拓扑API配置
+  api:
+    enabled: true                 # 启用API
+    listen_addr: ":8081"          # 监听地址
+    auth_enabled: false           # 启用认证
+    auth_token: ""                # 认证Token
+    rate_limit: 1000              # 限流（请求/分钟）
+    read_timeout: 30              # 读超时（秒）
+    write_timeout: 30             # 写超时（秒）

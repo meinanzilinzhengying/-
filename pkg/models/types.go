@@ -233,6 +233,44 @@ type VIPConfig struct {
 	Netmask   string `yaml:"netmask" json:"netmask"`
 }
 
+// ============================================================
+// 熔断与降级配置模型
+// ============================================================
+
+// CircuitBreakerConfig 熔断器配置
+type CircuitBreakerConfig struct {
+	Enabled          bool `yaml:"enabled" json:"enabled"`
+	MaxFailures      int  `yaml:"max_failures" json:"max_failures"`           // 最大连续失败次数
+	ResetTimeoutSec  int  `yaml:"reset_timeout_sec" json:"reset_timeout_sec"` // 恢复超时（秒）
+	HalfOpenMax      int  `yaml:"half_open_max" json:"half_open_max"`         // 半开探测数
+	WindowTimeSec    int  `yaml:"window_time_sec" json:"window_time_sec"`     // 滑动窗口时间（秒）
+	WindowBuckets    int  `yaml:"window_buckets" json:"window_buckets"`       // 滑动窗口桶数
+	AdaptiveEnabled  bool `yaml:"adaptive_enabled" json:"adaptive_enabled"`   // 自适应恢复超时
+	TimeoutSec       int  `yaml:"timeout_sec" json:"timeout_sec"`             // 单次执行超时（秒）
+}
+
+// DegradationPolicyConfig 降级策略配置
+type DegradationPolicyConfig struct {
+	ComponentID      string `yaml:"component_id" json:"component_id"`
+	MaxErrorRate     float64 `yaml:"max_error_rate" json:"max_error_rate"`
+	MaxErrors        int    `yaml:"max_errors" json:"max_errors"`
+	ErrorWindowSec   int    `yaml:"error_window_sec" json:"error_window_sec"`
+	FallbackTo       string `yaml:"fallback_to" json:"fallback_to"`
+	AutoRecover      bool   `yaml:"auto_recover" json:"auto_recover"`
+	RecoverAfterSec  int    `yaml:"recover_after_sec" json:"recover_after_sec"`
+	RecoverThreshold int    `yaml:"recover_threshold" json:"recover_threshold"`
+}
+
+// ResilienceConfig 弹性管理配置
+type ResilienceConfig struct {
+	Enabled             bool                      `yaml:"enabled" json:"enabled"`
+	HealthCheckInterval int                       `yaml:"health_check_interval" json:"health_check_interval"` // 秒
+	SwitchTimeoutSec    int                       `yaml:"switch_timeout_sec" json:"switch_timeout_sec"`
+	GracefulDegradation bool                      `yaml:"graceful_degradation" json:"graceful_degradation"`
+	CircuitBreaker      CircuitBreakerConfig      `yaml:"circuit_breaker" json:"circuit_breaker"`
+	Policies            []DegradationPolicyConfig `yaml:"policies" json:"policies"`
+}
+
 // Config 配置结构
 type Config struct {
 	Agent       AgentConfig       `yaml:"agent" json:"agent"`
@@ -243,6 +281,7 @@ type Config struct {
 	DualCenter  DualCenterConfig  `yaml:"dual_center" json:"dual_center"`
 	Failover    FailoverConfig    `yaml:"failover" json:"failover"`
 	VIP         VIPConfig         `yaml:"vip" json:"vip"`
+	Resilience  ResilienceConfig  `yaml:"resilience" json:"resilience"`
 }
 
 // AgentConfig Agent 配置

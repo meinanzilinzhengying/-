@@ -152,3 +152,76 @@ vip:
   virtual_ip: ""              # 虚拟IP地址
   interface: ""               # 网络接口
   netmask: ""                 # 子网掩码
+
+# ============================================================
+# 熔断与降级配置
+# 后端组件故障不影响整体服务，自动切换
+# ============================================================
+resilience:
+  enabled: true               # 启用弹性管理（默认开启）
+  health_check_interval: 10   # 健康检查间隔（秒）
+  switch_timeout_sec: 30      # 切换超时（秒）
+  graceful_degradation: true  # 优雅降级
+
+  # 熔断器配置
+  circuit_breaker:
+    enabled: true             # 启用熔断器
+    max_failures: 5           # 最大连续失败次数触发熔断
+    reset_timeout_sec: 30     # 熔断恢复超时（秒）
+    half_open_max: 3          # 半开状态最大探测数
+    window_time_sec: 60       # 滑动窗口时间（秒）
+    window_buckets: 10        # 滑动窗口桶数
+    adaptive_enabled: true    # 自适应恢复超时（指数退避）
+    timeout_sec: 10           # 单次执行超时（秒）
+
+  # 降级策略
+  policies:
+    # eBPF采集器 → 传统采集器
+    - component_id: "collector_ebpf"
+      max_error_rate: 0.5
+      max_errors: 10
+      error_window_sec: 60
+      fallback_to: "collector_traditional"
+      auto_recover: true
+      recover_after_sec: 120
+      recover_threshold: 5
+
+    # gRPC Edge连接 → 本地缓冲
+    - component_id: "grpc_edge"
+      max_error_rate: 0.5
+      max_errors: 5
+      error_window_sec: 30
+      fallback_to: "local_buffer"
+      auto_recover: true
+      recover_after_sec: 60
+      recover_threshold: 3
+
+    # 指标采集器（仅告警，无降级）
+    - component_id: "collector_metrics"
+      max_error_rate: 0.8
+      max_errors: 20
+      error_window_sec: 60
+      fallback_to: ""
+      auto_recover: true
+      recover_after_sec: 60
+      recover_threshold: 3
+
+    # 进程采集器（仅告警，无降级）
+    - component_id: "collector_process"
+      max_error_rate: 0.8
+      max_errors: 20
+      error_window_sec: 60
+      fallback_to: ""
+      auto_recover: true
+      recover_after_sec: 60
+      recover_threshold: 3
+
+    # 双中心同步 → 本地模式
+    - component_id: "dual_center_sync"
+      max_error_rate: 0.5
+      max_errors: 5
+      error_window_sec: 60
+      fallback_to: "local_only"
+      auto_recover: true
+      recover_after_sec: 120
+      recover_threshold: 5

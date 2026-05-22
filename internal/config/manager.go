@@ -369,6 +369,32 @@ func (m *Manager) setDefaults(config *models.Config) {
 	if config.Failover.Enabled && config.Failover.Mode == "" {
 		config.Failover.Mode = "auto"
 	}
+
+	// 弹性管理配置默认值
+	if config.Resilience.Enabled && config.Resilience.HealthCheckInterval <= 0 {
+		config.Resilience.HealthCheckInterval = 10
+	}
+	if config.Resilience.Enabled && config.Resilience.SwitchTimeoutSec <= 0 {
+		config.Resilience.SwitchTimeoutSec = 30
+	}
+	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.MaxFailures <= 0 {
+		config.Resilience.CircuitBreaker.MaxFailures = 5
+	}
+	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.ResetTimeoutSec <= 0 {
+		config.Resilience.CircuitBreaker.ResetTimeoutSec = 30
+	}
+	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.HalfOpenMax <= 0 {
+		config.Resilience.CircuitBreaker.HalfOpenMax = 3
+	}
+	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.WindowTimeSec <= 0 {
+		config.Resilience.CircuitBreaker.WindowTimeSec = 60
+	}
+	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.WindowBuckets <= 0 {
+		config.Resilience.CircuitBreaker.WindowBuckets = 10
+	}
+	if config.Resilience.Enabled && config.Resilience.CircuitBreaker.TimeoutSec <= 0 {
+		config.Resilience.CircuitBreaker.TimeoutSec = 10
+	}
 }
 
 // ToJSON 转换为 JSON

@@ -366,6 +366,8 @@ type Config struct {
 	LoadBalancer    LoadBalancerConfig   `yaml:"load_balancer" json:"load_balancer"`
 	GRPC            GRPCConfig           `yaml:"grpc" json:"grpc"`
 	Metrics         MetricsConfig        `yaml:"metrics" json:"metrics"`
+	DynamicConfig   DynamicConfigConfig  `yaml:"dynamic_config" json:"dynamic_config"`
+	Recovery        RecoveryConfig       `yaml:"recovery" json:"recovery"`
 }
 
 // ============================================================
@@ -1509,4 +1511,119 @@ type OpsPlatformConfig struct {
 	EventWebhook  string `yaml:"event_webhook" json:"event_webhook"`               // 事件Webhook
 	MetricWebhook string `yaml:"metric_webhook" json:"metric_webhook"`             // 指标Webhook
 	AlertWebhook  string `yaml:"alert_webhook" json:"alert_webhook"`               // 告警Webhook
+}
+
+// ============================================================
+// 动态配置管理配置模型
+// ============================================================
+
+// DynamicConfigConfig 动态配置管理配置
+type DynamicConfigConfig struct {
+	Enabled           bool                     `yaml:"enabled" json:"enabled"`                           // 启用动态配置
+	Sources           []ConfigSourceConfig     `yaml:"sources" json:"sources"`                           // 配置源列表
+	Priority          []string                 `yaml:"priority" json:"priority"`                         // 配置源优先级
+	HotReload         HotReloadSettingsConfig  `yaml:"hot_reload" json:"hot_reload"`                     // 热更新配置
+	EnvPrefix         string                   `yaml:"env_prefix" json:"env_prefix"`                     // 环境变量前缀
+	EnvExpandEnabled  bool                     `yaml:"env_expand_enabled" json:"env_expand_enabled"`     // 启用环境变量展开
+	WatchEnabled      bool                     `yaml:"watch_enabled" json:"watch_enabled"`               // 启用文件监听
+	WatchInterval     int                      `yaml:"watch_interval" json:"watch_interval"`             // 监听间隔（秒）
+	CacheEnabled      bool                     `yaml:"cache_enabled" json:"cache_enabled"`               // 启用配置缓存
+	CacheTTL          int                      `yaml:"cache_ttl" json:"cache_ttl"`                       // 缓存TTL（秒）
+}
+
+// ConfigSourceConfig 配置源配置
+type ConfigSourceConfig struct {
+	Type       string            `yaml:"type" json:"type"`                               // 配置源类型: file/env/consul/etcd/nacos
+	Enabled    bool              `yaml:"enabled" json:"enabled"`                         // 是否启用
+	Priority   int               `yaml:"priority" json:"priority"`                       // 优先级（数字越小优先级越高）
+	Endpoint   string            `yaml:"endpoint" json:"endpoint"`                       // 服务端点（配置中心）
+	Namespace  string            `yaml:"namespace" json:"namespace"`                     // 命名空间
+	DataID     string            `yaml:"data_id" json:"data_id"`                         // 配置ID
+	Group      string            `yaml:"group" json:"group"`                             // 配置分组
+	AuthType   string            `yaml:"auth_type" json:"auth_type"`                     // 认证类型: none/token/basic
+	AuthToken  string            `yaml:"auth_token" json:"auth_token"`                   // 认证Token
+	Username   string            `yaml:"username" json:"username"`                       // 用户名
+	Password   string            `yaml:"password" json:"password"`                       // 密码
+	Timeout    int               `yaml:"timeout" json:"timeout"`                         // 超时（秒）
+	RetryCount int               `yaml:"retry_count" json:"retry_count"`                 // 重试次数
+	Params     map[string]string `yaml:"params" json:"params"`                           // 额外参数
+}
+
+// HotReloadSettingsConfig 热更新设置配置
+type HotReloadSettingsConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`                           // 启用热更新
+	AutoApply         bool     `yaml:"auto_apply" json:"auto_apply"`                     // 自动应用
+	CheckInterval     int      `yaml:"check_interval" json:"check_interval"`             // 检查间隔（秒）
+	DebounceInterval  int      `yaml:"debounce_interval" json:"debounce_interval"`       // 防抖间隔（毫秒）
+	RequireConfirm    bool     `yaml:"require_confirm" json:"require_confirm"`           // 需要确认
+	RollbackOnError   bool     `yaml:"rollback_on_error" json:"rollback_on_error"`       // 错误时回滚
+	MaxRollbackDepth  int      `yaml:"max_rollback_depth" json:"max_rollback_depth"`     // 最大回滚深度
+	NotifyOnChange    bool     `yaml:"notify_on_change" json:"notify_on_change"`         // 变更时通知
+	NotifyChannels    []string `yaml:"notify_channels" json:"notify_channels"`           // 通知渠道
+}
+
+// ============================================================
+// 错误恢复与优雅关闭配置模型
+// ============================================================
+
+// RecoveryConfig 错误恢复配置
+type RecoveryConfig struct {
+	Enabled              bool                     `yaml:"enabled" json:"enabled"`                           // 启用错误恢复
+	PanicRecovery        PanicRecoveryConfig      `yaml:"panic_recovery" json:"panic_recovery"`             // Panic恢复配置
+	GracefulShutdown     GracefulShutdownConfig   `yaml:"graceful_shutdown" json:"graceful_shutdown"`       // 优雅关闭配置
+	CircuitBreaker       CircuitBreakerRecoveryConfig `yaml:"circuit_breaker" json:"circuit_breaker"`       // 熔断恢复配置
+	ResourceLimit        ResourceLimitConfig      `yaml:"resource_limit" json:"resource_limit"`             // 资源限制配置
+	HealthMonitor        HealthMonitorConfig      `yaml:"health_monitor" json:"health_monitor"`             // 健康监控配置
+}
+
+// PanicRecoveryConfig Panic恢复配置
+type PanicRecoveryConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`                           // 启用Panic恢复
+	LogStackTrace     bool     `yaml:"log_stack_trace" json:"log_stack_trace"`           // 记录堆栈
+	NotifyOnPanic     bool     `yaml:"notify_on_panic" json:"notify_on_panic"`           // Panic时通知
+	MaxRecoversPerMin int      `yaml:"max_recovers_per_min" json:"max_recovers_per_min"` // 每分钟最大恢复次数
+	ExitAfterPanics   int      `yaml:"exit_after_panics" json:"exit_after_panics"`       // 连续Panic多少次后退出
+	RestartDelaySec   int      `yaml:"restart_delay_sec" json:"restart_delay_sec"`       // 重启延迟（秒）
+}
+
+// GracefulShutdownConfig 优雅关闭配置
+type GracefulShutdownConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`                           // 启用优雅关闭
+	TimeoutSec        int      `yaml:"timeout_sec" json:"timeout_sec"`                   // 关闭超时（秒）
+	DrainTimeoutSec   int      `yaml:"drain_timeout_sec" json:"drain_timeout_sec"`       // 排空超时（秒）
+	CleanupTimeoutSec int      `yaml:"cleanup_timeout_sec" json:"cleanup_timeout_sec"`   // 清理超时（秒）
+	ForceExitAfter    int      `yaml:"force_exit_after" json:"force_exit_after"`         // 强制退出时间（秒）
+	ShutdownHooks     []string `yaml:"shutdown_hooks" json:"shutdown_hooks"`             // 关闭钩子顺序
+}
+
+// CircuitBreakerRecoveryConfig 熔断恢复配置
+type CircuitBreakerRecoveryConfig struct {
+	Enabled           bool    `yaml:"enabled" json:"enabled"`                           // 启用熔断
+	FailureThreshold  int     `yaml:"failure_threshold" json:"failure_threshold"`       // 失败阈值
+	SuccessThreshold  int     `yaml:"success_threshold" json:"success_threshold"`       // 成功阈值
+	TimeoutSec        int     `yaml:"timeout_sec" json:"timeout_sec"`                   // 超时（秒）
+	HalfOpenMaxCalls  int     `yaml:"half_open_max_calls" json:"half_open_max_calls"`   // 半开最大调用数
+	AdaptiveEnabled   bool    `yaml:"adaptive_enabled" json:"adaptive_enabled"`         // 自适应熔断
+}
+
+// ResourceLimitConfig 资源限制配置
+type ResourceLimitConfig struct {
+	Enabled           bool    `yaml:"enabled" json:"enabled"`                           // 启用资源限制
+	MaxGoroutines     int     `yaml:"max_goroutines" json:"max_goroutines"`             // 最大协程数
+	MaxMemoryMB       int64   `yaml:"max_memory_mb" json:"max_memory_mb"`               // 最大内存 (MB)
+	MaxCPUPercent     float64 `yaml:"max_cpu_percent" json:"max_cpu_percent"`           // 最大CPU百分比
+	MaxFDCount        int     `yaml:"max_fd_count" json:"max_fd_count"`                 // 最大文件描述符数
+	ActionOnLimit     string  `yaml:"action_on_limit" json:"action_on_limit"`           // 超限动作: throttle/block/kill
+	ThrottlePercent   float64 `yaml:"throttle_percent" json:"throttle_percent"`         // 节流百分比
+}
+
+// HealthMonitorConfig 健康监控配置
+type HealthMonitorConfig struct {
+	Enabled           bool    `yaml:"enabled" json:"enabled"`                           // 启用健康监控
+	CheckIntervalSec  int     `yaml:"check_interval_sec" json:"check_interval_sec"`     // 检查间隔（秒）
+	GoroutineThreshold int    `yaml:"goroutine_threshold" json:"goroutine_threshold"`   // 协程数阈值
+	MemoryThresholdMB int64   `yaml:"memory_threshold_mb" json:"memory_threshold_mb"`   // 内存阈值 (MB)
+	GCThresholdMS     int     `yaml:"gc_threshold_ms" json:"gc_threshold_ms"`           // GC耗时阈值（毫秒）
+	AutoRecover       bool    `yaml:"auto_recover" json:"auto_recover"`                 // 自动恢复
+	RecoverActions    []string `yaml:"recover_actions" json:"recover_actions"`          // 恢复动作
 }

@@ -1936,3 +1936,47 @@ rbac:
         cooldown: 300
         repeat_interval: 3600
         max_per_hour: 10
+
+# ============================================================
+# 外部系统集成配置
+# 华为云 / CMDB / 一体化运维平台对接
+# ============================================================
+integration:
+  # 华为云对接配置
+  huaweicloud:
+    enabled: false                  # 默认禁用，需手动启用
+    region: "cn-north-4"           # 华为云区域
+    access_key: ""                 # 访问密钥 (AK)
+    secret_key: ""                 # 密钥 (SK)
+    project_id: ""                 # 项目ID
+    endpoint: "https://ces.cn-north-4.myhuaweicloud.com"  # CES服务端点
+    iam_endpoint: "https://iam.cn-north-4.myhuaweicloud.com"  # IAM端点
+    timeout: 30                     # 请求超时（秒）
+    retry_count: 3                  # 重试次数
+    sync_interval: 60               # 同步间隔（秒）
+
+  # CMDB对接配置
+  cmdb:
+    enabled: false                  # 默认禁用
+    endpoint: "http://cmdb.example.com/api"  # CMDB API端点
+    api_key: ""                     # API密钥
+    api_secret: ""                  # API密钥
+    timeout: 30                     # 请求超时（秒）
+    sync_interval: 300              # 同步间隔（秒）
+    model_mapping:                  # 模型映射
+      server: "host"
+      database: "db_instance"
+      network: "network_device"
+      container: "container"
+
+  # 一体化运维平台对接配置
+  ops_platform:
+    enabled: false                  # 默认禁用
+    endpoint: "http://ops-platform.example.com/api"  # 运维平台端点
+    app_key: ""                     # 应用密钥
+    app_secret: ""                  # 应用密钥
+    timeout: 30                     # 请求超时（秒）
+    sync_interval: 60               # 同步间隔（秒）
+    event_webhook: "/v1/events"     # 事件接收Webhook
+    metric_webhook: "/v1/metrics"   # 指标接收Webhook
+    alert_webhook: "/v1/alerts"     # 告警接收Webhook

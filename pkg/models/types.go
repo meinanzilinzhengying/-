@@ -1461,3 +1461,52 @@ type PartitionDef struct {
 	StartKey  string `yaml:"start_key" json:"start_key"`                         // 起始键
 	EndKey    string `yaml:"end_key" json:"end_key"`                             // 结束键
 }
+
+// ============================================================
+// 外部系统集成配置模型
+// ============================================================
+
+// IntegrationConfig 外部系统集成配置
+type IntegrationConfig struct {
+	HuaweiCloud   HuaweiCloudConfig   `yaml:"huaweicloud" json:"huaweicloud"`     // 华为云配置
+	CMDB          CMDBConfig          `yaml:"cmdb" json:"cmdb"`                   // CMDB配置
+	OpsPlatform   OpsPlatformConfig   `yaml:"ops_platform" json:"ops_platform"`   // 一体化运维平台配置
+}
+
+// HuaweiCloudConfig 华为云配置
+type HuaweiCloudConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`                           // 启用华为云对接
+	Region       string `yaml:"region" json:"region"`                             // 区域
+	AccessKey    string `yaml:"access_key" json:"access_key"`                     // 访问密钥
+	SecretKey    string `yaml:"secret_key" json:"secret_key"`                     // 密钥
+	ProjectID    string `yaml:"project_id" json:"project_id"`                     // 项目ID
+	Endpoint     string `yaml:"endpoint" json:"endpoint"`                         // 服务端点
+	IAMEndpoint  string `yaml:"iam_endpoint" json:"iam_endpoint"`                 // IAM端点
+	Timeout      int    `yaml:"timeout" json:"timeout"`                           // 超时（秒）
+	RetryCount   int    `yaml:"retry_count" json:"retry_count"`                   // 重试次数
+	SyncInterval int    `yaml:"sync_interval" json:"sync_interval"`               // 同步间隔（秒）
+}
+
+// CMDBConfig CMDB配置
+type CMDBConfig struct {
+	Enabled      bool              `yaml:"enabled" json:"enabled"`                 // 启用CMDB对接
+	Endpoint     string            `yaml:"endpoint" json:"endpoint"`               // 服务端点
+	APIKey       string            `yaml:"api_key" json:"api_key"`                 // API密钥
+	APISecret    string            `yaml:"api_secret" json:"api_secret"`           // API密钥
+	Timeout      int               `yaml:"timeout" json:"timeout"`                 // 超时（秒）
+	SyncInterval int               `yaml:"sync_interval" json:"sync_interval"`     // 同步间隔（秒）
+	ModelMapping map[string]string `yaml:"model_mapping" json:"model_mapping"`     // 模型映射
+}
+
+// OpsPlatformConfig 一体化运维平台配置
+type OpsPlatformConfig struct {
+	Enabled       bool   `yaml:"enabled" json:"enabled"`                           // 启用运维平台对接
+	Endpoint      string `yaml:"endpoint" json:"endpoint"`                         // 服务端点
+	AppKey        string `yaml:"app_key" json:"app_key"`                           // 应用密钥
+	AppSecret     string `yaml:"app_secret" json:"app_secret"`                     // 应用密钥
+	Timeout       int    `yaml:"timeout" json:"timeout"`                           // 超时（秒）
+	SyncInterval  int    `yaml:"sync_interval" json:"sync_interval"`               // 同步间隔（秒）
+	EventWebhook  string `yaml:"event_webhook" json:"event_webhook"`               // 事件Webhook
+	MetricWebhook string `yaml:"metric_webhook" json:"metric_webhook"`             // 指标Webhook
+	AlertWebhook  string `yaml:"alert_webhook" json:"alert_webhook"`               // 告警Webhook
+}

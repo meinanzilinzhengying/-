@@ -1292,3 +1292,22 @@ retention:
       max_size_gb: 5
       archive_enabled: true
       compress: true
+
+# ============================================================
+# 数据压缩配置
+# 结构化数据/日志压缩，显著降低存储成本
+# ============================================================
+compression:
+  enabled: true                   # 启用压缩（默认开启）
+  algorithm: "gzip"              # 压缩算法: gzip/lz4/zstd
+  level: 6                        # 压缩级别 1-9 (6=默认平衡)
+  block_size: 262144              # 块大小 (256KB)
+  min_size_to_compress: 1024      # 最小压缩大小 (1KB)
+  threshold_ratio: 0.8            # 压缩率阈值，低于80%保留压缩结果
+
+  # 分类压缩开关
+  compress_logs: true             # 压缩日志
+  compress_metrics: true          # 压缩指标
+  compress_traces: true           # 压缩链路
+  compress_profiles: true         # 压缩剖析
+  compress_pcap: false           # 不压缩抓包（PCAP已是压缩格式）

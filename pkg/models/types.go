@@ -1279,3 +1279,22 @@ type RetentionCategoryConfig struct {
 	ArchiveEnabled bool   `yaml:"archive_enabled" json:"archive_enabled"`           // 是否归档
 	Compress       bool   `yaml:"compress" json:"compress"`                         // 是否压缩
 }
+
+// ============================================================
+// 数据压缩配置模型
+// ============================================================
+
+// CompressionConfig 数据压缩配置
+type CompressionConfig struct {
+	Enabled           bool             `yaml:"enabled" json:"enabled"`                             // 启用压缩
+	Algorithm         string           `yaml:"algorithm" json:"algorithm"`                       // 压缩算法: gzip/lz4/zstd
+	Level             int              `yaml:"level" json:"level"`                               // 压缩级别 1-9
+	BlockSize         int              `yaml:"block_size" json:"block_size"`                     // 块大小 (bytes)
+	MinSizeToCompress int64            `yaml:"min_size_to_compress" json:"min_size_to_compress"` // 最小压缩大小 (bytes)
+	ThresholdRatio    float64          `yaml:"threshold_ratio" json:"threshold_ratio"`         // 压缩率阈值，低于此值不保留压缩
+	CompressLogs      bool             `yaml:"compress_logs" json:"compress_logs"`             // 压缩日志
+	CompressMetrics   bool             `yaml:"compress_metrics" json:"compress_metrics"`         // 压缩指标
+	CompressTraces    bool             `yaml:"compress_traces" json:"compress_traces"`           // 压缩链路
+	CompressProfiles  bool             `yaml:"compress_profiles" json:"compress_profiles"`       // 压缩剖析
+	CompressPCAP      bool             `yaml:"compress_pcap" json:"compress_pcap"`             // 压缩抓包
+}

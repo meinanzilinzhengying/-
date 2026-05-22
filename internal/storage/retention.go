@@ -28,18 +28,22 @@ type RetentionPolicy struct {
 	ArchiveEnabled   bool          // 是否归档
 	ArchivePath      string        // 归档路径
 	ArchiveRetention time.Duration // 归档保留时间
+	CompressionEnabled bool        // 是否启用压缩
+	CompressionLevel int           // 压缩级别
 }
 
 // DefaultRetentionPolicy 默认留存策略 (60天)
 func DefaultRetentionPolicy() *RetentionPolicy {
 	return &RetentionPolicy{
-		MaxAge:           60 * 24 * time.Hour, // 60天
-		MaxSize:          100 * 1024 * 1024 * 1024, // 100GB
-		MinFreeSpace:     10 * 1024 * 1024 * 1024,  // 10GB
-		CleanupInterval:  1 * time.Hour,
-		ArchiveEnabled:   true,
-		ArchivePath:      "/var/lib/cloud-flow-agent/archive",
-		ArchiveRetention: 180 * 24 * time.Hour, // 180天归档保留
+		MaxAge:             60 * 24 * time.Hour, // 60天
+		MaxSize:            100 * 1024 * 1024 * 1024, // 100GB
+		MinFreeSpace:       10 * 1024 * 1024 * 1024,  // 10GB
+		CleanupInterval:    1 * time.Hour,
+		ArchiveEnabled:     true,
+		ArchivePath:        "/var/lib/cloud-flow-agent/archive",
+		ArchiveRetention:   180 * 24 * time.Hour, // 180天归档保留
+		CompressionEnabled: true,
+		CompressionLevel:   6,
 	}
 }
 
@@ -458,7 +462,7 @@ func (rm *RetentionManager) calculateDirSize(dir string) int64 {
 	return total
 }
 
-// archiveFile 归档文件
+// archiveFile 归档文件（支持压缩）
 func (rm *RetentionManager) archiveFile(file *FileInfo, config *CategoryConfig) (int64, error) {
 	// 创建归档目录
 	archiveDir := filepath.Join(rm.policy.ArchivePath, string(config.Category))
@@ -488,7 +492,12 @@ func (rm *RetentionManager) archiveFile(file *FileInfo, config *CategoryConfig) 
 		counter++
 	}
 
-	// 移动文件到归档
+	// 如果需要压缩
+	if config.Compress && rm.policy.CompressionEnabled {
+		return rm.archiveWithCompression(file, archivePath)
+	}
+
+	// 移动文件到归档（无压缩）
 	if err := os.Rename(file.Path, archivePath); err != nil {
 		// 如果跨设备移动失败，尝试复制后删除
 		if err := rm.copyAndRemove(file.Path, archivePath); err != nil {
@@ -496,13 +505,79 @@ func (rm *RetentionManager) archiveFile(file *FileInfo, config *CategoryConfig) 
 		}
 	}
 
-	// 如果需要压缩
-	if config.Compress {
-		// TODO: 实现压缩逻辑
-		// 可以使用 gzip 或 zstd 压缩
+	return file.Size, nil
+}
+
+// archiveWithCompression 压缩归档文件
+func (rm *RetentionManager) archiveWithCompression(file *FileInfo, archivePath string) (int64, error) {
+	// 添加压缩扩展名
+	compressedPath := archivePath + ".gz"
+
+	// 如果压缩文件已存在，添加序号
+	counter := 1
+	basePath := compressedPath
+	for {
+		if _, err := os.Stat(compressedPath); os.IsNotExist(err) {
+			break
+		}
+		compressedPath = fmt.Sprintf("%s_%d.gz", strings.TrimSuffix(basePath, ".gz"), counter)
+		counter++
 	}
 
-	return file.Size, nil
+	// 创建压缩配置
+	compConfig := &CompressionConfig{
+		Enabled: true,
+		Level:   CompressionLevel(rm.policy.CompressionLevel),
+	}
+
+	// 读取并压缩文件
+	data, err := os.ReadFile(file.Path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// 创建压缩器
+	factory := NewCompressorFactory(compConfig)
+	compressor := factory.GetCompressor()
+
+	// 压缩数据
+	compressed, err := compressor.Compress(data)
+	if err != nil {
+		logger.Warnf("Compression failed for %s, storing uncompressed: %v", file.Path, err)
+		// 压缩失败则存储原文件
+		if err := os.Rename(file.Path, archivePath); err != nil {
+			return 0, fmt.Errorf("failed to archive uncompressed: %w", err)
+		}
+		return file.Size, nil
+	}
+
+	// 检查压缩率
+	origSize := int64(len(data))
+	compSize := int64(len(compressed))
+	ratio := float64(compSize) / float64(origSize)
+
+	if ratio > 0.8 {
+		// 压缩率太低，存储原文件
+		logger.Debugf("Compression ratio %.2f too low for %s, storing uncompressed", ratio, file.Path)
+		if err := os.Rename(file.Path, archivePath); err != nil {
+			return 0, fmt.Errorf("failed to archive uncompressed: %w", err)
+		}
+		return origSize, nil
+	}
+
+	// 写入压缩文件
+	if err := os.WriteFile(compressedPath, compressed, 0644); err != nil {
+		return 0, fmt.Errorf("failed to write compressed file: %w", err)
+	}
+
+	// 删除原文件
+	if err := os.Remove(file.Path); err != nil {
+		logger.Warnf("Failed to remove original file %s: %v", file.Path, err)
+	}
+
+	logger.Infof("Compressed %s: %d -> %d bytes (%.1f%%)", file.Path, origSize, compSize, ratio*100)
+
+	return compSize, nil
 }
 
 // copyAndRemove 复制文件后删除原文件

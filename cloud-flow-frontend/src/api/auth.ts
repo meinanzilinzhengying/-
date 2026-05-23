@@ -1,4 +1,4 @@
-import { apiRequest, setToken, removeToken, getToken, type ApiResponse } from './index';
+import { apiRequest, setToken, removeToken, getToken, getCSRFToken, type ApiResponse } from './index';
 
 // 解包 ApiResponse，返回 data 字段
 function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
@@ -7,13 +7,14 @@ function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
 
 export const authApi = {
   login: async (username: string, password: string, rememberMe: boolean = false) => {
-    // 预获取 CSRF token（通过 GET 请求让后端设置 csrf_token cookie）
+    // 预获取 CSRF token（通过 GET 请求让后端设置 csrf_token cookie，
+    // 同时从响应头 X-CSRF-Token 获取 token 用于后续请求头提交）
     try {
       await apiRequest('/csrf-token', { method: 'GET' }, 0);
     } catch {
       // 即使失败也继续尝试登录
     }
-    // POST 登录（浏览器自动携带 csrf_token cookie）
+    // POST 登录（自动携带 X-CSRF-Token 头）
     const response = await apiRequest<{ token: string; user: unknown }>('/users/login', {
       method: 'POST',
       body: { username, password },

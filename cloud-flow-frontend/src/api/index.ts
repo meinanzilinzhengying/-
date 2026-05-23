@@ -75,6 +75,27 @@ async function decryptToken(encoded: string): Promise<string | null> {
 // 401 并发请求去重标志位
 let isRedirecting = false;
 
+// CSRF Token 存储（内存中，不持久化）
+let csrfToken: string | null = null;
+
+/** 从响应头获取并存储 CSRF Token */
+export function storeCSRFToken(response: Response): void {
+  const token = response.headers.get('X-CSRF-Token');
+  if (token) {
+    csrfToken = token;
+  }
+}
+
+/** 获取当前 CSRF Token */
+export function getCSRFToken(): string | null {
+  return csrfToken;
+}
+
+/** 清除 CSRF Token */
+export function clearCSRFToken(): void {
+  csrfToken = null;
+}
+
 // 创建 AbortController 工具函数（供组件在卸载时取消请求）
 export const createAbortController = (): AbortController => new AbortController();
 
@@ -181,6 +202,8 @@ export async function apiRequest<T>(
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      // 非 GET 请求自动附加 CSRF Token
+      ...(method !== 'GET' && csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
       ...headers,
     },
     signal: controller.signal,
@@ -192,6 +215,11 @@ export async function apiRequest<T>(
 
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+
+    // 自动从 GET 响应头中存储 CSRF Token
+    if (method === 'GET') {
+      storeCSRFToken(response);
+    }
 
     if (!response.ok) {
       switch (response.status) {

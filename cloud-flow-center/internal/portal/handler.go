@@ -218,6 +218,7 @@ func (s *Server) csrfMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, "Failed to generate CSRF token", http.StatusInternalServerError)
 				return
 			}
+			// 设置 HttpOnly cookie（用于 SameSite 保护，防止跨站请求携带）
 			http.SetCookie(w, &http.Cookie{
 				Name:     "csrf_token",
 				Value:    token,
@@ -227,19 +228,15 @@ func (s *Server) csrfMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				SameSite: http.SameSiteLaxMode,
 				MaxAge:   15 * 60, // 15分钟
 			})
+			// 同时通过响应头返回 token，让前端 JS 读取并在后续请求中通过 X-CSRF-Token 头提交
+			w.Header().Set("X-CSRF-Token", token)
 		} else if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
 			// 对于非 GET 请求，验证 CSRF 令牌
-			// 优先从请求头获取，其次从 cookie 获取（HttpOnly cookie 会自动携带）
+			// 只从请求头或表单获取 token，不再从 cookie 读取（防止绕过）
 			token := r.Header.Get("X-CSRF-Token")
 			if token == "" {
 				// 尝试从表单中获取
 				token = r.FormValue("csrf_token")
-			}
-			if token == "" {
-				// 尝试从 cookie 中获取（HttpOnly cookie 浏览器会自动携带）
-				if csrfCookie, err := r.Cookie("csrf_token"); err == nil {
-					token = csrfCookie.Value
-				}
 			}
 			if !s.validateCSRFToken(token) {
 				http.Error(w, "CSRF token validation failed", http.StatusForbidden)

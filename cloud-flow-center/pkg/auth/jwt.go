@@ -37,7 +37,15 @@ type Claims struct {
 // JWTManager JWT管理器
 type JWTManager struct {
 	secretKey string
+	issuer    string
+	audience  []string
 }
+
+// JWT 常量
+const (
+	defaultIssuer   = "cloud-flow-center"
+	defaultAudience = "cloud-flow-portal"
+)
 
 // NewJWTManager 创建JWT管理器
 func NewJWTManager(secretKey string) *JWTManager {
@@ -51,7 +59,11 @@ func NewJWTManager(secretKey string) *JWTManager {
 		log.Printf("[WARNING] JWT secret_key 未配置，已自动生成随机密钥。服务重启后所有已签发的 token 将失效，" +
 			"所有用户需要重新登录。建议通过环境变量 CLOUD_FLOW_JWT_SECRET 或配置文件 center.jwt.secret_key 设置固定密钥。")
 	}
-	return &JWTManager{secretKey: secretKey}
+	return &JWTManager{
+		secretKey: secretKey,
+		issuer:    defaultIssuer,
+		audience:  []string{defaultAudience},
+	}
 }
 
 // GenerateToken 生成JWT令牌
@@ -60,9 +72,12 @@ func (m *JWTManager) GenerateToken(userID, role string, duration time.Duration) 
 		UserID: userID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    m.issuer,
+			Subject:   userID,
+			Audience:  jwt.ClaimStrings(m.audience),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Subject:   userID,
+			NotBefore: jwt.NewNumericDate(time.Now().Add(-5 * time.Second)), // 允许 5 秒时钟偏差
 		},
 	}
 
@@ -81,6 +96,8 @@ func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
 			}
 			return []byte(m.secretKey), nil
 		},
+		jwt.WithIssuer(m.issuer),
+		jwt.WithAudience(m.audience...),
 	)
 
 	if err != nil {

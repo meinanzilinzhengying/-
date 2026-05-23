@@ -1881,6 +1881,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			s.writeJSONWithStatus(w, r, http.StatusTooManyRequests, map[string]interface{}{"error": "Login temporarily blocked due to too many failed attempts. Please try again later."})
 			return
 		}
+		// 记录当前检查时的失败计数，用于后续 CAS 式更新
+		checkCount := 0
+		if exists {
+			checkCount = failureInfo.count
+		}
 		s.loginFailuresMutex.Unlock()
 	}
 
@@ -1902,13 +1907,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warnf("Redis 增加登录失败计数失败: %v", err)
 			}
 		} else {
-			// 在同一锁区间内检查并增加计数，避免竞态条件
+			// CAS 式更新：只在计数未变化时才更新，防止竞态条件
 			s.loginFailuresMutex.Lock()
 			info, ok := s.loginFailures[loginData.Username]
-			if ok && time.Since(info.lastFailure) <= 30*time.Minute {
+			if ok && time.Since(info.lastFailure) <= 30*time.Minute && info.count == checkCount {
 				info.count++
 				info.lastFailure = time.Now()
-			} else {
+			} else if !ok || time.Since(info.lastFailure) > 30*time.Minute {
 				info = loginFailureInfo{count: 1, lastFailure: time.Now()}
 			}
 			s.loginFailures[loginData.Username] = info

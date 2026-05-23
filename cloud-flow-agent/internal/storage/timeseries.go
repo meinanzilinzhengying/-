@@ -357,9 +357,9 @@ func (s *TimeSeriesStore) writeChunk(dt DataType, points []DataPoint) error {
 		}
 		s.shards[shardID] = shard
 	}
-	s.mu.Unlock()
-	
+	// 在持有主锁的情况下锁定 shard，防止在解锁后 shard 被其他 goroutine 删除
 	shard.mu.Lock()
+	s.mu.Unlock()
 	defer shard.mu.Unlock()
 	
 	// 创建数据块

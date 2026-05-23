@@ -10,6 +10,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -986,11 +987,11 @@ func getFloat64(b []byte) float64 {
 }
 
 func floatToUint64(f float64) uint64 {
-	return *(*uint64)(nil)
+	return math.Float64bits(f)
 }
 
 func uint64ToFloat(u uint64) float64 {
-	return *(*float64)(nil)
+	return math.Float64frombits(u)
 }
 
 func putInt64(b []byte, v int64) {

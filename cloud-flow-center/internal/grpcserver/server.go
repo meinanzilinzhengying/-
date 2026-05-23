@@ -149,12 +149,15 @@ func BuildServerOpts(tlsCfg config.TLSConfig, rateLimit config.RateLimitConfig, 
 		opts = append(opts, grpc.UnaryInterceptor(combinedInterceptor))
 		log.Info("Center gRPC 服务端启用 Trace ID、API Key 认证和速率限制")
 	} else {
+		// 未配置 API Key 时发出安全警告
+		log.Warn("[安全警告] Center gRPC 服务端未配置 API Key，所有 gRPC 请求将无需认证即可访问！")
+		log.Warn("[安全建议] 生产环境请通过环境变量 CLOUD_FLOW_CENTER_API_KEY 或配置文件设置 API Key")
 		// 组合 Trace ID 和限流拦截器
 		combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 			return runWithCommonInterceptors(ctx, req, info, handler)
 		}
 		opts = append(opts, grpc.UnaryInterceptor(combinedInterceptor))
-		log.Info("Center gRPC 服务端启用 Trace ID 和速率限制")
+		log.Info("Center gRPC 服务端启用 Trace ID 和速率限制（未启用 API Key 认证）")
 	}
 	
 	if !tlsCfg.Enabled {

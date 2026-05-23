@@ -1053,16 +1053,16 @@ int bpf_loader_collect_tcp_metrics(bpf_loader_ctx_t *ctx,
         return BPF_LOADER_ERR_NOT_INITIALIZED;
     }
 
-    /* 查找 tcp_stats_map */
-    map = bpf_object__find_map_by_name(subsys->obj, "tcp_stats_map");
+    /* 查找 tcp_flow_stats_map */
+    map = bpf_object__find_map_by_name(subsys->obj, "tcp_flow_stats_map");
     if (!map) {
-        _log_error(ctx, "tcp_stats_map not found");
+        _log_error(ctx, "tcp_flow_stats_map not found");
         return BPF_LOADER_ERR_MAP_OP;
     }
 
     map_fd = bpf_map__fd(map);
     if (map_fd < 0) {
-        _log_error(ctx, "failed to get tcp_stats_map FD");
+        _log_error(ctx, "failed to get tcp_flow_stats_map FD");
         return BPF_LOADER_ERR_MAP_OP;
     }
 
@@ -1072,12 +1072,12 @@ int bpf_loader_collect_tcp_metrics(bpf_loader_ctx_t *ctx,
         if (ret != 0) {
             if (errno == ENOENT)
                 continue;
-            _log_warn(ctx, "failed to lookup tcp_stats_map entry: %s",
+            _log_warn(ctx, "failed to lookup tcp_flow_stats_map entry: %s",
                       strerror(errno));
             continue;
         }
 
-        tcp_stats_entry_t entry;
+        tcp_flow_stats_entry_t entry;
         memcpy(&entry.key, &key, sizeof(key));
         memcpy(&entry.value, &value, sizeof(value));
 

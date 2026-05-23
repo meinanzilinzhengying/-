@@ -170,20 +170,12 @@ typedef struct {
 } network_map_entry_t;
 
 /*
- * tcp_stats_entry - TCP 统计 Map 遍历回调数据
+ * tcp_flow_stats_entry - TCP 流统计 Map 遍历回调数据（五元组+进程维度聚合）
  */
 typedef struct {
     tcp_conn_key_t key;
-    tcp_stats_t value;
-} tcp_stats_entry_t;
-
-/*
- * tcp_latency_entry - TCP 时延 Map 遍历回调数据
- */
-typedef struct {
-    tcp_conn_key_t key;
-    tcp_latency_t value;
-} tcp_latency_entry_t;
+    tcp_flow_stats_t value;
+} tcp_flow_stats_entry_t;
 
 /*
  * map_iterate_callback - Map 遍历回调函数类型

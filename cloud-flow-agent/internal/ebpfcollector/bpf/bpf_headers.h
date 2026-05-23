@@ -275,6 +275,7 @@ typedef struct __attribute__((packed)) {
  * tcp_conn_key_t - TCP 连接标识键
  *
  * 用于唯一标识一个 TCP 连接。与 Go 端 TcpConnKey 结构体对应。
+ * 总大小 32 字节（含 comm[16]）。
  */
 typedef struct {
     __u32 saddr;       /* 源 IP 地址（主机字节序） */
@@ -282,38 +283,30 @@ typedef struct {
     __u16 sport;       /* 源端口号（主机字节序） */
     __u16 dport;       /* 目的端口号（主机字节序） */
     __u32 pid;         /* 进程 ID */
+    __u8  comm[16];    /* 进程名（以 \0 结尾） */
 } tcp_conn_key_t;
 
 /*
- * tcp_latency_t - TCP 连接时延数据
+ * tcp_flow_stats_t - TCP 流统一统计指标
  *
- * 跟踪 TCP 三次握手各阶段的时间戳，用于计算建连时延。
+ * 合并了原 tcp_latency_t 和 tcp_stats_t 的所有字段，
+ * 与 Go 端 TcpFlowStats 结构体对应。总大小 104 字节。
  */
 typedef struct {
-    __u64 syn_sent_ns;      /* SYN 发送时间（纳秒） */
-    __u64 synack_recv_ns;   /* SYN-ACK 接收时间（纳秒） */
-    __u64 established_ns;   /* 连接建立完成时间（纳秒） */
-    __u64 latency_ns;       /* 建连时延 = established_ns - syn_sent_ns（纳秒） */
-    __u8  complete;         /* 是否完成测量：0=进行中, 1=已完成 */
-    __u8  padding[7];       /* 对齐填充，确保结构体大小为 40 字节 */
-} tcp_latency_t;
-
-/*
- * tcp_stats_t - TCP 连接级统计指标
- *
- * 按连接维度统计的 TCP 性能指标。
- */
-typedef struct {
-    __u64 retrans_count;        /* 重传次数 */
-    __u64 zero_window_count;    /* 零窗口通告事件次数 */
-    __u64 queue_overflow_count; /* 队列溢出次数 */
-    __u64 conn_fail_count;      /* 连接失败次数 */
-    __u64 bytes_sent;           /* 发送字节数 */
-    __u64 bytes_recv;           /* 接收字节数 */
-    __u64 packets_sent;         /* 发送包数 */
-    __u64 packets_recv;         /* 接收包数 */
-    __u64 last_update;          /* 最后更新时间戳（纳秒） */
-} tcp_stats_t;
+    __u64 connect_latency_ns;     /* 建连时延（纳秒） */
+    __u64 syn_sent_ns;            /* SYN 发送时间（纳秒） */
+    __u8  connect_complete;       /* 是否完成建连：0=进行中, 1=已完成 */
+    __u8  padding1[7];            /* 对齐填充 */
+    __u64 retrans_count;          /* 重传次数 */
+    __u64 zero_window_count;      /* 零窗口通告事件次数 */
+    __u64 queue_overflow_count;   /* 队列溢出次数 */
+    __u64 conn_fail_count;        /* 连接失败次数 */
+    __u64 bytes_sent;             /* 发送字节数 */
+    __u64 bytes_recv;             /* 接收字节数 */
+    __u64 packets_sent;           /* 发送包数 */
+    __u64 packets_recv;           /* 接收包数 */
+    __u64 last_update;            /* 最后更新时间戳（纳秒） */
+} tcp_flow_stats_t;
 
 /*
  * global_tcp_metrics_t - 全局 TCP 指标汇总
@@ -469,14 +462,11 @@ typedef struct {
 /* flow_key_t 必须为 12 字节（与 Go 端 bpfKeySize=12 一致） */
 _STATIC_ASSERT(sizeof(flow_key_t) == 12, flow_key_must_be_12_bytes);
 
-/* tcp_conn_key_t 必须为 16 字节 */
-_STATIC_ASSERT(sizeof(tcp_conn_key_t) == 16, tcp_conn_key_must_be_16_bytes);
+/* tcp_conn_key_t 必须为 32 字节 */
+_STATIC_ASSERT(sizeof(tcp_conn_key_t) == 32, tcp_conn_key_must_be_32_bytes);
 
-/* tcp_latency_t 必须为 40 字节 */
-_STATIC_ASSERT(sizeof(tcp_latency_t) == 40, tcp_latency_must_be_40_bytes);
-
-/* tcp_stats_t 必须为 80 字节 */
-_STATIC_ASSERT(sizeof(tcp_stats_t) == 80, tcp_stats_must_be_80_bytes);
+/* tcp_flow_stats_t 必须为 104 字节 */
+_STATIC_ASSERT(sizeof(tcp_flow_stats_t) == 104, tcp_flow_stats_must_be_104_bytes);
 
 /* global_tcp_metrics_t 必须为 80 字节 */
 _STATIC_ASSERT(sizeof(global_tcp_metrics_t) == 80, global_tcp_metrics_must_be_80_bytes);

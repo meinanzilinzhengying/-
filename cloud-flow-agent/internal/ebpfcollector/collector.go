@@ -4,12 +4,14 @@
 package ebpfcollector
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -577,135 +579,57 @@ func (c *Collector) collectData() []*edge.MetricData {
 func (c *Collector) collectTCPMetrics(now int64) []*edge.MetricData {
 	var metrics []*edge.MetricData
 
-	// 1. 采集全局TCP指标
+	// 阶段 1：遍历 tcp_flow_stats_map，为每个条目生成一条 MetricData
+	flowIter := c.tcpMetricsObjs.IterateTcpFlowStats()
+	var flowKey bpf.TcpConnKey
+	var flowStats bpf.TcpFlowStats
+	for flowIter.Next(&flowKey, &flowStats) {
+		metric := &edge.MetricData{
+			Timestamp: now,
+			SrcIp:     intToIP(flowKey.Saddr).String(),
+			DstIp:     intToIP(flowKey.Daddr).String(),
+			SrcPort:   int32(flowKey.Sport),
+			DstPort:   int32(flowKey.Dport),
+			Protocol:  "tcp",
+			Bytes:     int64(flowStats.BytesSent),
+			Packets:   int64(flowStats.PacketsSent),
+			Latency:   int64(flowStats.ConnectLatencyNs),
+			Tags: map[string]string{
+				"metric_type":         "tcp_flow_stats",
+				"pid":                 strconv.FormatUint(uint64(flowKey.Pid), 10),
+				"comm":                string(bytes.TrimRight(flowKey.Comm[:], "\x00")),
+				"retrans_count":       strconv.FormatUint(flowStats.RetransCount, 10),
+				"zero_window_count":   strconv.FormatUint(flowStats.ZeroWindowCount, 10),
+				"queue_overflow_count": strconv.FormatUint(flowStats.QueueOverflowCount, 10),
+				"conn_fail_count":     strconv.FormatUint(flowStats.ConnFailCount, 10),
+				"bytes_recv":          strconv.FormatUint(flowStats.BytesRecv, 10),
+				"packets_recv":        strconv.FormatUint(flowStats.PacketsRecv, 10),
+				"connect_complete":    strconv.FormatUint(uint64(flowStats.ConnectComplete), 10),
+			},
+		}
+		metrics = append(metrics, metric)
+
+		// 遍历后删除已读取的条目，避免重复采集
+		_ = c.tcpMetricsObjs.TcpFlowStatsMap.Delete(&flowKey)
+	}
+
+	// 阶段 2：读取 global_tcp_metrics_map 全局汇总
 	globalMetrics, err := c.tcpMetricsObjs.GetGlobalTCPMetrics()
 	if err == nil && globalMetrics != nil {
 		metric := &edge.MetricData{
 			Timestamp: now,
 			Protocol:  "tcp_summary",
 			Tags: map[string]string{
-				"metric_type":            "global_tcp_metrics",
-				"total_connections":      fmt.Sprintf("%d", globalMetrics.TotalConnections),
-				"failed_connections":     fmt.Sprintf("%d", globalMetrics.FailedConnections),
-				"total_retrans":          fmt.Sprintf("%d", globalMetrics.TotalRetrans),
-				"zero_window_events":     fmt.Sprintf("%d", globalMetrics.ZeroWindowEvents),
-				"queue_overflow_events":  fmt.Sprintf("%d", globalMetrics.QueueOverflowEvents),
-				"avg_latency_ns":         fmt.Sprintf("%d", globalMetrics.AvgLatencyNs),
-				"max_latency_ns":         fmt.Sprintf("%d", globalMetrics.MaxLatencyNs),
-				"min_latency_ns":         fmt.Sprintf("%d", globalMetrics.MinLatencyNs),
-				"latency_samples":        fmt.Sprintf("%d", globalMetrics.LatencySamples),
-			},
-		}
-		metrics = append(metrics, metric)
-	}
-
-	// 2. 采集TCP时延数据
-	latencyIter := c.tcpMetricsObjs.IterateTcpLatency()
-	var latencyKey bpf.TcpConnKey
-	var latencyValue bpf.TcpLatency
-	for latencyIter.Next(&latencyKey, &latencyValue) {
-		if latencyValue.Complete == 1 {
-			metric := &edge.MetricData{
-				Timestamp: now,
-				SrcIp:     intToIP(latencyKey.Saddr).String(),
-				DstIp:     intToIP(latencyKey.Daddr).String(),
-				SrcPort:   int32(latencyKey.Sport),
-				DstPort:   int32(latencyKey.Dport),
-				Protocol:  "tcp",
-				Latency:   int64(latencyValue.LatencyNs),
-				Tags: map[string]string{
-					"metric_type":    "tcp_connect_latency",
-					"latency_us":      fmt.Sprintf("%d", latencyValue.LatencyNs/1000),
-					"syn_sent_ns":     fmt.Sprintf("%d", latencyValue.SynSentNs),
-					"established_ns":   fmt.Sprintf("%d", latencyValue.EstablishedNs),
-					"pid":             fmt.Sprintf("%d", latencyKey.Pid),
-				},
-			}
-			metrics = append(metrics, metric)
-		}
-	}
-
-	// 3. 采集TCP统计指标(重传、零窗口等)
-	statsIter := c.tcpMetricsObjs.IterateTcpStats()
-	var statsKey bpf.TcpConnKey
-	var statsValue bpf.TcpStats
-	for statsIter.Next(&statsKey, &statsValue) {
-		metric := &edge.MetricData{
-			Timestamp: now,
-			SrcIp:     intToIP(statsKey.Saddr).String(),
-			DstIp:     intToIP(statsKey.Daddr).String(),
-			SrcPort:   int32(statsKey.Sport),
-			DstPort:   int32(statsKey.Dport),
-			Protocol:  "tcp",
-			Tags: map[string]string{
-				"metric_type":           "tcp_connection_stats",
-				"retrans_count":         fmt.Sprintf("%d", statsValue.RetransCount),
-				"zero_window_count":     fmt.Sprintf("%d", statsValue.ZeroWindowCount),
-				"queue_overflow_count":  fmt.Sprintf("%d", statsValue.QueueOverflowCount),
-				"conn_fail_count":       fmt.Sprintf("%d", statsValue.ConnFailCount),
-				"bytes_sent":            fmt.Sprintf("%d", statsValue.BytesSent),
-				"bytes_recv":            fmt.Sprintf("%d", statsValue.BytesRecv),
-				"pid":                   fmt.Sprintf("%d", statsKey.Pid),
-			},
-		}
-		metrics = append(metrics, metric)
-	}
-
-	// 4. 采集零窗口事件
-	zwIter := c.tcpMetricsObjs.IterateZeroWindow()
-	var zwKey bpf.TcpConnKey
-	var zwCount uint64
-	for zwIter.Next(&zwKey, &zwCount) {
-		metric := &edge.MetricData{
-			Timestamp: now,
-			SrcIp:     intToIP(zwKey.Saddr).String(),
-			DstIp:     intToIP(zwKey.Daddr).String(),
-			SrcPort:   int32(zwKey.Sport),
-			DstPort:   int32(zwKey.Dport),
-			Protocol:  "tcp",
-			Tags: map[string]string{
-				"metric_type": "zero_window_event",
-				"event_count":  fmt.Sprintf("%d", zwCount),
-				"pid":          fmt.Sprintf("%d", zwKey.Pid),
-			},
-		}
-		metrics = append(metrics, metric)
-	}
-
-	// 5. 采集队列溢出事件
-	qoIter := c.tcpMetricsObjs.IterateQueueOverflow()
-	var qoPort uint16
-	var qoCount uint64
-	for qoIter.Next(&qoPort, &qoCount) {
-		metric := &edge.MetricData{
-			Timestamp: now,
-			DstPort:   int32(qoPort),
-			Protocol:  "tcp",
-			Tags: map[string]string{
-				"metric_type":    "queue_overflow_event",
-				"listen_port":    fmt.Sprintf("%d", qoPort),
-				"overflow_count":  fmt.Sprintf("%d", qoCount),
-			},
-		}
-		metrics = append(metrics, metric)
-	}
-
-	// 6. 采集连接失败事件
-	cfIter := c.tcpMetricsObjs.IterateConnFail()
-	var cfKey bpf.TcpConnKey
-	var cfCount uint64
-	for cfIter.Next(&cfKey, &cfCount) {
-		metric := &edge.MetricData{
-			Timestamp: now,
-			SrcIp:     intToIP(cfKey.Saddr).String(),
-			DstIp:     intToIP(cfKey.Daddr).String(),
-			SrcPort:   int32(cfKey.Sport),
-			DstPort:   int32(cfKey.Dport),
-			Protocol:  "tcp",
-			Tags: map[string]string{
-				"metric_type": "connection_fail_event",
-				"fail_count":  fmt.Sprintf("%d", cfCount),
-				"pid":         fmt.Sprintf("%d", cfKey.Pid),
+				"metric_type":           "global_tcp_metrics",
+				"total_connections":     fmt.Sprintf("%d", globalMetrics.TotalConnections),
+				"failed_connections":    fmt.Sprintf("%d", globalMetrics.FailedConnections),
+				"total_retrans":         fmt.Sprintf("%d", globalMetrics.TotalRetrans),
+				"zero_window_events":    fmt.Sprintf("%d", globalMetrics.ZeroWindowEvents),
+				"queue_overflow_events": fmt.Sprintf("%d", globalMetrics.QueueOverflowEvents),
+				"avg_latency_ns":        fmt.Sprintf("%d", globalMetrics.AvgLatencyNs),
+				"max_latency_ns":        fmt.Sprintf("%d", globalMetrics.MaxLatencyNs),
+				"min_latency_ns":        fmt.Sprintf("%d", globalMetrics.MinLatencyNs),
+				"latency_samples":       fmt.Sprintf("%d", globalMetrics.LatencySamples),
 			},
 		}
 		metrics = append(metrics, metric)

@@ -805,10 +805,15 @@ func parseNetworkEntryFromC(entry *C.network_map_entry_t, now int64) *edge.Metri
 	return parsedMetric
 }
 
-// parseTCPStatsEntryFromC 从 C 的 tcp_stats_entry_t 解析 MetricData
-func parseTCPStatsEntryFromC(entry *C.tcp_stats_entry_t, now int64) *edge.MetricData {
+// parseTCPStatsEntryFromC 从 C 的 tcp_flow_stats_entry_t 解析 MetricData
+// 按五元组+进程维度聚合，所有 TCP 指标统一上报
+func parseTCPStatsEntryFromC(entry *C.tcp_flow_stats_entry_t, now int64) *edge.MetricData {
 	srcIP := intToIP(uint32(entry.key.saddr))
 	dstIP := intToIP(uint32(entry.key.daddr))
+
+	// 提取进程名（C 字符串，以 \x00 结尾）
+	commBytes := C.GoBytes(unsafe.Pointer(&entry.key.comm[0]), 16)
+	comm := strings.TrimRight(string(commBytes), "\x00")
 
 	return &edge.MetricData{
 		Timestamp: now,
@@ -817,15 +822,20 @@ func parseTCPStatsEntryFromC(entry *C.tcp_stats_entry_t, now int64) *edge.Metric
 		SrcPort:   int32(entry.key.sport),
 		DstPort:   int32(entry.key.dport),
 		Protocol:  "tcp",
+		Bytes:     int64(entry.value.bytes_sent),
+		Packets:   int64(entry.value.packets_sent),
+		Latency:   int64(entry.value.connect_latency_ns),
 		Tags: map[string]string{
-			"metric_type":          "tcp_connection_stats",
+			"metric_type":          "tcp_flow_stats",
+			"pid":                  fmt.Sprintf("%d", uint32(entry.key.pid)),
+			"comm":                 comm,
 			"retrans_count":        fmt.Sprintf("%d", uint64(entry.value.retrans_count)),
 			"zero_window_count":    fmt.Sprintf("%d", uint64(entry.value.zero_window_count)),
 			"queue_overflow_count": fmt.Sprintf("%d", uint64(entry.value.queue_overflow_count)),
 			"conn_fail_count":      fmt.Sprintf("%d", uint64(entry.value.conn_fail_count)),
-			"bytes_sent":           fmt.Sprintf("%d", uint64(entry.value.bytes_sent)),
 			"bytes_recv":           fmt.Sprintf("%d", uint64(entry.value.bytes_recv)),
-			"pid":                  fmt.Sprintf("%d", uint32(entry.key.pid)),
+			"packets_recv":         fmt.Sprintf("%d", uint64(entry.value.packets_recv)),
+			"connect_complete":     fmt.Sprintf("%d", uint64(entry.value.connect_complete)),
 		},
 	}
 }

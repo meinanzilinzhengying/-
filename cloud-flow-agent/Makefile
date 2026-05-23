@@ -1,90 +1,89 @@
-# Makefile for cloud-flow-agent
+# Cloud Flow Agent - 跨架构 eBPF 编译 Makefile
+# 支持: x86_64 (内核>=3.10), ARM64 (内核>=4.19.90-24)
+# 芯片: Intel, AMD, 海光C86, 鲲鹏920
 
-# 编译器设置
+# 工具链配置
 CLANG ?= clang
-LLVM_OBJCOPY ?= llvm-objcopy
-GO ?= go
+LLC ?= llc
+ARCH ?= $(shell uname -m)
+BPFTOOL ?= bpftool
 
-# 目标文件
-BPF_TARGET := internal/ebpfcollector/bpf/tc.bpf.o
-BPF_SOURCE := internal/ebpfcollector/bpf/tc.bpf.c
-BINARY := bin/agent
+# 内核头文件路径
+KERN_HEADERS ?= /usr/src/kernels/$(shell uname -r)
 
-# 编译标志
-BPF_CFLAGS := -O2 -g -Wall -Werror -target bpf -c
-GOFLAGS := -ldflags "-s -w"
+# 目标架构映射
+ifeq ($(ARCH),x86_64)
+  BPF_TARGET = x86
+  BPF_ARCH_CFLAGS = -D__TARGET_ARCH_x86
+else ifeq ($(ARCH),aarch64)
+  BPF_TARGET = arm64
+  BPF_ARCH_CFLAGS = -D__TARGET_ARCH_arm64
+endif
 
-# 默认目标
-.PHONY: all ebpf test lint build coverage clean help
+# 通用编译选项
+BPF_CFLAGS = -g -O2 -target bpf \
+  -D__BPF_TRACING__ \
+  $(BPF_ARCH_CFLAGS) \
+  -I$(KERN_HEADERS)/include \
+  -I$(KERN_HEADERS)/arch/$(BPF_TARGET)/include \
+  -I./internal/ebpfcollector/bpf \
+  -Wall
 
-all: ebpf build
+# BPF 源文件
+BPF_SRCS = $(wildcard internal/ebpfcollector/bpf/*.bpf.c)
+BPF_OBJS = $(patsubst %.bpf.c, %.bpf.o, $(BPF_SRCS))
 
-# 编译 eBPF 程序
-ebpf: $(BPF_TARGET)
+# Go 编译选项
+GOFLAGS = -v
+CGO_ENABLED = 1
+ifeq ($(ARCH),aarch64)
+  GOARCH = arm64
+else
+  GOARCH = amd64
+endif
 
-$(BPF_TARGET): $(BPF_SOURCE)
-	@echo "Compiling eBPF program..."
-	@mkdir -p $(dir $@)
-	@$(CLANG) $(BPF_CFLAGS) $< -o $@
-	@echo "eBPF program compiled successfully: $@"
+# 目标
+.PHONY: all bpf build clean help
 
-# 运行测试
-test:
-	@echo "Running tests..."
-	@$(GO) test -race -short ./... -v
-	@echo "Tests completed"
+all: bpf build
 
-# 运行测试并生成覆盖率报告
-coverage:
-	@echo "Running tests with coverage..."
-	@$(GO) test -race -short -coverprofile=coverage.out ./...
-	@$(GO) tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+# 编译所有 BPF 程序
+bpf: $(BPF_OBJS)
 
-# 代码检查
-lint:
-	@echo "Running linter..."
-	@which golangci-lint > /dev/null 2>&1 && golangci-lint run || $(GO) vet ./...
-	@echo "Lint completed"
+%.bpf.o: %.bpf.c
+	@echo "BPF CC $< -> $@"
+	@$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
-# 构建二进制文件
-build:
-	@echo "Building agent binary..."
-	@mkdir -p bin
-	@$(GO) build $(GOFLAGS) -o $(BINARY) ./cmd/
-	@echo "Binary built: $(BINARY)"
+# 编译 Go 程序
+build: bpf
+	@echo "Building agent for $(ARCH)..."
+	CGO_ENABLED=$(CGO_ENABLED) GOARCH=$(GOARCH) go build $(GOFLAGS) -o cloud-flow-agent ./cmd/
 
-# 构建所有平台
-build-all:
-	@echo "Building for all platforms..."
-	@mkdir -p bin
-	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -o bin/agent-linux-amd64 ./cmd/
-	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -o bin/agent-linux-arm64 ./cmd/
-	@echo "Cross-platform build completed"
+# 交叉编译 ARM64
+build-arm64:
+	$(MAKE) ARCH=aarch64 build
+
+# 交叉编译 x86_64
+build-x86_64:
+	$(MAKE) ARCH=x86_64 build
 
 # 清理
 clean:
-	@echo "Cleaning..."
-	@rm -f $(BPF_TARGET)
-	@rm -f $(BINARY)
-	@rm -f bin/*
-	@rm -f coverage.out coverage.html
-	@echo "Clean completed"
+	rm -f $(BPF_OBJS)
+	rm -f cloud-flow-agent
 
-# 帮助信息
+# 帮助
 help:
-	@echo "Makefile for cloud-flow-agent"
+	@echo "Cloud Flow Agent - 跨架构编译"
 	@echo ""
-	@echo "Targets:"
-	@echo "  all       - Compile eBPF and build binary (default)"
-	@echo "  ebpf      - Compile eBPF program"
-	@echo "  test      - Run unit tests"
-	@echo "  coverage  - Run tests with coverage report"
-	@echo "  lint      - Run code linter"
-	@echo "  build     - Build agent binary"
-	@echo "  build-all - Build for all platforms (linux/amd64, linux/arm64)"
-	@echo "  clean     - Clean compiled files"
-	@echo "  help      - Show this help message"
+	@echo "用法:"
+	@echo "  make              - 编译当前架构"
+	@echo "  make build-arm64  - 交叉编译 ARM64"
+	@echo "  make build-x86_64 - 交叉编译 x86_64"
+	@echo "  make bpf          - 仅编译 BPF 程序"
+	@echo "  make clean        - 清理"
 	@echo ""
-	@echo "Usage:"
-	@echo "  make [target]"
+	@echo "变量:"
+	@echo "  CLANG=...         - 指定 clang 路径"
+	@echo "  KERN_HEADERS=...  - 指定内核头文件路径"
+	@echo "  ARCH=...          - 目标架构 (x86_64/aarch64)"

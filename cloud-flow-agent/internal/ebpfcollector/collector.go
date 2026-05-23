@@ -417,6 +417,76 @@ func (c *Collector) Collect() []*edge.MetricData {
 	}
 }
 
+// IsAvailable 检查采集器是否可用
+func (c *Collector) IsAvailable() bool {
+	return c.objs != nil
+}
+
+// IsTCPMetricsAvailable 检查 TCP 指标采集是否可用
+func (c *Collector) IsTCPMetricsAvailable() bool {
+	return c.tcpMetricsObjs != nil
+}
+
+// IsHTTPMetricsAvailable 检查 HTTP 指标采集是否可用
+func (c *Collector) IsHTTPMetricsAvailable() bool {
+	return c.httpMetricsObjs != nil
+}
+
+// EBPFCollectorInterface eBPF 采集器统一接口
+// 支持多种后端实现（libbpf / cilium-ebpf）
+type EBPFCollectorInterface interface {
+	Start()
+	Stop()
+	Collect() []*edge.MetricData
+	IsAvailable() bool
+	IsTCPMetricsAvailable() bool
+	IsHTTPMetricsAvailable() bool
+}
+
+// 确保 Collector 实现接口
+var _ EBPFCollectorInterface = (*Collector)(nil)
+
+// 确保 LibbpfCollector 实现接口（编译时检查）
+var _ EBPFCollectorInterface = (*LibbpfCollector)(nil)
+
+// BackendType eBPF 后端类型
+type BackendType string
+
+const (
+	BackendLibbpf   BackendType = "libbpf"   // libbpf C 后端（推荐，跨架构兼容）
+	BackendCilium   BackendType = "cilium"   // cilium/ebpf Go 后端（原有实现）
+	BackendAuto     BackendType = "auto"     // 自动选择
+)
+
+// NewCollector 创建 eBPF 采集器（统一入口）
+// 根据环境变量 CLOUD_FLOW_BPF_BACKEND 或自动检测结果选择后端：
+//   - "libbpf": 使用 libbpf C 后端（推荐，支持鲲鹏920/海光C86）
+//   - "cilium": 使用 cilium/ebpf Go 后端（原有实现）
+//   - "auto" 或未设置: 自动选择（优先 libbpf）
+func NewCollector(opts *CollectorOptions) (EBPFCollectorInterface, error) {
+	backend := BackendType(os.Getenv("CLOUD_FLOW_BPF_BACKEND"))
+	if backend == "" {
+		backend = BackendAuto
+	}
+
+	switch backend {
+	case BackendLibbpf:
+		return NewLibbpfCollector(opts)
+	case BackendCilium:
+		return NewWithOptions(opts)
+	case BackendAuto:
+		// 优先尝试 libbpf 后端
+		coll, err := NewLibbpfCollector(opts)
+		if err != nil {
+			log.Printf("[eBPF] libbpf 后端初始化失败: %v，回退到 cilium/ebpf 后端", err)
+			return NewWithOptions(opts)
+		}
+		return coll, nil
+	default:
+		return nil, fmt.Errorf("未知的 eBPF 后端类型: %s（可选: libbpf, cilium, auto）", backend)
+	}
+}
+
 // collectLoop 采集循环
 func (c *Collector) collectLoop() {
 	ticker := time.NewTicker(5 * time.Second)

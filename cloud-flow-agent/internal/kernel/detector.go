@@ -43,6 +43,9 @@ type KernelCapability struct {
 	KernelMajor     int               // 内核主版本号
 	KernelMinor     int               // 内核次版本号
 	KernelPatch     int               // 内核补丁版本号
+	KernelExtra     int               // 内核额外版本号（如 4.19.90-24 中的 24）
+	VendorID        string            // 芯片厂商 ID（如 "HygonGenuine"、"0x48"）
+	ModelName       string            // 芯片型号名称
 	EBPFSupported   bool              // 是否支持 eBPF
 	BTFSupported    bool              // 是否支持 BTF
 	RingBufSupported bool             // 是否支持 BPF RingBuffer
@@ -77,11 +80,11 @@ func (d *Detector) Detect() (*KernelCapability, error) {
 	d.log.Infof("检测到系统架构: %s", cap.Arch)
 
 	// 2. 检测芯片厂商
-	cap.Vendor = detectVendor(cap.Arch)
-	d.log.Infof("检测到芯片厂商: %s", cap.Vendor)
+	detectVendorInfo(cap)
+	d.log.Infof("检测到芯片厂商: %s (VendorID=%s, ModelName=%s)", cap.Vendor, cap.VendorID, cap.ModelName)
 
 	// 3. 检测内核版本
-	kernelVersion, major, minor, patch, err := detectKernelVersion()
+	kernelVersion, major, minor, patch, extra, err := detectKernelVersion()
 	if err != nil {
 		d.log.Warnf("检测内核版本失败: %v", err)
 		return nil, fmt.Errorf("检测内核版本失败: %w", err)
@@ -90,7 +93,8 @@ func (d *Detector) Detect() (*KernelCapability, error) {
 	cap.KernelMajor = major
 	cap.KernelMinor = minor
 	cap.KernelPatch = patch
-	d.log.Infof("检测到内核版本: %s (major=%d, minor=%d, patch=%d)", kernelVersion, major, minor, patch)
+	cap.KernelExtra = extra
+	d.log.Infof("检测到内核版本: %s (major=%d, minor=%d, patch=%d, extra=%d)", kernelVersion, major, minor, patch, extra)
 
 	// 4. 检测 eBPF 支持
 	cap.EBPFSupported = detectEBPFSupport(major, minor)
@@ -148,6 +152,85 @@ func (c *KernelCapability) IsEBPFAvailable() bool {
 	return c.EBPFSupported
 }
 
+// MinKernelVersion 检查当前内核是否满足最低版本要求
+// required 格式："4.19.90"、"4.19.90-24" 或 "3.10"
+// 支持精确的四段版本比较（如 4.19.90-24）
+func (c *KernelCapability) MinKernelVersion(required string) bool {
+	reqMajor, reqMinor, reqPatch, reqExtra, err := parseVersionString(required)
+	if err != nil {
+		return false
+	}
+
+	// 逐段比较
+	if c.KernelMajor != reqMajor {
+		return c.KernelMajor > reqMajor
+	}
+	if c.KernelMinor != reqMinor {
+		return c.KernelMinor > reqMinor
+	}
+	if c.KernelPatch != reqPatch {
+		return c.KernelPatch > reqPatch
+	}
+	// 第四段（额外版本号）比较：如果 required 未指定 extra，则认为满足
+	if reqExtra < 0 {
+		return true
+	}
+	if c.KernelExtra != reqExtra {
+		return c.KernelExtra > reqExtra
+	}
+	return true
+}
+
+// GetKernelExtraVersion 返回内核版本第四段（额外版本号）
+// 例如 4.19.90-24 返回 24，4.19.90 返回 0
+func (c *KernelCapability) GetKernelExtraVersion() int {
+	return c.KernelExtra
+}
+
+// parseVersionString 解析版本字符串为四段版本号
+// 支持 "4.19.90"、"4.19.90-24"、"3.10" 等格式
+// extra 为 -1 表示未指定
+func parseVersionString(version string) (major, minor, patch, extra int, err error) {
+	extra = -1
+
+	// 分离可能的额外版本号（如 "4.19.90-24" 中的 "-24"）
+	parts := strings.SplitN(version, "-", 2)
+	versionCore := parts[0]
+
+	// 解析额外版本号
+	if len(parts) > 1 {
+		extra, err = strconv.Atoi(strings.TrimLeft(parts[1], " "))
+		if err != nil {
+			extra = -1
+		}
+	}
+
+	// 解析 major.minor.patch
+	versionParts := strings.SplitN(versionCore, ".", 4)
+	if len(versionParts) < 2 {
+		return 0, 0, 0, -1, fmt.Errorf("无法解析版本号: %s", version)
+	}
+
+	major, err = strconv.Atoi(versionParts[0])
+	if err != nil {
+		return 0, 0, 0, -1, fmt.Errorf("无法解析版本号: %s", version)
+	}
+
+	minor, err = strconv.Atoi(versionParts[1])
+	if err != nil {
+		return 0, 0, 0, -1, fmt.Errorf("无法解析版本号: %s", version)
+	}
+
+	if len(versionParts) >= 3 {
+		patch, err = strconv.Atoi(versionParts[2])
+		if err != nil {
+			return 0, 0, 0, -1, fmt.Errorf("无法解析版本号: %s", version)
+		}
+	}
+
+	return major, minor, patch, extra, nil
+}
+
 // detectArch 检测系统架构
 func detectArch() Arch {
 	goArch := runtime.GOARCH
@@ -159,6 +242,43 @@ func detectArch() Arch {
 	default:
 		return Arch(goArch)
 	}
+}
+
+// detectCPUDetails 从 /proc/cpuinfo 中提取 VendorID 和 ModelName
+func detectCPUDetails() (vendorID, modelName string) {
+	f, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "vendor_id") || strings.HasPrefix(line, "CPU implementer") {
+			fields := strings.SplitN(line, ":", 2)
+			if len(fields) == 2 {
+				vendorID = strings.TrimSpace(fields[1])
+			}
+		}
+		if strings.HasPrefix(line, "model name") {
+			fields := strings.SplitN(line, ":", 2)
+			if len(fields) == 2 {
+				modelName = strings.TrimSpace(fields[1])
+			}
+		}
+		// 取第一个 CPU 核心的信息即可
+		if vendorID != "" && modelName != "" {
+			break
+		}
+	}
+	return vendorID, modelName
+}
+
+// detectVendorInfo 检测芯片厂商，同时记录 VendorID 和 ModelName
+func detectVendorInfo(cap *KernelCapability) {
+	cap.Vendor = detectVendor(cap.Arch)
+	cap.VendorID, cap.ModelName = detectCPUDetails()
 }
 
 // detectVendor 检测芯片厂商
@@ -290,7 +410,7 @@ func isKunpeng() bool {
 }
 
 // detectKernelVersion 检测内核版本
-func detectKernelVersion() (version string, major, minor, patch int, err error) {
+func detectKernelVersion() (version string, major, minor, patch, extra int, err error) {
 	var unameBuf syscall.Utsname
 
 	// 使用 syscall.Uname 获取内核版本
@@ -316,17 +436,17 @@ func charsToString(arr []int8) string {
 }
 
 // detectKernelVersionFromProc 从 /proc/version 解析内核版本
-func detectKernelVersionFromProc() (version string, major, minor, patch int, err error) {
+func detectKernelVersionFromProc() (version string, major, minor, patch, extra int, err error) {
 	data, err := os.ReadFile("/proc/version")
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("读取 /proc/version 失败: %w", err)
+		return "", 0, 0, 0, 0, fmt.Errorf("读取 /proc/version 失败: %w", err)
 	}
 
 	// /proc/version 格式: Linux version 5.15.0-91-generic ...
 	content := string(data)
 	idx := strings.Index(content, "Linux version ")
 	if idx == -1 {
-		return "", 0, 0, 0, fmt.Errorf("无法解析 /proc/version")
+		return "", 0, 0, 0, 0, fmt.Errorf("无法解析 /proc/version")
 	}
 
 	rest := content[idx+len("Linux version "):]
@@ -339,17 +459,32 @@ func detectKernelVersionFromProc() (version string, major, minor, patch int, err
 	return parseKernelVersion(version)
 }
 
-// parseKernelVersion 解析内核版本字符串
-func parseKernelVersion(version string) (string, int, int, int, error) {
-	// 移除可能的发行版后缀，如 "-generic"、".el7" 等
-	// 只取前三个数字部分
+// parseKernelVersion 解析内核版本字符串，支持四段版本号（如 4.19.90-24）
+func parseKernelVersion(version string) (string, int, int, int, int, error) {
+	// 分离可能的额外版本号（如 "4.19.90-24" 中的 "-24"）
 	parts := strings.SplitN(version, "-", 2)
 	versionCore := parts[0]
+
+	// 解析额外版本号
+	extra = 0
+	if len(parts) > 1 {
+		// 取 "-" 后面的数字部分，忽略发行版后缀（如 "-24.generic"）
+		extraStr := parts[1]
+		// 提取前导数字
+		dotIdx := strings.IndexAny(extraStr, ".")
+		if dotIdx > 0 {
+			extraStr = extraStr[:dotIdx]
+		}
+		extra, err = strconv.Atoi(strings.TrimLeft(extraStr, " "))
+		if err != nil {
+			extra = 0 // 解析失败则默认为 0
+		}
+	}
 
 	// 解析 major.minor.patch
 	versionParts := strings.SplitN(versionCore, ".", 4)
 	if len(versionParts) < 3 {
-		return version, 0, 0, 0, fmt.Errorf("无法解析内核版本: %s", version)
+		return version, 0, 0, 0, 0, fmt.Errorf("无法解析内核版本: %s", version)
 	}
 
 	major, err1 := strconv.Atoi(versionParts[0])
@@ -357,10 +492,10 @@ func parseKernelVersion(version string) (string, int, int, int, error) {
 	patch, err3 := strconv.Atoi(versionParts[2])
 
 	if err1 != nil || err2 != nil || err3 != nil {
-		return version, 0, 0, 0, fmt.Errorf("无法解析内核版本号: %s", version)
+		return version, 0, 0, 0, 0, fmt.Errorf("无法解析内核版本号: %s", version)
 	}
 
-	return version, major, minor, patch, nil
+	return version, major, minor, patch, extra, nil
 }
 
 // detectEBPFSupport 检测 eBPF 支持

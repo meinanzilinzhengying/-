@@ -1,5 +1,15 @@
 import { apiRequest, setToken, removeToken, getToken, getCSRFToken, type ApiResponse } from './index';
 
+// 登录响应类型
+interface LoginResponse {
+  token: string;
+  user: {
+    id: string;
+    username: string;
+    role: string;
+  };
+}
+
 // 解包 ApiResponse，返回 data 字段
 function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
   return promise.then(r => r.data);
@@ -15,17 +25,17 @@ export const authApi = {
       // 即使失败也继续尝试登录
     }
     // POST 登录（自动携带 X-CSRF-Token 头）
-    const response = await apiRequest<{ token: string; user: unknown }>('/users/login', {
+    const response = await apiRequest<LoginResponse>('/users/login', {
       method: 'POST',
       body: { username, password },
     }, 0);
     // 兼容两种响应格式：直接返回 token 或包裹在 data 中
-    const token = (response as Record<string, unknown>).token
-      || (response as Record<string, unknown>).data
-        ? ((response as Record<string, unknown>).data as Record<string, unknown>).token
-        : null;
+    const resp = response as unknown as Record<string, unknown>;
+    const token = resp.token as string | undefined
+      || (resp.data as Record<string, unknown> | undefined)?.token as string | undefined
+      || null;
     if (token) {
-      await setToken(token as string, rememberMe);
+      await setToken(token, rememberMe);
     }
     return response;
   },

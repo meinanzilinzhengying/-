@@ -5,6 +5,7 @@ package profiler
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )

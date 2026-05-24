@@ -1,5 +1,10 @@
 // Package forwarder 提供数据缓冲和定时转发功能
 // 接收探针发送的指标、链路追踪和性能分析数据，批量转发到中心服务
+//
+// 优化特性：
+//   - 网络中断时缓存数据到本地磁盘（LevelDB）
+//   - 网络恢复后按时间顺序自动续传
+//   - 缓存容量可配置，默认保留1小时数据
 package forwarder
 
 import (
@@ -7,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"cloud-flow-edge/internal/localcache"
 	"cloud-flow-edge/internal/persistence"
+	"cloud-flow-edge/internal/resender"
 	"cloud-flow-edge/pkg/logger"
 	edge "cloud-flow/proto"
 )
@@ -58,6 +65,11 @@ type Forwarder struct {
 	metricsSinkMu sync.Mutex  // 保护 metrics 的互斥锁
 	persistence *persistence.Persistence
 
+	// 本地磁盘缓存（网络中断时使用）
+	localCache *localcache.Cache
+	// 续传管理器
+	resender *resender.Resender
+
 	// 指标数据缓冲
 	muMetrics  sync.Mutex
 	metricsBuf []*edge.MetricsBatch
@@ -82,6 +94,10 @@ type Forwarder struct {
 	// UpdateConfig 防抖
 	configDebounceTimer *time.Timer // 防抖定时器
 	configDebounceMu    sync.Mutex  // 防抖定时器的互斥锁
+
+	// 网络状态
+	networkOnline bool
+	networkMu     sync.RWMutex
 }
 
 // NewForwarder 创建数据转发器
@@ -99,15 +115,31 @@ func NewForwarder(client ForwardClient, batchSize, flushIntervalSec int, log *lo
 		log.Warnf("[forwarder] 初始化持久化失败: %v，将不使用持久化", err)
 	}
 
+	// 初始化本地磁盘缓存
+	cacheCfg := localcache.DefaultConfig()
+	localCache, err := localcache.NewCache(cacheCfg, log)
+	if err != nil {
+		log.Warnf("[forwarder] 初始化本地缓存失败: %v，将不使用本地缓存", err)
+	}
+
 	fwd := &Forwarder{
 		client:        client,
 		logger:        log,
 		metrics:       noopMetrics{},
 		persistence:   persist,
+		localCache:    localCache,
 		batchSize:     batchSize,
 		flushInterval: time.Duration(flushIntervalSec) * time.Second,
 		maxBufLimit:   defaultMaxBufferLimit,
 		stopCh:        make(chan struct{}),
+		networkOnline: true,
+	}
+
+	// 初始化续传管理器
+	if localCache != nil {
+		resenderCfg := resender.DefaultConfig()
+		fwd.resender = resender.NewResender(resenderCfg, localCache, client, log)
+		fwd.resender.Start()
 	}
 
 	// 从持久化恢复数据
@@ -286,10 +318,15 @@ func (f *Forwarder) Stop() {
 		f.stopped = true
 	}
 	f.stopMu.Unlock()
-	
+
+	// 停止续传管理器
+	if f.resender != nil {
+		f.resender.Stop()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), flushTimeout)
 	defer cancel()
-	
+
 	done := make(chan struct{})
 	go func() {
 		f.flushMetrics(true)
@@ -297,21 +334,28 @@ func (f *Forwarder) Stop() {
 		f.flushProfiling(true)
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		f.logger.Info("[forwarder] 剩余数据刷新完成")
 	case <-ctx.Done():
 		f.logger.Warnf("[forwarder] 剩余数据刷新超时 (%v)，部分数据可能未发送", flushTimeout)
 	}
-	
+
 	// 关闭持久化管理器
 	if f.persistence != nil {
 		if err := f.persistence.Close(); err != nil {
 			f.logger.Warnf("[forwarder] 关闭持久化管理器失败: %v", err)
 		}
 	}
-	
+
+	// 关闭本地缓存
+	if f.localCache != nil {
+		if err := f.localCache.Close(); err != nil {
+			f.logger.Warnf("[forwarder] 关闭本地缓存失败: %v", err)
+		}
+	}
+
 	f.logger.Info("[forwarder] 数据转发器已停止")
 }
 
@@ -360,6 +404,21 @@ func (f *Forwarder) SetClient(client ForwardClient) {
 	f.clientMu.Lock()
 	defer f.clientMu.Unlock()
 	f.client = client
+
+	// 更新续传管理器的客户端
+	if f.resender != nil {
+		f.resender.SetClient(client)
+	}
+
+	// 如果之前有网络中断，现在客户端更新了，尝试标记网络恢复
+	f.networkMu.Lock()
+	wasOffline := !f.networkOnline
+	f.networkOnline = true
+	f.networkMu.Unlock()
+
+	if wasOffline {
+		f.logger.Info("[forwarder] 转发客户端已更新，标记网络恢复")
+	}
 }
 
 // getClient 获取线程安全的客户端
@@ -391,6 +450,12 @@ func (f *Forwarder) flushMetrics(force bool) {
 			retryCount++
 			allSent = false
 			failedBatches = append(failedBatches, batch)
+
+			// 通知续传管理器转发失败
+			if f.resender != nil {
+				f.resender.OnForwardError("metrics", err)
+			}
+
 			if retryCount >= maxRetryAttempts {
 				// 将剩余未处理的批次也加入失败列表，避免静默丢失
 				failedBatches = append(failedBatches, buf[i+1:]...)
@@ -400,11 +465,13 @@ func (f *Forwarder) flushMetrics(force bool) {
 				select {
 				case <-time.After(time.Duration(retryCount) * time.Second):
 				case <-f.stopCh:
-					// 将已收集的失败批次放回缓冲区
-					if len(failedBatches) > 0 {
-						f.muMetrics.Lock()
-						f.metricsBuf = append(failedBatches, f.metricsBuf...)
-						f.muMetrics.Unlock()
+					// 将已收集的失败批次缓存到本地磁盘
+					if len(failedBatches) > 0 && f.localCache != nil {
+						for _, failedBatch := range failedBatches {
+							if err := f.localCache.AddMetrics(failedBatch); err != nil {
+								f.logger.Warnf("[forwarder][metrics] 缓存失败数据到本地失败: %v", err)
+							}
+						}
 					}
 					return
 				}
@@ -417,12 +484,25 @@ func (f *Forwarder) flushMetrics(force bool) {
 		retryCount = 0
 	}
 
-	// 将失败批次统一放回缓冲区
+	// 将失败批次缓存到本地磁盘（用于网络恢复后续传）
 	if len(failedBatches) > 0 {
-		f.muMetrics.Lock()
-		f.metricsBuf = append(failedBatches, f.metricsBuf...)
-		f.muMetrics.Unlock()
-		f.logger.Warnf("[forwarder][metrics] 转发失败，%d 条数据已放回缓冲区", len(failedBatches))
+		if f.localCache != nil {
+			cachedCount := 0
+			for _, batch := range failedBatches {
+				if err := f.localCache.AddMetrics(batch); err != nil {
+					f.logger.Warnf("[forwarder][metrics] 缓存失败数据到本地失败: %v", err)
+				} else {
+					cachedCount++
+				}
+			}
+			f.logger.Warnf("[forwarder][metrics] 转发失败，%d 条数据已缓存到本地磁盘", cachedCount)
+		} else {
+			// 如果没有本地缓存，放回内存缓冲区
+			f.muMetrics.Lock()
+			f.metricsBuf = append(failedBatches, f.metricsBuf...)
+			f.muMetrics.Unlock()
+			f.logger.Warnf("[forwarder][metrics] 转发失败，%d 条数据已放回缓冲区", len(failedBatches))
+		}
 	}
 
 	// 所有数据发送成功，清空指标的持久化数据
@@ -453,6 +533,12 @@ func (f *Forwarder) flushTraces(force bool) {
 			retryCount++
 			allSent = false
 			failedBatches = append(failedBatches, batch)
+
+			// 通知续传管理器转发失败
+			if f.resender != nil {
+				f.resender.OnForwardError("traces", err)
+			}
+
 			if retryCount >= maxRetryAttempts {
 				// 将剩余未处理的批次也加入失败列表，避免静默丢失
 				failedBatches = append(failedBatches, buf[i+1:]...)
@@ -462,10 +548,13 @@ func (f *Forwarder) flushTraces(force bool) {
 				select {
 				case <-time.After(time.Duration(retryCount) * time.Second):
 				case <-f.stopCh:
-					if len(failedBatches) > 0 {
-						f.muTraces.Lock()
-						f.tracesBuf = append(failedBatches, f.tracesBuf...)
-						f.muTraces.Unlock()
+					// 将已收集的失败批次缓存到本地磁盘
+					if len(failedBatches) > 0 && f.localCache != nil {
+						for _, failedBatch := range failedBatches {
+							if err := f.localCache.AddTraces(failedBatch); err != nil {
+								f.logger.Warnf("[forwarder][traces] 缓存失败数据到本地失败: %v", err)
+							}
+						}
 					}
 					return
 				}
@@ -478,12 +567,25 @@ func (f *Forwarder) flushTraces(force bool) {
 		retryCount = 0
 	}
 
-	// 将失败批次统一放回缓冲区
+	// 将失败批次缓存到本地磁盘（用于网络恢复后续传）
 	if len(failedBatches) > 0 {
-		f.muTraces.Lock()
-		f.tracesBuf = append(failedBatches, f.tracesBuf...)
-		f.muTraces.Unlock()
-		f.logger.Warnf("[forwarder][traces] 转发失败，%d 条数据已放回缓冲区", len(failedBatches))
+		if f.localCache != nil {
+			cachedCount := 0
+			for _, batch := range failedBatches {
+				if err := f.localCache.AddTraces(batch); err != nil {
+					f.logger.Warnf("[forwarder][traces] 缓存失败数据到本地失败: %v", err)
+				} else {
+					cachedCount++
+				}
+			}
+			f.logger.Warnf("[forwarder][traces] 转发失败，%d 条数据已缓存到本地磁盘", cachedCount)
+		} else {
+			// 如果没有本地缓存，放回内存缓冲区
+			f.muTraces.Lock()
+			f.tracesBuf = append(failedBatches, f.tracesBuf...)
+			f.muTraces.Unlock()
+			f.logger.Warnf("[forwarder][traces] 转发失败，%d 条数据已放回缓冲区", len(failedBatches))
+		}
 	}
 
 	// 所有数据发送成功，清空链路追踪的持久化数据
@@ -514,6 +616,12 @@ func (f *Forwarder) flushProfiling(force bool) {
 			retryCount++
 			allSent = false
 			failedBatches = append(failedBatches, batch)
+
+			// 通知续传管理器转发失败
+			if f.resender != nil {
+				f.resender.OnForwardError("profiling", err)
+			}
+
 			if retryCount >= maxRetryAttempts {
 				// 将剩余未处理的批次也加入失败列表，避免静默丢失
 				failedBatches = append(failedBatches, buf[i+1:]...)
@@ -523,10 +631,13 @@ func (f *Forwarder) flushProfiling(force bool) {
 				select {
 				case <-time.After(time.Duration(retryCount) * time.Second):
 				case <-f.stopCh:
-					if len(failedBatches) > 0 {
-						f.muProfiling.Lock()
-						f.profilingBuf = append(failedBatches, f.profilingBuf...)
-						f.muProfiling.Unlock()
+					// 将已收集的失败批次缓存到本地磁盘
+					if len(failedBatches) > 0 && f.localCache != nil {
+						for _, failedBatch := range failedBatches {
+							if err := f.localCache.AddProfiling(failedBatch); err != nil {
+								f.logger.Warnf("[forwarder][profiling] 缓存失败数据到本地失败: %v", err)
+							}
+						}
 					}
 					return
 				}
@@ -539,12 +650,25 @@ func (f *Forwarder) flushProfiling(force bool) {
 		retryCount = 0
 	}
 
-	// 将失败批次统一放回缓冲区
+	// 将失败批次缓存到本地磁盘（用于网络恢复后续传）
 	if len(failedBatches) > 0 {
-		f.muProfiling.Lock()
-		f.profilingBuf = append(failedBatches, f.profilingBuf...)
-		f.muProfiling.Unlock()
-		f.logger.Warnf("[forwarder][profiling] 转发失败，%d 条数据已放回缓冲区", len(failedBatches))
+		if f.localCache != nil {
+			cachedCount := 0
+			for _, batch := range failedBatches {
+				if err := f.localCache.AddProfiling(batch); err != nil {
+					f.logger.Warnf("[forwarder][profiling] 缓存失败数据到本地失败: %v", err)
+				} else {
+					cachedCount++
+				}
+			}
+			f.logger.Warnf("[forwarder][profiling] 转发失败，%d 条数据已缓存到本地磁盘", cachedCount)
+		} else {
+			// 如果没有本地缓存，放回内存缓冲区
+			f.muProfiling.Lock()
+			f.profilingBuf = append(failedBatches, f.profilingBuf...)
+			f.muProfiling.Unlock()
+			f.logger.Warnf("[forwarder][profiling] 转发失败，%d 条数据已放回缓冲区", len(failedBatches))
+		}
 	}
 
 	// 所有数据发送成功，清空性能分析的持久化数据

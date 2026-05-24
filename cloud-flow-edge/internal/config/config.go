@@ -53,6 +53,35 @@ type RateLimitConfig struct {
 	RefillRate int  // 每秒填充令牌数
 }
 
+// ConnectionPoolConfig 连接池配置
+type ConnectionPoolConfig struct {
+	MaxConnections  int           // 最大连接数（默认10000）
+	StaleTimeout    time.Duration // 连接过期超时（默认5分钟）
+	CleanupInterval time.Duration // 清理间隔（默认1分钟）
+}
+
+// IPLimitConfig 单IP限流配置
+type IPLimitConfig struct {
+	MaxQPSPerIP     int           // 每IP最大QPS（默认100）
+	BurstSize       int           // 突发大小（默认200）
+	CleanupInterval time.Duration // 清理间隔（默认1分钟）
+	StaleDuration   time.Duration // IP过期时间（默认10分钟）
+}
+
+// GoPoolConfig goroutine池配置
+type GoPoolConfig struct {
+	Workers  int // worker数量（默认500）
+	QueueCap int // 任务队列容量（默认10000）
+}
+
+// CircuitBreakerConfig 熔断器配置
+type CircuitBreakerConfig struct {
+	FailureThreshold    float64       // 失败率阈值（0-1，默认0.5）
+	MinRequests         int           // 最小请求数（默认100）
+	RecoveryTimeout     time.Duration // 恢复超时（默认30s）
+	HalfOpenMaxRequests int           // 半开状态最大请求数（默认10）
+}
+
 // Config 边缘节点服务配置
 type Config struct {
 	EdgeNodeID       string                 // 边缘节点唯一标识
@@ -68,6 +97,10 @@ type Config struct {
 	APIKey           string                 // API Key（探针注册时需携带）
 	CenterAPIKey     string                 // Center API Key（转发数据到 Center 时需携带）
 	RateLimit        RateLimitConfig        // 限流配置
+	ConnectionPool   ConnectionPoolConfig   // 连接池配置
+	IPLimit          IPLimitConfig          // 单IP限流配置
+	GoPool           GoPoolConfig           // goroutine池配置
+	CircuitBreaker   CircuitBreakerConfig   // 熔断器配置
 	TLS              TLSConfig              // TLS 配置
 	Log              LogConfig              // 日志配置
 }
@@ -179,6 +212,28 @@ func Load() (*Config, error) {
 	viper.SetDefault("rate_limit.enabled", true)
 	viper.SetDefault("rate_limit.bucket_size", 100)
 	viper.SetDefault("rate_limit.refill_rate", 50)
+
+	// 连接池配置默认值
+	viper.SetDefault("connection_pool.max_connections", 10000)
+	viper.SetDefault("connection_pool.stale_timeout", "5m")
+	viper.SetDefault("connection_pool.cleanup_interval", "1m")
+
+	// 单IP限流配置默认值
+	viper.SetDefault("ip_limit.max_qps_per_ip", 100)
+	viper.SetDefault("ip_limit.burst_size", 200)
+	viper.SetDefault("ip_limit.cleanup_interval", "1m")
+	viper.SetDefault("ip_limit.stale_duration", "10m")
+
+	// goroutine池配置默认值
+	viper.SetDefault("go_pool.workers", 500)
+	viper.SetDefault("go_pool.queue_cap", 10000)
+
+	// 熔断器配置默认值
+	viper.SetDefault("circuit_breaker.failure_threshold", 0.5)
+	viper.SetDefault("circuit_breaker.min_requests", 100)
+	viper.SetDefault("circuit_breaker.recovery_timeout", "30s")
+	viper.SetDefault("circuit_breaker.half_open_max_requests", 10)
+
 	viper.SetDefault("service_discovery.enabled", false)
 	viper.SetDefault("service_discovery.type", "etcd")
 	viper.SetDefault("service_discovery.endpoints", []string{"localhost:2379"})
@@ -247,6 +302,27 @@ func Load() (*Config, error) {
 			Enabled:    viper.GetBool("rate_limit.enabled"),
 			BucketSize: viper.GetInt("rate_limit.bucket_size"),
 			RefillRate: viper.GetInt("rate_limit.refill_rate"),
+		},
+		ConnectionPool: ConnectionPoolConfig{
+			MaxConnections:  viper.GetInt("connection_pool.max_connections"),
+			StaleTimeout:    viper.GetDuration("connection_pool.stale_timeout"),
+			CleanupInterval: viper.GetDuration("connection_pool.cleanup_interval"),
+		},
+		IPLimit: IPLimitConfig{
+			MaxQPSPerIP:     viper.GetInt("ip_limit.max_qps_per_ip"),
+			BurstSize:       viper.GetInt("ip_limit.burst_size"),
+			CleanupInterval: viper.GetDuration("ip_limit.cleanup_interval"),
+			StaleDuration:   viper.GetDuration("ip_limit.stale_duration"),
+		},
+		GoPool: GoPoolConfig{
+			Workers:  viper.GetInt("go_pool.workers"),
+			QueueCap: viper.GetInt("go_pool.queue_cap"),
+		},
+		CircuitBreaker: CircuitBreakerConfig{
+			FailureThreshold:    viper.GetFloat64("circuit_breaker.failure_threshold"),
+			MinRequests:         viper.GetInt("circuit_breaker.min_requests"),
+			RecoveryTimeout:     viper.GetDuration("circuit_breaker.recovery_timeout"),
+			HalfOpenMaxRequests: viper.GetInt("circuit_breaker.half_open_max_requests"),
 		},
 		Log: LogConfig{
 			Level:  viper.GetString("log.level"),

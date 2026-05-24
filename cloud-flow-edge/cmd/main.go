@@ -184,11 +184,20 @@ func main() {
 	// 7. 创建 gRPC 服务端并注册探针服务
 	srv := grpcserver.NewServer(manager, fwd, log, metricCollector, localCfg.APIKey)
 	log.Infof("Edge 探针认证 API Key 已启用 (key: %s...)", utils.MaskSecret(localCfg.APIKey))
-	serverOpts, err := grpcserver.BuildServerOpts(localCfg.TLS, localCfg.RateLimit, localCfg.APIKey, log)
+	serverOpts, connPool, ipLimiter, goPool, breakerMgr, err := grpcserver.BuildServerOpts(
+		localCfg.TLS, localCfg.RateLimit, localCfg.APIKey,
+		localCfg.ConnectionPool, localCfg.IPLimit, localCfg.GoPool, localCfg.CircuitBreaker,
+		log,
+	)
 	if err != nil {
 		log.Errorf("构建 gRPC 服务端选项失败: %v", err)
 		os.Exit(1)
 	}
+	// 将组件注入到Server中（用于监控统计）
+	srv.SetConnPool(connPool)
+	srv.SetIPLimiter(ipLimiter)
+	srv.SetGoPool(goPool)
+	srv.SetBreaker(breakerMgr)
 	grpcServer := grpc.NewServer(serverOpts...)
 	edge.RegisterProbeServiceServer(grpcServer, srv)
 
@@ -353,6 +362,8 @@ func main() {
 	// 停止 gRPC 服务（等待现有请求完成，在独立协程中执行）
 	done := make(chan struct{})
 	go func() {
+		// 先停止子组件（连接池、IP限流器、goroutine池）
+		srv.ShutdownComponents()
 		grpcServer.GracefulStop()
 		close(done)
 	}()

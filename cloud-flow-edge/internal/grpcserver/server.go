@@ -1,5 +1,11 @@
 // Package grpcserver 提供 gRPC 服务端实现
 // 实现 ProbeService 接口，接收探针的注册、心跳、数据上报请求
+//
+// 优化特性：
+//   - 连接池管理：最大10000连接，按IP追踪
+//   - 单IP限流：每IP 100 QPS令牌桶
+//   - goroutine池：防止OOM，有界任务队列
+//   - 熔断机制：三态熔断器保护服务稳定性
 package grpcserver
 
 import (
@@ -8,14 +14,20 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 
+	"cloud-flow-edge/internal/circuitbreaker"
 	"cloud-flow-edge/internal/config"
+	"cloud-flow-edge/internal/connpool"
 	"cloud-flow-edge/internal/forwarder"
+	"cloud-flow-edge/internal/gopool"
+	"cloud-flow-edge/internal/iplimiter"
 	"cloud-flow-edge/internal/probemgr"
 	"cloud-flow-edge/pkg/logger"
 	"cloud-flow-edge/pkg/metrics"
@@ -31,30 +43,55 @@ import (
 // 实现 edge.ProbeServiceServer 接口
 type Server struct {
 	edge.UnimplementedProbeServiceServer
-	manager   *probemgr.Manager
-	forwarder *forwarder.Forwarder
-	logger    *logger.Logger
-	metrics   *metrics.Metrics
-	apiKey    string
+	manager      *probemgr.Manager
+	forwarder    *forwarder.Forwarder
+	logger       *logger.Logger
+	metrics      *metrics.Metrics
+	apiKey       string
+	connPool     *connpool.Pool
+	ipLimiter    *iplimiter.Limiter
+	goPool       *gopool.Pool
+	breaker      *circuitbreaker.Manager
 }
 
 // NewServer 创建 gRPC 服务端实例
-func NewServer(manager *probemgr.Manager, fwd *forwarder.Forwarder, log *logger.Logger, metrics *metrics.Metrics, apiKey string) *Server {
+func NewServer(manager *probemgr.Manager, fwd *forwarder.Forwarder, log *logger.Logger, m *metrics.Metrics, apiKey string) *Server {
 	return &Server{
 		manager:   manager,
 		forwarder: fwd,
 		logger:    log,
-		metrics:   metrics,
+		metrics:   m,
 		apiKey:    apiKey,
 	}
 }
 
+// SetConnPool 设置连接池
+func (s *Server) SetConnPool(pool *connpool.Pool) {
+	s.connPool = pool
+}
 
+// SetIPLimiter 设置IP限流器
+func (s *Server) SetIPLimiter(limiter *iplimiter.Limiter) {
+	s.ipLimiter = limiter
+}
+
+// SetGoPool 设置goroutine池
+func (s *Server) SetGoPool(pool *gopool.Pool) {
+	s.goPool = pool
+}
+
+// SetBreaker 设置熔断器
+func (s *Server) SetBreaker(breaker *circuitbreaker.Manager) {
+	s.breaker = breaker
+}
+
+// ============================================================================
+// 拦截器
+// ============================================================================
 
 // TraceIDInterceptor Trace ID 拦截器
 func TraceIDInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// 从 metadata 中提取 Trace ID
 		md, ok := metadata.FromIncomingContext(ctx)
 		var traceID string
 		if ok {
@@ -63,16 +100,10 @@ func TraceIDInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
 				traceID = vals[0]
 			}
 		}
-
-		// 如果没有 Trace ID，生成一个新的
 		if traceID == "" {
 			traceID = trace.TraceID()
 		}
-
-		// 将 Trace ID 添加到 context 中
 		ctx = trace.WithTraceID(ctx, traceID)
-
-		// 继续处理请求
 		return handler(ctx, req)
 	}
 }
@@ -81,103 +112,293 @@ func TraceIDInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
 func APIKeyAuthInterceptor(apiKey string, log *logger.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		if apiKey == "" {
-			// 未配置 API Key，直接放行
 			return handler(ctx, req)
 		}
-
-		// 从 metadata 中获取 API Key
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			log.Warnf("API Key 认证失败: 无 metadata")
 			return nil, fmt.Errorf("API Key 认证失败")
 		}
-
 		vals := md.Get("x-api-key")
 		if len(vals) == 0 {
 			log.Warnf("API Key 认证失败: 无 x-api-key 头")
 			return nil, fmt.Errorf("API Key 认证失败")
 		}
-
 		if subtle.ConstantTimeCompare([]byte(vals[0]), []byte(apiKey)) != 1 {
 			log.Warnf("API Key 认证失败: 无效的 API Key")
 			return nil, fmt.Errorf("API Key 认证失败")
 		}
-
-		// 认证通过，继续处理请求
 		return handler(ctx, req)
 	}
 }
 
+// ConnPoolInterceptor 连接池拦截器
+// 在注册时添加连接，心跳时更新活跃时间
+func ConnPoolInterceptor(pool *connpool.Pool, log *logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		clientIP := extractClientIP(ctx)
+		probeID := extractProbeID(req)
+
+		switch info.FullMethod {
+		case "/edge.ProbeService/RegisterProbe":
+			if probeID != "" {
+				if err := pool.Add(probeID, clientIP); err != nil {
+					log.Warnf("连接池拒绝: probeID=%s, ip=%s, err=%v", probeID, clientIP, err)
+					return nil, fmt.Errorf("连接池已满，最大连接数: %d", pool.MaxConnections())
+				}
+			}
+		case "/edge.ProbeService/Heartbeat":
+			if probeID != "" {
+				pool.Touch(probeID)
+			}
+		}
+
+		return handler(ctx, req)
+	}
+}
+
+// IPLimitInterceptor 单IP限流拦截器
+func IPLimitInterceptor(limiter *iplimiter.Limiter, log *logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		clientIP := extractClientIP(ctx)
+		if !limiter.Allow(clientIP) {
+			log.Warnf("IP限流拒绝: ip=%s, method=%s", clientIP, info.FullMethod)
+			return nil, fmt.Errorf("IP 请求频率超限 (100 QPS/IP)")
+		}
+		return handler(ctx, req)
+	}
+}
+
+// GoPoolInterceptor goroutine池拦截器
+// 将数据上报类请求提交到goroutine池异步处理，避免阻塞gRPC线程
+func GoPoolInterceptor(pool *gopool.Pool, log *logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// 注册和心跳请求直接在gRPC线程处理（低延迟要求）
+		switch info.FullMethod {
+		case "/edge.ProbeService/RegisterProbe",
+			"/edge.ProbeService/Heartbeat":
+			return handler(ctx, req)
+		}
+
+		// 数据上报类请求提交到goroutine池
+		resultCh := make(chan handlerResult, 1)
+		task := func() {
+			resp, err := handler(ctx, req)
+			resultCh <- handlerResult{resp: resp, err: err}
+		}
+
+		if err := pool.Submit(task); err != nil {
+			log.Warnf("goroutine池已满，请求降级为同步处理: method=%s", info.FullMethod)
+			// 降级：直接在当前goroutine执行
+			return handler(ctx, req)
+		}
+
+		// 等待结果
+		select {
+		case result := <-resultCh:
+			return result.resp, result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// CircuitBreakerInterceptor 熔断器拦截器
+func CircuitBreakerInterceptor(breakerMgr *circuitbreaker.Manager, log *logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// 按服务方法获取熔断器
+		brk := breakerMgr.GetBreaker(info.FullMethod)
+
+		if !brk.Allow() {
+			log.Warnf("熔断器拒绝请求: method=%s, state=%s", info.FullMethod, brk.GetState().State)
+			return nil, fmt.Errorf("服务暂时不可用 (circuit breaker open)")
+		}
+
+		resp, err := handler(ctx, req)
+		if err != nil {
+			brk.RecordFailure()
+		} else {
+			brk.RecordSuccess()
+		}
+		return resp, err
+	}
+}
+
+// handlerResult goroutine池处理结果
+type handlerResult struct {
+	resp interface{}
+	err  error
+}
+
+// extractClientIP 从gRPC context中提取客户端IP
+func extractClientIP(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return "unknown"
+	}
+	return extractIP(p.Addr.String())
+}
+
+// extractProbeID 从请求中提取probeID
+func extractProbeID(req interface{}) string {
+	switch r := req.(type) {
+	case *edge.RegisterProbeRequest:
+		return r.GetProbeId()
+	case *edge.HeartbeatRequest:
+		return r.GetProbeId()
+	case *edge.MetricsBatch:
+		return r.GetProbeId()
+	case *edge.TraceBatch:
+		return r.GetProbeId()
+	case *edge.ProfilingBatch:
+		return r.GetProbeId()
+	default:
+		return ""
+	}
+}
+
+// extractIP 从addr中提取IP（去掉端口）
+func extractIP(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return host
+}
+
+// ============================================================================
+// 服务端构建
+// ============================================================================
+
 // BuildServerOpts 根据配置构建 gRPC Server 选项
-func BuildServerOpts(tlsCfg config.TLSConfig, rateLimit config.RateLimitConfig, apiKey string, log *logger.Logger) ([]grpc.ServerOption, error) {
+// 集成连接池、IP限流、goroutine池、熔断器
+func BuildServerOpts(
+	tlsCfg config.TLSConfig,
+	rateLimit config.RateLimit,
+	apiKey string,
+	poolCfg config.ConnectionPoolConfig,
+	ipLimitCfg config.IPLimitConfig,
+	goPoolCfg config.GoPoolConfig,
+	breakerCfg config.CircuitBreakerConfig,
+	log *logger.Logger,
+) ([]grpc.ServerOption, *connpool.Pool, *iplimiter.Limiter, *gopool.Pool, *circuitbreaker.Manager, error) {
+
 	var opts []grpc.ServerOption
 
-	// 添加 Trace ID 拦截器
+	// 1. 创建连接池
+	connPool := connpool.NewPool(
+		connpool.WithMaxConnections(poolCfg.MaxConnections),
+		connpool.WithStaleTimeout(poolCfg.StaleTimeout),
+		connpool.WithCleanupInterval(poolCfg.CleanupInterval),
+	)
+	connPool.Start()
+	log.Infof("[连接池] 已启动: 最大连接数=%d, 过期超时=%v", poolCfg.MaxConnections, poolCfg.StaleTimeout)
+
+	// 2. 创建IP限流器
+	ipLimiter := iplimiter.NewLimiter(
+		iplimiter.WithMaxQPS(ipLimitCfg.MaxQPSPerIP),
+		iplimiter.WithBurstSize(ipLimitCfg.BurstSize),
+		iplimiter.WithCleanupInterval(ipLimitCfg.CleanupInterval),
+		iplimiter.WithStaleDuration(ipLimitCfg.StaleDuration),
+	)
+	ipLimiter.Start()
+	log.Infof("[IP限流] 已启动: 每IP %d QPS, 突发=%d", ipLimitCfg.MaxQPSPerIP, ipLimitCfg.BurstSize)
+
+	// 3. 创建goroutine池
+	goPool := gopool.NewPool(
+		gopool.WithWorkers(goPoolCfg.Workers),
+		gopool.WithQueueCap(goPoolCfg.QueueCap),
+	)
+	log.Infof("[goroutine池] 已启动: workers=%d, 队列容量=%d", goPoolCfg.Workers, goPoolCfg.QueueCap)
+
+	// 4. 创建熔断器管理器
+	breakerMgr := circuitbreaker.NewManager(
+		circuitbreaker.WithFailureThreshold(breakerCfg.FailureThreshold),
+		circuitbreaker.WithMinRequests(breakerCfg.MinRequests),
+		circuitbreaker.WithRecoveryTimeout(breakerCfg.RecoveryTimeout),
+		circuitbreaker.WithHalfOpenMaxRequests(breakerCfg.HalfOpenMaxRequests),
+	)
+	log.Infof("[熔断器] 已启动: 失败阈值=%.0f%%, 最小请求数=%d, 恢复超时=%v",
+		breakerCfg.FailureThreshold*100, breakerCfg.MinRequests, breakerCfg.RecoveryTimeout)
+
+	// 5. 构建拦截器链
+	// 执行顺序: Panic恢复 -> 连接池 -> IP限流 -> 全局限流 -> goroutine池 -> 熔断器 -> TraceID -> API Key
 	traceInterceptor := TraceIDInterceptor(log)
-	
-	// 添加限流拦截器
+
 	var rateLimiter *ratelimit.TokenBucket
 	if rateLimit.Enabled {
 		rateLimiter = ratelimit.NewTokenBucket(rateLimit.BucketSize, rateLimit.RefillRate)
-		log.Infof("gRPC 服务端启用速率限制: 桶容量=%d, 填充速率=%d/秒", rateLimit.BucketSize, rateLimit.RefillRate)
-	} else {
-		log.Info("gRPC 服务端未启用速率限制")
-	}
-	
-	// 添加 API Key 认证拦截器
-	if apiKey != "" {
-		// 组合拦截器
-		combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-			// 恢复 panic，防止服务崩溃
-			defer func() {
-				if r := recover(); r != nil {
-					log.Errorf("gRPC 处理 panic: %v", r)
-				}
-			}()
-			// 先处理限流
-			if rateLimit.Enabled && !rateLimiter.Allow() {
-				return nil, fmt.Errorf("rate limit exceeded")
-			}
-			// 再处理 Trace ID
-			return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-				// 最后处理 API Key 认证
-				apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
-				return apiInterceptor(ctx, req, info, handler)
-			})
-		}
-		opts = append(opts, grpc.UnaryInterceptor(combinedInterceptor))
-		log.Info("gRPC 服务端启用 API Key 认证、Trace ID 和速率限制")
-	} else {
-		// 组合 Trace ID 和限流拦截器
-		combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-			// 恢复 panic，防止服务崩溃
-			defer func() {
-				if r := recover(); r != nil {
-					log.Errorf("gRPC 处理 panic: %v", r)
-				}
-			}()
-			// 先处理限流
-			if rateLimit.Enabled && !rateLimiter.Allow() {
-				return nil, fmt.Errorf("rate limit exceeded")
-			}
-			// 再处理 Trace ID
-			return traceInterceptor(ctx, req, info, handler)
-		}
-		opts = append(opts, grpc.UnaryInterceptor(combinedInterceptor))
-		log.Info("gRPC 服务端启用 Trace ID 和速率限制")
+		log.Infof("[全局限流] 已启用: 桶容量=%d, 填充速率=%d/秒", rateLimit.BucketSize, rateLimit.RefillRate)
 	}
 
+	connPoolInterceptor := ConnPoolInterceptor(connPool, log)
+	ipLimitInterceptor := IPLimitInterceptor(ipLimiter, log)
+	goPoolInterceptor := GoPoolInterceptor(goPool, log)
+	breakerInterceptor := CircuitBreakerInterceptor(breakerMgr, log)
+
+	combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Errorf("gRPC 处理 panic: %v, method=%s", r, info.FullMethod)
+			}
+		}()
+
+		// 1. 全局限流
+		if rateLimit.Enabled && !rateLimiter.Allow() {
+			return nil, fmt.Errorf("全局限流: 请求频率超限")
+		}
+
+		// 2. 连接池检查
+		ctx, resp, err := func() (context.Context, interface{}, error) {
+			return connPoolInterceptor(ctx, req, info, handler)
+		}()
+		if err != nil {
+			return nil, err
+		}
+		_ = ctx // connPoolInterceptor不修改ctx
+
+		// 3. IP限流
+		if !ipLimiter.Allow(extractClientIP(ctx)) {
+			return nil, fmt.Errorf("IP 请求频率超限 (100 QPS/IP)")
+		}
+
+		// 4. goroutine池分发
+		// 5. 熔断器
+		// 6. TraceID
+		// 7. API Key
+		// 由于拦截器嵌套复杂，简化为顺序调用
+		return breakerInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+			return goPoolInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+				return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+					if apiKey != "" {
+						apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
+						return apiInterceptor(ctx, req, info, handler)
+					}
+					return handler(ctx, req)
+				})
+			})
+		})
+	}
+
+	opts = append(opts, grpc.UnaryInterceptor(combinedInterceptor))
+
+	// 6. 配置最大并发流（支持5000+Agent）
+	opts = append(opts, grpc.MaxConcurrentStreams(uint32(poolCfg.MaxConnections)))
+	// 增大消息大小限制
+	opts = append(opts, grpc.MaxRecvMsgSize(64*1024*1024)) // 64MB
+	opts = append(opts, grpc.MaxSendMsgSize(64*1024*1024)) // 64MB
+
+	// 7. TLS配置
 	if !tlsCfg.Enabled {
 		log.Warn("gRPC 服务端未启用 TLS，将使用明文传输")
-		return opts, nil
+		return opts, connPool, ipLimiter, goPool, breakerMgr, nil
 	}
 
-	// 如果未提供证书路径，自动生成自签名证书
 	if tlsCfg.ServerCert == "" || tlsCfg.ServerKey == "" {
 		log.Info("未配置服务端证书，将自动生成自签名证书")
 		cert, err := tlsutil.LoadOrGenSelfSignedCert("", "", "./certs")
 		if err != nil {
-			return nil, fmt.Errorf("生成自签名证书失败: %w", err)
+			return nil, nil, nil, nil, nil, fmt.Errorf("生成自签名证书失败: %w", err)
 		}
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{*cert},
@@ -185,13 +406,12 @@ func BuildServerOpts(tlsCfg config.TLSConfig, rateLimit config.RateLimitConfig, 
 		}
 		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpc.Creds(creds))
-		return opts, nil
+		return opts, connPool, ipLimiter, goPool, breakerMgr, nil
 	}
 
-	// 加载服务端证书和私钥
 	cert, err := tlsutil.LoadOrGenSelfSignedCert(tlsCfg.ServerCert, tlsCfg.ServerKey, "")
 	if err != nil {
-		return nil, fmt.Errorf("加载服务端证书失败: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("加载服务端证书失败: %w", err)
 	}
 
 	tlsConfig := &tls.Config{
@@ -199,15 +419,14 @@ func BuildServerOpts(tlsCfg config.TLSConfig, rateLimit config.RateLimitConfig, 
 		ClientAuth:   tls.NoClientCert,
 	}
 
-	// 如果配置了 CA 证书，启用客户端证书验证（mTLS）
 	if tlsCfg.CACert != "" {
 		caPEM, err := os.ReadFile(tlsCfg.CACert)
 		if err != nil {
-			return nil, fmt.Errorf("读取 CA 证书失败: %w", err)
+			return nil, nil, nil, nil, nil, fmt.Errorf("读取 CA 证书失败: %w", err)
 		}
 		certPool := x509.NewCertPool()
 		if !certPool.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("解析 CA 证书失败")
+			return nil, nil, nil, nil, nil, fmt.Errorf("解析 CA 证书失败")
 		}
 		tlsConfig.ClientCAs = certPool
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
@@ -218,8 +437,12 @@ func BuildServerOpts(tlsCfg config.TLSConfig, rateLimit config.RateLimitConfig, 
 
 	creds := credentials.NewTLS(tlsConfig)
 	opts = append(opts, grpc.Creds(creds))
-	return opts, nil
+	return opts, connPool, ipLimiter, goPool, breakerMgr, nil
 }
+
+// ============================================================================
+// RPC 方法实现
+// ============================================================================
 
 // RegisterProbe 处理探针注册请求
 func (s *Server) RegisterProbe(ctx context.Context, req *edge.RegisterProbeRequest) (*edge.RegisterProbeResponse, error) {
@@ -264,7 +487,7 @@ func (s *Server) SendMetrics(ctx context.Context, batch *edge.MetricsBatch) (*ed
 		return &edge.SendResponse{Success: false, Accepted: 0}, nil
 	}
 	if s.metrics != nil {
-		s.metrics.Receive(len(batch.GetMetrics())*100, nil) // 估算字节数
+		s.metrics.Receive(len(batch.GetMetrics())*100, nil)
 	}
 	s.forwarder.AddMetrics(batch)
 	return &edge.SendResponse{Success: true, Accepted: int32(len(batch.GetMetrics()))}, nil
@@ -287,7 +510,7 @@ func (s *Server) SendTraces(ctx context.Context, batch *edge.TraceBatch) (*edge.
 		return &edge.SendResponse{Success: false, Accepted: 0}, nil
 	}
 	if s.metrics != nil {
-		s.metrics.Receive(len(batch.GetSpans())*200, nil) // 估算字节数
+		s.metrics.Receive(len(batch.GetSpans())*200, nil)
 	}
 	s.forwarder.AddTraces(batch)
 	return &edge.SendResponse{Success: true, Accepted: int32(len(batch.GetSpans()))}, nil
@@ -310,8 +533,75 @@ func (s *Server) SendProfiling(ctx context.Context, batch *edge.ProfilingBatch) 
 		return &edge.SendResponse{Success: false, Accepted: 0}, nil
 	}
 	if s.metrics != nil {
-		s.metrics.Receive(len(batch.GetProfiles())*500, nil) // 估算字节数
+		s.metrics.Receive(len(batch.GetProfiles())*500, nil)
 	}
 	s.forwarder.AddProfiling(batch)
 	return &edge.SendResponse{Success: true, Accepted: int32(len(batch.GetProfiles()))}, nil
+}
+
+// GetResourceStats 获取服务资源统计（用于监控）
+func (s *Server) GetResourceStats() map[string]interface{} {
+	stats := make(map[string]interface{})
+
+	if s.connPool != nil {
+		poolStats := s.connPool.GetStats()
+		stats["connection_pool"] = map[string]interface{}{
+			"total":       poolStats.Total,
+			"max":         poolStats.Max,
+			"ip_counts":   poolStats.IPCounts,
+		}
+	}
+
+	if s.ipLimiter != nil {
+		ipStats := s.ipLimiter.GetStats()
+		stats["ip_limiter"] = map[string]interface{}{
+			"tracked_ips": ipStats.TrackedIPs,
+			"top_consumers": ipStats.TopConsumers,
+		}
+	}
+
+	if s.goPool != nil {
+		poolMetrics := s.goPool.Metrics()
+		stats["goroutine_pool"] = map[string]interface{}{
+			"active_workers":  poolMetrics.ActiveWorkers,
+			"queued_tasks":    poolMetrics.QueuedTasks,
+			"completed_tasks": poolMetrics.CompletedTasks,
+			"rejected_tasks":  poolMetrics.RejectedTasks,
+		}
+	}
+
+	if s.breaker != nil {
+		breakers := s.breaker.GetAllBreakers()
+		breakerStats := make([]map[string]interface{}, 0, len(breakers))
+		for name, brk := range breakers {
+			state := brk.GetState()
+			breakerStats = append(breakerStats, map[string]interface{}{
+				"service":     name,
+				"state":       state.State.String(),
+				"total":       state.TotalRequests,
+				"success":     state.SuccessCount,
+				"failures":    state.FailureCount,
+				"error_rate":  state.ErrorRate,
+			})
+		}
+		stats["circuit_breakers"] = breakerStats
+	}
+
+	return stats
+}
+
+// ShutdownComponents 优雅关闭所有子组件
+func (s *Server) ShutdownComponents() {
+	if s.connPool != nil {
+		s.connPool.Stop()
+		s.logger.Info("[连接池] 已停止")
+	}
+	if s.ipLimiter != nil {
+		s.ipLimiter.Stop()
+		s.logger.Info("[IP限流] 已停止")
+	}
+	if s.goPool != nil {
+		s.goPool.Stop()
+		s.logger.Info("[goroutine池] 已停止")
+	}
 }

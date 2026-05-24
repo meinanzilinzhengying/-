@@ -44,11 +44,36 @@ api_key: ""
 # 建议通过 CLOUD_FLOW_CENTER_API_KEY 环境变量设置
 center_api_key: ""
 
-# 限流配置
+# 限流配置（全局限流）
 rate_limit:
   enabled: true
   bucket_size: 100  # 令牌桶容量
   refill_rate: 50    # 每秒填充令牌数
+
+# 连接池配置（支持5000+ Agent同时接入）
+connection_pool:
+  max_connections: 10000     # 最大连接数
+  stale_timeout: "5m"        # 连接过期超时（无心跳则移除）
+  cleanup_interval: "1m"     # 过期连接清理间隔
+
+# 单IP限流配置（防止单Agent异常占用资源）
+ip_limit:
+  max_qps_per_ip: 100        # 每IP最大QPS
+  burst_size: 200            # 突发大小
+  cleanup_interval: "1m"     # IP记录清理间隔
+  stale_duration: "10m"      # IP无活动过期时间
+
+# goroutine池配置（防止OOM）
+go_pool:
+  workers: 500               # worker数量
+  queue_cap: 10000           # 任务队列容量
+
+# 熔断器配置（保护服务稳定性）
+circuit_breaker:
+  failure_threshold: 0.5     # 失败率阈值（50%触发熔断）
+  min_requests: 100          # 最小请求数（达到后才计算失败率）
+  recovery_timeout: "30s"    # 熔断恢复超时
+  half_open_max_requests: 10 # 半开状态试探请求数
 
 # TLS 配置（默认启用，留空证书路径则自动使用内置自签名证书）
 tls:

@@ -139,6 +139,21 @@ type CircuitBreakerConfig struct {
 	SilentMemRecoverThreshold float64       // 静默恢复内存阈值百分比（默认80）
 }
 
+// SelfMonitorConfig 自监控配置
+type SelfMonitorConfig struct {
+	Enabled          bool          // 启用自监控
+	CollectInterval  time.Duration // 采集间隔（默认10秒）
+	ReportInterval   time.Duration // 上报间隔（默认10秒）
+	HeartbeatTimeout time.Duration // 心跳超时判定（默认5秒）
+
+	// 告警阈值
+	AlertHeartbeatFailCount   int     // 连续心跳失败次数触发告警
+	AlertCPUPercent           float64 // CPU使用率告警阈值(%)
+	AlertMemoryPercent        float64 // 内存使用率告警阈值(%)
+	AlertPacketDropRate       float64 // 丢包率告警阈值(%)
+	AlertReportSuccessRateMin float64 // 上报成功率最低阈值(%)
+}
+
 // PerfOptimizerConfig 性能优化配置
 type PerfOptimizerConfig struct {
 	Enabled         bool    // 启用性能优化
@@ -329,10 +344,11 @@ type EBPFConfig struct {
 	BaseTraffic     BaseTrafficConfig     // 基础流量采集配置
 	ProtocolParsing ProtocolParsingConfig // 协议全字段解析配置
 	ResourceLimit   ResourceLimitConfig   // 资源限制配置
-	CircuitBreaker  CircuitBreakerConfig // 熔断配置
-	PerfOptimizer   PerfOptimizerConfig  // 性能优化配置
-	CPUProfiler     CPUProfilerConfig    // ON-CPU剖析配置
-	SQLAggregator   SQLAggregatorConfig  // SQL聚合分析配置
+	CircuitBreaker  CircuitBreakerConfig  // 熔断配置
+	SelfMonitor     SelfMonitorConfig     // 自监控配置
+	PerfOptimizer   PerfOptimizerConfig   // 性能优化配置
+	CPUProfiler     CPUProfilerConfig     // ON-CPU剖析配置
+	SQLAggregator   SQLAggregatorConfig   // SQL聚合分析配置
 }
 
 type Config struct {
@@ -441,6 +457,17 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.circuit_breaker.mem_recover_threshold", 85.0)
 	viper.SetDefault("ebpf.circuit_breaker.silent_cpu_recover_threshold", 70.0)
 	viper.SetDefault("ebpf.circuit_breaker.silent_mem_recover_threshold", 80.0)
+
+	// 自监控配置默认值
+	viper.SetDefault("ebpf.self_monitor.enabled", true)
+	viper.SetDefault("ebpf.self_monitor.collect_interval", "10s")
+	viper.SetDefault("ebpf.self_monitor.report_interval", "10s")
+	viper.SetDefault("ebpf.self_monitor.heartbeat_timeout", "5s")
+	viper.SetDefault("ebpf.self_monitor.alert_heartbeat_fail_count", 3)
+	viper.SetDefault("ebpf.self_monitor.alert_cpu_percent", 80.0)
+	viper.SetDefault("ebpf.self_monitor.alert_memory_percent", 90.0)
+	viper.SetDefault("ebpf.self_monitor.alert_packet_drop_rate", 5.0)
+	viper.SetDefault("ebpf.self_monitor.alert_report_success_rate_min", 95.0)
 
 	// 性能优化配置默认值
 	viper.SetDefault("ebpf.perf_optimizer.enabled", true)
@@ -694,6 +721,17 @@ func Load() (*Config, error) {
 				MemRecoverThreshold:       viper.GetFloat64("ebpf.circuit_breaker.mem_recover_threshold"),
 				SilentCPURecoverThreshold: viper.GetFloat64("ebpf.circuit_breaker.silent_cpu_recover_threshold"),
 				SilentMemRecoverThreshold: viper.GetFloat64("ebpf.circuit_breaker.silent_mem_recover_threshold"),
+			},
+			SelfMonitor: SelfMonitorConfig{
+				Enabled:                   viper.GetBool("ebpf.self_monitor.enabled"),
+				CollectInterval:           viper.GetDuration("ebpf.self_monitor.collect_interval"),
+				ReportInterval:            viper.GetDuration("ebpf.self_monitor.report_interval"),
+				HeartbeatTimeout:          viper.GetDuration("ebpf.self_monitor.heartbeat_timeout"),
+				AlertHeartbeatFailCount:   viper.GetInt("ebpf.self_monitor.alert_heartbeat_fail_count"),
+				AlertCPUPercent:           viper.GetFloat64("ebpf.self_monitor.alert_cpu_percent"),
+				AlertMemoryPercent:        viper.GetFloat64("ebpf.self_monitor.alert_memory_percent"),
+				AlertPacketDropRate:       viper.GetFloat64("ebpf.self_monitor.alert_packet_drop_rate"),
+				AlertReportSuccessRateMin: viper.GetFloat64("ebpf.self_monitor.alert_report_success_rate_min"),
 			},
 			PerfOptimizer: PerfOptimizerConfig{
 				Enabled:         viper.GetBool("ebpf.perf_optimizer.enabled"),

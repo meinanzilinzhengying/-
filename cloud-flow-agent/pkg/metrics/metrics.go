@@ -169,6 +169,26 @@ func (m *Metrics) EBPFCollect(err error) {
 	}
 }
 
+// GetCollectCount 获取采集总数计数器（用于自监控）
+func (m *Metrics) GetCollectCount() prometheus.Counter {
+	return m.collectCount
+}
+
+// GetCollectErrors 获取采集错误计数器（用于自监控）
+func (m *Metrics) GetCollectErrors() prometheus.Counter {
+	return m.collectErrors
+}
+
+// GetSendCount 获取发送总数计数器（用于自监控）
+func (m *Metrics) GetSendCount() prometheus.Counter {
+	return m.sendCount
+}
+
+// GetSendErrors 获取发送错误计数器（用于自监控）
+func (m *Metrics) GetSendErrors() prometheus.Counter {
+	return m.sendErrors
+}
+
 // StartServer 启动 Prometheus 指标服务器
 // 返回 *http.Server 用于优雅关闭，error channel 用于传递服务器运行中的错误
 func (m *Metrics) StartServer(addr string) (*http.Server, <-chan error) {

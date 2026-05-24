@@ -159,6 +159,20 @@ ebpf:
     silent_cpu_recover_threshold: 70.0   # 静默恢复CPU阈值(%): 需降到更低才恢复
     silent_mem_recover_threshold: 80.0   # 静默恢复内存阈值(%): 需降到更低才恢复
 
+  # 自监控配置
+  # 采集Agent自身运行状态，每10秒上报至Center，异常状态触发告警
+  self_monitor:
+    enabled: true                        # 启用自监控
+    collect_interval: "10s"              # 采集间隔
+    report_interval: "10s"               # 上报间隔
+    heartbeat_timeout: "5s"              # 心跳超时判定
+    # 告警阈值
+    alert_heartbeat_fail_count: 3        # 连续心跳失败次数触发告警
+    alert_cpu_percent: 80.0              # CPU使用率告警阈值(%)
+    alert_memory_percent: 90.0           # 内存使用率告警阈值(%)
+    alert_packet_drop_rate: 5.0          # 丢包率告警阈值(%)
+    alert_report_success_rate_min: 95.0  # 上报成功率最低阈值(%)
+
   # 性能优化配置
   # 针对高负载场景(700Mbps, RPS1400)的性能优化
   perf_optimizer:

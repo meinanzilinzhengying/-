@@ -20,6 +20,7 @@ import (
 	"cloud-flow-agent/internal/grpcclient"
 	"cloud-flow-agent/internal/http"
 	"cloud-flow-agent/internal/network"
+	"cloud-flow-agent/internal/selfmonitor"
 	"cloud-flow-agent/internal/sqlaggregator"
 	"cloud-flow-agent/internal/storage"
 	"cloud-flow-agent/pkg/logger"
@@ -138,8 +139,60 @@ func main() {
 			obCfg.CPUSilentThreshold, obCfg.MemDegradedThreshold, obCfg.MemSilentThreshold)
 	}
 
+	// 初始化自监控采集器
+	var selfMonitorCollector *selfmonitor.Collector
+	var selfMonitorReporter *selfmonitor.Reporter
+	if cfg.EBPF.SelfMonitor.Enabled {
+		smCfg := selfmonitor.Config{
+			Enabled:          cfg.EBPF.SelfMonitor.Enabled,
+			CollectInterval:  cfg.EBPF.SelfMonitor.CollectInterval,
+			ReportInterval:   cfg.EBPF.SelfMonitor.ReportInterval,
+			HeartbeatTimeout: cfg.EBPF.SelfMonitor.HeartbeatTimeout,
+			MaxMemoryMB:      cfg.EBPF.ResourceLimit.MaxMemoryMB,
+			AlertThresholds: selfmonitor.AlertThresholds{
+				HeartbeatFailCount:      cfg.EBPF.SelfMonitor.AlertHeartbeatFailCount,
+				CPUPercentThreshold:     cfg.EBPF.SelfMonitor.AlertCPUPercent,
+				MemoryPercentThreshold:  cfg.EBPF.SelfMonitor.AlertMemoryPercent,
+				PacketDropRateThreshold: cfg.EBPF.SelfMonitor.AlertPacketDropRate,
+				ReportSuccessRateMin:    cfg.EBPF.SelfMonitor.AlertReportSuccessRateMin,
+			},
+		}
+		selfMonitorCollector = selfmonitor.NewCollector(smCfg, log)
+
+		// 设置告警回调
+		selfMonitorCollector.OnAlert(func(alertType string, value float64, message string) {
+			switch alertType {
+			case "heartbeat_failure":
+				log.Errorf("[自监控告警] 心跳异常: %s", message)
+			case "cpu_high":
+				log.Warnf("[自监控告警] CPU使用率过高: %s", message)
+			case "memory_high":
+				log.Warnf("[自监控告警] 内存使用率过高: %s", message)
+			case "packet_drop_high":
+				log.Warnf("[自监控告警] 采集丢包率过高: %s", message)
+			case "report_success_low":
+				log.Warnf("[自监控告警] 上报成功率过低: %s", message)
+			}
+		})
+
+		selfMonitorCollector.Start()
+		defer selfMonitorCollector.Stop()
+		log.Infof("[自监控] 采集器已启动: 采集间隔=%v, 上报间隔=%v",
+			smCfg.CollectInterval, smCfg.ReportInterval)
+	}
+
 	// 初始化指标收集器
 	metricCollector := metrics.New()
+
+	// 设置自监控采集器的计数器引用
+	if selfMonitorCollector != nil {
+		selfMonitorCollector.SetCounters(
+			metricCollector.GetCollectCount(),
+			metricCollector.GetCollectErrors(),
+			metricCollector.GetSendCount(),
+			metricCollector.GetSendCount(), // sendCount - sendErrors = success
+		)
+	}
 
 	// 启动 Prometheus 指标服务器
 	metricsAddr := fmt.Sprintf(":%s", cfg.MetricsPort)
@@ -244,6 +297,23 @@ func main() {
 	}
 	log.Infof("注册成功: %s, 心跳间隔=%ds", resp.GetMessage(), resp.GetHeartbeatInterval())
 
+	// 初始化自监控上报器（注册成功后才能上报）
+	if selfMonitorCollector != nil && cfg.EBPF.SelfMonitor.Enabled {
+		selfMonitorReporter = selfmonitor.NewReporter(
+			selfmonitor.Config{
+				Enabled:         cfg.EBPF.SelfMonitor.Enabled,
+				ReportInterval:  cfg.EBPF.SelfMonitor.ReportInterval,
+			},
+			selfMonitorCollector,
+			safeClient.Get(),
+			cfg.ProbeID,
+			log,
+		)
+		selfMonitorReporter.Start()
+		defer selfMonitorReporter.Stop()
+		log.Infof("[自监控] 上报器已启动: 上报间隔=%v", cfg.EBPF.SelfMonitor.ReportInterval)
+	}
+
 	// 初始化传统采集器
 	c := collector.New(collector.CollectConfig{
 		CPU:     cfg.Collect.CPU,
@@ -328,10 +398,15 @@ func main() {
 			select {
 			case <-ticker.C:
 				heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				heartbeatStart := time.Now()
 				if err := safeClient.Get().Heartbeat(heartbeatCtx, cfg.ProbeID); err != nil {
 					failureCount++
 					log.Warnf("心跳失败 (第 %d/%d 次): %v", failureCount, maxFailures, err)
 					metricCollector.HeartbeatSent(err)
+					// 记录自监控心跳状态
+					if selfMonitorCollector != nil {
+						selfMonitorCollector.RecordHeartbeat(false, time.Since(heartbeatStart))
+					}
 
 					// 连续失败达到阈值，触发重连
 					if failureCount >= maxFailures {
@@ -407,6 +482,10 @@ func main() {
 					// 心跳成功，重置失败计数
 					failureCount = 0
 					metricCollector.HeartbeatSent(nil)
+					// 记录自监控心跳状态
+					if selfMonitorCollector != nil {
+						selfMonitorCollector.RecordHeartbeat(true, time.Since(heartbeatStart))
+					}
 				}
 				heartbeatCancel() // 直接调用而非 defer，因为 defer 在 for 循环内会延迟到函数退出才执行
 			case <-stopCh:

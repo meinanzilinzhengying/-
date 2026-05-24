@@ -119,12 +119,24 @@ type ResourceLimitConfig struct {
 	UseCgroup     bool    // 使用cgroup v2进行系统级限制
 }
 
-// CircuitBreakerConfig 熔断配置
+// CircuitBreakerConfig 过载熔断配置
 type CircuitBreakerConfig struct {
-	Enabled        bool          // 启用熔断
-	MaxFailures    int           // 最大连续失败次数
-	ResetTimeout   time.Duration // 熔断恢复超时
-	SilentDuration time.Duration // 静默持续时间
+	Enabled        bool          // 启用过载熔断
+	MaxFailures    int           // 最大连续失败次数（gRPC熔断用）
+	ResetTimeout   time.Duration // 熔断恢复超时（gRPC熔断用）
+	SilentDuration time.Duration // 静默持续时间（gRPC熔断用）
+
+	// 过载熔断阈值
+	CheckInterval             time.Duration // 资源检查间隔（默认3s）
+	CPUDegradedThreshold      float64       // CPU降级阈值百分比（默认80）
+	CPUSilentThreshold        float64       // CPU静默阈值百分比（默认95）
+	MemDegradedThreshold      float64       // 内存降级阈值百分比（默认90）
+	MemSilentThreshold        float64       // 内存静默阈值百分比（默认95）
+	CPUDegradedDuration       time.Duration // CPU持续超限触发降级的持续时间（默认30s）
+	CPURecoverThreshold       float64       // CPU恢复阈值百分比（默认80）
+	MemRecoverThreshold       float64       // 内存恢复阈值百分比（默认85）
+	SilentCPURecoverThreshold float64       // 静默恢复CPU阈值百分比（默认70）
+	SilentMemRecoverThreshold float64       // 静默恢复内存阈值百分比（默认80）
 }
 
 // PerfOptimizerConfig 性能优化配置
@@ -418,6 +430,17 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.circuit_breaker.max_failures", 3)
 	viper.SetDefault("ebpf.circuit_breaker.reset_timeout", 30)
 	viper.SetDefault("ebpf.circuit_breaker.silent_duration", 60)
+	// 过载熔断阈值默认值
+	viper.SetDefault("ebpf.circuit_breaker.check_interval", "3s")
+	viper.SetDefault("ebpf.circuit_breaker.cpu_degraded_threshold", 80.0)
+	viper.SetDefault("ebpf.circuit_breaker.cpu_silent_threshold", 95.0)
+	viper.SetDefault("ebpf.circuit_breaker.mem_degraded_threshold", 90.0)
+	viper.SetDefault("ebpf.circuit_breaker.mem_silent_threshold", 95.0)
+	viper.SetDefault("ebpf.circuit_breaker.cpu_degraded_duration", "30s")
+	viper.SetDefault("ebpf.circuit_breaker.cpu_recover_threshold", 80.0)
+	viper.SetDefault("ebpf.circuit_breaker.mem_recover_threshold", 85.0)
+	viper.SetDefault("ebpf.circuit_breaker.silent_cpu_recover_threshold", 70.0)
+	viper.SetDefault("ebpf.circuit_breaker.silent_mem_recover_threshold", 80.0)
 
 	// 性能优化配置默认值
 	viper.SetDefault("ebpf.perf_optimizer.enabled", true)
@@ -660,6 +683,17 @@ func Load() (*Config, error) {
 				MaxFailures:    viper.GetInt("ebpf.circuit_breaker.max_failures"),
 				ResetTimeout:   viper.GetDuration("ebpf.circuit_breaker.reset_timeout") * time.Second,
 				SilentDuration: viper.GetDuration("ebpf.circuit_breaker.silent_duration") * time.Second,
+				// 过载熔断阈值
+				CheckInterval:             viper.GetDuration("ebpf.circuit_breaker.check_interval"),
+				CPUDegradedThreshold:      viper.GetFloat64("ebpf.circuit_breaker.cpu_degraded_threshold"),
+				CPUSilentThreshold:        viper.GetFloat64("ebpf.circuit_breaker.cpu_silent_threshold"),
+				MemDegradedThreshold:      viper.GetFloat64("ebpf.circuit_breaker.mem_degraded_threshold"),
+				MemSilentThreshold:        viper.GetFloat64("ebpf.circuit_breaker.mem_silent_threshold"),
+				CPUDegradedDuration:       viper.GetDuration("ebpf.circuit_breaker.cpu_degraded_duration"),
+				CPURecoverThreshold:       viper.GetFloat64("ebpf.circuit_breaker.cpu_recover_threshold"),
+				MemRecoverThreshold:       viper.GetFloat64("ebpf.circuit_breaker.mem_recover_threshold"),
+				SilentCPURecoverThreshold: viper.GetFloat64("ebpf.circuit_breaker.silent_cpu_recover_threshold"),
+				SilentMemRecoverThreshold: viper.GetFloat64("ebpf.circuit_breaker.silent_mem_recover_threshold"),
 			},
 			PerfOptimizer: PerfOptimizerConfig{
 				Enabled:         viper.GetBool("ebpf.perf_optimizer.enabled"),

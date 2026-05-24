@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"cloud-flow-agent/internal/cgroup"
+	"cloud-flow-agent/internal/circuitbreaker"
 	"cloud-flow-agent/internal/collector"
 	"cloud-flow-agent/internal/config"
 	"cloud-flow-agent/internal/ebpfcollector"
@@ -98,6 +99,43 @@ func main() {
 			}
 			defer cgroupMgr.Close()
 		}
+	}
+
+	// 初始化过载熔断器
+	var overloadBreaker *circuitbreaker.Breaker
+	if cfg.EBPF.CircuitBreaker.Enabled {
+		obCfg := circuitbreaker.Config{
+			CheckInterval:             cfg.EBPF.CircuitBreaker.CheckInterval,
+			CPUDegradedThreshold:      cfg.EBPF.CircuitBreaker.CPUDegradedThreshold,
+			CPUSilentThreshold:        cfg.EBPF.CircuitBreaker.CPUSilentThreshold,
+			MemDegradedThreshold:      cfg.EBPF.CircuitBreaker.MemDegradedThreshold,
+			MemSilentThreshold:        cfg.EBPF.CircuitBreaker.MemSilentThreshold,
+			CPUDegradedDuration:       cfg.EBPF.CircuitBreaker.CPUDegradedDuration,
+			CPURecoverThreshold:       cfg.EBPF.CircuitBreaker.CPURecoverThreshold,
+			MemRecoverThreshold:       cfg.EBPF.CircuitBreaker.MemRecoverThreshold,
+			SilentCPURecoverThreshold: cfg.EBPF.CircuitBreaker.SilentCPURecoverThreshold,
+			SilentMemRecoverThreshold: cfg.EBPF.CircuitBreaker.SilentMemRecoverThreshold,
+			MaxMemoryMB:               cfg.EBPF.ResourceLimit.MaxMemoryMB,
+			MaxCPUCores:               cfg.EBPF.ResourceLimit.MaxCPUCore,
+		}
+		overloadBreaker = circuitbreaker.NewBreaker(obCfg)
+		overloadBreaker.OnStateChange(func(from, to circuitbreaker.State, snapshot circuitbreaker.ResourceSnapshot) {
+			switch to {
+			case circuitbreaker.StateDegraded:
+				log.Warnf("[过载熔断] 进入降级模式: CPU=%.1f%%, 内存=%.1f%%, 停止非核心指标采集(HTTP/DNS/MySQL全字段+SQL聚合+传统采集)",
+					snapshot.CPUPercent, snapshot.MemPercent)
+			case circuitbreaker.StateSilent:
+				log.Errorf("[过载熔断] 进入完全静默模式: CPU=%.1f%%, 内存=%.1f%%, 停止所有采集",
+					snapshot.CPUPercent, snapshot.MemPercent)
+			case circuitbreaker.StateNormal:
+				log.Infof("[过载熔断] 恢复正常采集: CPU=%.1f%%, 内存=%.1f%%", snapshot.CPUPercent, snapshot.MemPercent)
+			}
+		})
+		overloadBreaker.Start()
+		defer overloadBreaker.Stop()
+		log.Infof("[过载熔断] 已启动: CPU降级≥%.0f%%(持续%.0fs)/静默≥%.0f%%, 内存降级≥%.0f%%/静默≥%.0f%%",
+			obCfg.CPUDegradedThreshold, obCfg.CPUDegradedDuration.Seconds(),
+			obCfg.CPUSilentThreshold, obCfg.MemDegradedThreshold, obCfg.MemSilentThreshold)
 	}
 
 	// 初始化指标收集器
@@ -397,14 +435,22 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				// 采集传统指标
-				start := metricCollector.CollectStarted()
-				metricsData, collectErr := c.Collect()
-				metricCollector.CollectFinished(start, collectErr)
-				if collectErr != nil {
-					log.Warnf("采集传统指标失败: %v", collectErr)
-				} else {
-					buf = append(buf, metricsData...)
+				// 根据过载熔断状态决定采集级别
+				if overloadBreaker != nil && overloadBreaker.IsSilent() {
+					// 完全静默模式：跳过所有采集
+					continue
+				}
+
+				// 采集传统指标（非核心指标，降级时跳过）
+				if overloadBreaker == nil || overloadBreaker.ShouldCollectExtended() {
+					start := metricCollector.CollectStarted()
+					metricsData, collectErr := c.Collect()
+					metricCollector.CollectFinished(start, collectErr)
+					if collectErr != nil {
+						log.Warnf("采集传统指标失败: %v", collectErr)
+					} else {
+						buf = append(buf, metricsData...)
+					}
 				}
 
 				// 采集 EBPF 网络流量数据
@@ -414,8 +460,8 @@ func main() {
 					buf = append(buf, ebpfMetrics...)
 				}
 
-				// 采集 SQL 聚合分析数据
-				if sqlAggregator != nil {
+				// 采集 SQL 聚合分析数据（非核心指标，降级时跳过）
+				if sqlAggregator != nil && (overloadBreaker == nil || overloadBreaker.ShouldCollectExtended()) {
 					sqlMetrics := sqlAggregator.GetMetrics()
 					buf = append(buf, sqlMetrics...)
 				}

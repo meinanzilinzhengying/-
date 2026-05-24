@@ -136,13 +136,28 @@ ebpf:
     max_goroutines: 10000     # 最大协程数
     use_cgroup: true          # 启用cgroup v2系统级限制
 
-  # 熔断配置
-  # 资源超限时自动静默，保护系统稳定性
+  # 过载熔断配置
+  # 基于资源使用率的三级熔断机制，保护Agent在峰值负载下稳定运行
+  # 状态: Normal(全量采集) → Degraded(仅核心指标) → Silent(完全静默)
+  # 核心指标: 基础流量(TC) + TCP深度指标
+  # 非核心指标: HTTP/DNS/MySQL全字段解析 + SQL聚合 + 传统采集(CPU/Memory/Disk)
   circuit_breaker:
-    enabled: true             # 启用熔断
-    max_failures: 3           # 最大连续失败次数
-    reset_timeout: 30         # 熔断恢复超时(秒)
-    silent_duration: 60       # 静默持续时间(秒)
+    enabled: true                        # 启用过载熔断
+    max_failures: 3                      # gRPC熔断: 最大连续失败次数
+    reset_timeout: 30                    # gRPC熔断: 恢复超时(秒)
+    silent_duration: 60                  # gRPC熔断: 静默持续时间(秒)
+
+    # 过载熔断阈值
+    check_interval: "3s"                 # 资源检查间隔
+    cpu_degraded_threshold: 80.0         # CPU降级阈值(%): 连续超过此值触发降级
+    cpu_silent_threshold: 95.0           # CPU静默阈值(%): 超过此值进入完全静默
+    mem_degraded_threshold: 90.0         # 内存降级阈值(%): 超过此值触发降级
+    mem_silent_threshold: 95.0           # 内存静默阈值(%): 超过此值进入完全静默
+    cpu_degraded_duration: "30s"         # CPU持续超限触发降级的持续时间
+    cpu_recover_threshold: 80.0          # CPU恢复阈值(%): 低于此值从降级恢复
+    mem_recover_threshold: 85.0          # 内存恢复阈值(%): 低于此值从降级恢复
+    silent_cpu_recover_threshold: 70.0   # 静默恢复CPU阈值(%): 需降到更低才恢复
+    silent_mem_recover_threshold: 80.0   # 静默恢复内存阈值(%): 需降到更低才恢复
 
   # 性能优化配置
   # 针对高负载场景(700Mbps, RPS1400)的性能优化

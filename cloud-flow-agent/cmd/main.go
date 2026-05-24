@@ -15,7 +15,9 @@ import (
 	"cloud-flow-agent/internal/ebpfcollector"
 	"cloud-flow-agent/internal/grpcclient"
 	"cloud-flow-agent/internal/http"
+	"cloud-flow-agent/internal/network"
 	"cloud-flow-agent/internal/sqlaggregator"
+	"cloud-flow-agent/internal/storage"
 	"cloud-flow-agent/pkg/logger"
 	"cloud-flow-agent/pkg/metrics"
 	edge "cloud-flow/proto"
@@ -68,6 +70,54 @@ func main() {
 
 	log.Infof("探针启动中... 配置: %s", cfg.Summary())
 
+	// 验证管理IP配置
+	if err := network.ValidateMgmtIP(cfg.Network.MgmtIP); err != nil {
+		log.Errorf("管理IP配置无效: %v", err)
+		os.Exit(1)
+	}
+
+	// 初始化网卡监控器
+	netMonitor := network.NewMonitor(cfg.Network.MgmtIP, cfg.EdgeAddr, log)
+	netMonitor.Start()
+	defer netMonitor.Stop()
+
+	// 获取实际使用的管理IP（可能自动检测）
+	mgmtIP := netMonitor.GetMgmtIP()
+	if mgmtIP != "" {
+		log.Infof("使用管理IP: %s", mgmtIP)
+	}
+
+	// 初始化时序存储（如果启用了本地缓存）
+	var tsStore *storage.TimeSeriesStore
+	if cfg.Storage.Enabled {
+		opts := &storage.StorageOptions{
+			BaseDir: cfg.Storage.BaseDir,
+			Retention: storage.RetentionConfig{
+				Enabled:     true,
+				DefaultDays: cfg.Storage.RetentionDays,
+				CustomPeriod: map[storage.DataType]int{
+					storage.DataTypeMetric: cfg.Storage.MetricRetentionDays,
+					storage.DataTypeLog:    cfg.Storage.LogRetentionDays,
+					storage.DataTypeTrace:  cfg.Storage.TraceRetentionDays,
+					storage.DataTypeEvent:  cfg.Storage.EventRetentionDays,
+				},
+			},
+			ChunkSize:         cfg.Storage.ChunkSize,
+			WriteBufferSize:   cfg.Storage.WriteBufferSize,
+			CompressionType:   storage.CompressionZSTD,
+			IndexEnabled:      cfg.Storage.EnableIndex,
+			RetentionInterval: time.Duration(cfg.Storage.RetentionIntervalMin) * time.Minute,
+		}
+		tsStore, err = storage.NewTimeSeriesStore(opts, log)
+		if err != nil {
+			log.Warnf("初始化时序存储失败: %v，将禁用本地缓存", err)
+			tsStore = nil
+		} else {
+			log.Infof("时序存储已启用: 目录=%s", cfg.Storage.BaseDir)
+			defer tsStore.Close()
+		}
+	}
+
 	// 连接边缘节点（带重试，Edge 未启动时自动等待）
 	var client *grpcclient.Client
 	connectDelay := 2 * time.Second
@@ -79,7 +129,7 @@ func main() {
 			return
 		}
 
-		client, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, grpcclient.TLSConfig{
+		client, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
 			Enabled:    cfg.TLS.Enabled,
 			ServerName: cfg.TLS.ServerName,
 			CACert:     cfg.TLS.CACert,
@@ -208,11 +258,19 @@ func main() {
 						// 关闭当前客户端
 						safeClient.Get().Close()
 
+						// 等待网卡恢复可用
+						if !netMonitor.IsAvailable() {
+							log.Warn("管理网卡不可用，等待网卡恢复...")
+							if !netMonitor.WaitForAvailable(30 * time.Second) {
+								log.Warn("等待网卡恢复超时，继续尝试重连...")
+							}
+						}
+
 						// 重新连接 Edge 节点
 						var newClient *grpcclient.Client
 						connectDelay := 2 * time.Second
 						for attempt := 1; ; attempt++ {
-							newClient, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, grpcclient.TLSConfig{
+							newClient, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
 								Enabled:    cfg.TLS.Enabled,
 								ServerName: cfg.TLS.ServerName,
 								CACert:     cfg.TLS.CACert,
@@ -285,6 +343,13 @@ func main() {
 		defer flushTicker.Stop()
 		var buf []*edge.MetricData
 
+		// 网卡恢复检测ticker
+		netCheckTicker := time.NewTicker(5 * time.Second)
+		defer netCheckTicker.Stop()
+
+		// 缓存补发状态
+		wasUnavailable := false
+
 		for {
 			select {
 			case <-ticker.C:
@@ -317,25 +382,60 @@ func main() {
 						Metrics: buf,
 					}
 
-					// 发送指标
-					sendStart := metricCollector.SendStarted()
-					sendCtx, sendCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					err := safeClient.Get().SendMetrics(sendCtx, batch)
-					sendCancel() // 统一在 SendMetrics 返回后立即调用
-					if err != nil {
-						log.Errorf("发送指标数据失败: %v", err)
-						metricCollector.SendFinished(sendStart, 0, err)
-						// 保留数据下次重试（简单丢弃超出阈值的部分避免内存溢出）
-						// 保留最新的 cfg.BatchSize 条数据，因为最新数据通常更有价值
-						if len(buf) > cfg.BatchSize*2 {
-							buf = buf[len(buf)-cfg.BatchSize:]
+					// 检查网卡可用性决定发送方式
+					if netMonitor.IsAvailable() {
+						// 网卡可用时：直接发送
+						sendStart := metricCollector.SendStarted()
+						sendCtx, sendCancel := context.WithTimeout(context.Background(), 10*time.Second)
+						err := safeClient.Get().SendMetrics(sendCtx, batch)
+						sendCancel()
+						if err != nil {
+							log.Errorf("发送指标数据失败: %v", err)
+							metricCollector.SendFinished(sendStart, 0, err)
+							// 发送失败时，如果启用了本地缓存则写入缓存
+							if tsStore != nil {
+								if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
+									log.Warnf("写入本地缓存失败: %v", cacheErr)
+								} else {
+									log.Infof("已将 %d 条指标写入本地缓存", len(buf))
+								}
+							}
+							// 保留数据下次重试
+							if len(buf) > cfg.BatchSize*2 {
+								buf = buf[len(buf)-cfg.BatchSize:]
+							}
+						} else {
+							log.Debugf("发送 %d 条指标数据", len(buf))
+							sentLen := len(buf)
+							metricCollector.SendFinished(sendStart, sentLen*100, nil)
+							buf = nil
 						}
 					} else {
-						log.Debugf("发送 %d 条指标数据", len(buf))
-						sentLen := len(buf)
-						metricCollector.SendFinished(sendStart, sentLen*100, nil) // 估算字节数
+						// 网卡不可用时：写入本地缓存
+						if tsStore != nil {
+							if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
+								log.Warnf("写入本地缓存失败: %v", cacheErr)
+							} else {
+								log.Infof("网卡不可用，已将 %d 条指标写入本地缓存", len(buf))
+							}
+						} else {
+							log.Warn("网卡不可用且本地缓存未启用，指标数据将被丢弃")
+						}
 						buf = nil
 					}
+				}
+			case <-netCheckTicker.C:
+				// 检测网卡恢复，触发缓存补发
+				if wasUnavailable && netMonitor.IsAvailable() {
+					log.Info("网卡已恢复，开始补发缓存数据...")
+					if tsStore != nil {
+						if err := flushCachedMetrics(tsStore, safeClient.Get(), cfg.ProbeID, metricCollector, log); err != nil {
+							log.Warnf("补发缓存数据失败: %v", err)
+						}
+					}
+					wasUnavailable = false
+				} else if !netMonitor.IsAvailable() {
+					wasUnavailable = true
 				}
 			case <-flushTicker.C:
 				// 每30秒flush一次日志
@@ -343,19 +443,28 @@ func main() {
 			case <-stopCh:
 				// 发送剩余数据
 				if len(buf) > 0 {
-					batch := &edge.MetricsBatch{
-						ProbeId: cfg.ProbeID,
-						Metrics: buf,
+					if netMonitor.IsAvailable() {
+						batch := &edge.MetricsBatch{
+							ProbeId: cfg.ProbeID,
+							Metrics: buf,
+						}
+						sendStart := metricCollector.SendStarted()
+						sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						if err := safeClient.Get().SendMetrics(sendCtx, batch); err != nil {
+							log.Warnf("发送剩余数据失败: %v", err)
+							metricCollector.SendFinished(sendStart, 0, err)
+							// 尝试写入缓存
+							if tsStore != nil {
+								_ = cacheMetrics(tsStore, buf)
+							}
+						} else {
+							metricCollector.SendFinished(sendStart, len(buf)*100, nil)
+						}
+						cancel()
+					} else if tsStore != nil {
+						// 网卡不可用，写入缓存
+						_ = cacheMetrics(tsStore, buf)
 					}
-					sendStart := metricCollector.SendStarted()
-					sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					if err := safeClient.Get().SendMetrics(sendCtx, batch); err != nil {
-						log.Warnf("发送剩余数据失败: %v", err)
-						metricCollector.SendFinished(sendStart, 0, err)
-					} else {
-						metricCollector.SendFinished(sendStart, len(buf)*100, nil) // 估算字节数
-					}
-					cancel()
 				}
 				return
 			}
@@ -466,4 +575,127 @@ func getLocalIP() string {
 		return hostname
 	}
 	return "0.0.0.0" // 最终兜底值
+}
+
+// cacheMetrics 将指标数据写入本地缓存
+func cacheMetrics(store *storage.TimeSeriesStore, metrics []*edge.MetricData) error {
+	if store == nil || len(metrics) == 0 {
+		return nil
+	}
+
+	points := make([]storage.DataPoint, 0, len(metrics))
+	now := time.Now().UnixNano()
+
+	for _, m := range metrics {
+		fields := make(map[string]interface{})
+		if m.Value != 0 {
+			fields["value"] = m.Value
+		}
+		if m.Tags != nil {
+			for k, v := range m.Tags {
+				fields[k] = v
+			}
+		}
+
+		points = append(points, storage.DataPoint{
+			Timestamp: now,
+			Tags: map[string]string{
+				"probe_id":  m.ProbeId,
+				"metric_id": m.MetricId,
+				"name":      m.Name,
+			},
+			Fields:   fields,
+			DataType: storage.DataTypeMetric,
+			Source:   "agent",
+		})
+	}
+
+	return store.Write(points...)
+}
+
+// flushCachedMetrics 从缓存读取并补发数据
+func flushCachedMetrics(store *storage.TimeSeriesStore, client *grpcclient.Client, probeID string, metricCollector *metrics.Collector, log *logger.Logger) error {
+	if store == nil || client == nil {
+		return nil
+	}
+
+	// 查询缓存的指标数据
+	query := &storage.Query{
+		StartTime: 0,
+		EndTime:   time.Now().UnixNano(),
+		DataTypes: []storage.DataType{storage.DataTypeMetric},
+		UseIndex:  true,
+	}
+
+	result, err := store.Query(query)
+	if err != nil {
+		return fmt.Errorf("查询缓存数据失败: %w", err)
+	}
+
+	if len(result.Points) == 0 {
+		log.Info("没有需要补发的缓存数据")
+		return nil
+	}
+
+	log.Infof("开始补发 %d 条缓存数据...", len(result.Points))
+
+	// 将DataPoint转换回MetricData
+	var metricsData []*edge.MetricData
+	for _, p := range result.Points {
+		md := &edge.MetricData{
+			ProbeId: probeID,
+			MetricId: p.Tags["metric_id"],
+			Name:    p.Tags["name"],
+			Tags:    make(map[string]string),
+		}
+		if v, ok := p.Fields["value"].(float64); ok {
+			md.Value = v
+		}
+		// 复制其他标签
+		for k, v := range p.Fields {
+			if k != "value" {
+				if s, ok := v.(string); ok {
+					md.Tags[k] = s
+				}
+			}
+		}
+		metricsData = append(metricsData, md)
+	}
+
+	// 分批发送
+	batchSize := 100
+	sentCount := 0
+	failedCount := 0
+
+	for i := 0; i < len(metricsData); i += batchSize {
+		end := i + batchSize
+		if end > len(metricsData) {
+			end = len(metricsData)
+		}
+
+		batch := &edge.MetricsBatch{
+			ProbeId: probeID,
+			Metrics: metricsData[i:end],
+		}
+
+		sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		sendStart := metricCollector.SendStarted()
+		err := client.SendMetrics(sendCtx, batch)
+		cancel()
+
+		if err != nil {
+			log.Warnf("补发批次失败 (%d-%d): %v", i, end, err)
+			metricCollector.SendFinished(sendStart, 0, err)
+			failedCount += end - i
+		} else {
+			metricCollector.SendFinished(sendStart, (end-i)*100, nil)
+			sentCount += end - i
+		}
+
+		// 避免发送过快
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	log.Infof("缓存数据补发完成: 成功=%d, 失败=%d", sentCount, failedCount)
+	return nil
 }

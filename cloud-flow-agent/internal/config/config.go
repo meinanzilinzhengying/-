@@ -70,7 +70,8 @@ type TLSConfig struct {
 // NetworkConfig 网络配置
 type NetworkConfig struct {
 	MgmtIface            string // 管理网卡接口名称
-	LocalAddr            string // 本地绑定地址
+	MgmtIP               string // 管理网卡IP（新增：指定用于上报的IP）
+	LocalAddr            string // 本地绑定地址（废弃，使用MgmtIP）
 	PreferredSourceIface string // 优先使用的源网卡
 }
 
@@ -376,6 +377,7 @@ func Load() (*Config, error) {
 
 	// 网络配置默认值
 	viper.SetDefault("network.mgmt_iface", "")
+	viper.SetDefault("network.mgmt_ip", "")
 	viper.SetDefault("network.local_addr", "")
 	viper.SetDefault("network.preferred_source_iface", "")
 
@@ -611,6 +613,7 @@ func Load() (*Config, error) {
 		},
 		Network: NetworkConfig{
 			MgmtIface:            viper.GetString("network.mgmt_iface"),
+			MgmtIP:               viper.GetString("network.mgmt_ip"),
 			LocalAddr:            viper.GetString("network.local_addr"),
 			PreferredSourceIface: viper.GetString("network.preferred_source_iface"),
 		},

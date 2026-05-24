@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -45,19 +46,23 @@ type Client struct {
 	addr   string
 	apiKey string
 	tlsCfg TLSConfig
+	localAddr string // 本地绑定地址
 	stopCh chan struct{}
 	stopped sync.Once
 	watchCtx    context.Context
 	watchCancel context.CancelFunc
 }
 
-func NewClient(addr string, apiKey string, tlsCfg TLSConfig, log *logger.Logger) (*Client, error) {
+// NewClient 创建gRPC客户端
+// localAddr: 本地绑定地址，为空则不绑定特定地址
+func NewClient(addr string, apiKey string, localAddr string, tlsCfg TLSConfig, log *logger.Logger) (*Client, error) {
 	c := &Client{
-		logger: log,
-		addr:   addr,
-		apiKey: apiKey,
-		tlsCfg: tlsCfg,
-		stopCh: make(chan struct{}),
+		logger:    log,
+		addr:      addr,
+		apiKey:    apiKey,
+		localAddr: localAddr,
+		tlsCfg:    tlsCfg,
+		stopCh:    make(chan struct{}),
 	}
 	c.watchCtx, c.watchCancel = context.WithCancel(context.Background())
 
@@ -68,7 +73,7 @@ func NewClient(addr string, apiKey string, tlsCfg TLSConfig, log *logger.Logger)
 	// 启动后台连接监控
 	go c.watchConnection()
 
-	log.Infof("已连接边缘节点: %s", addr)
+	log.Infof("已连接边缘节点: %s (本地地址: %s)", addr, localAddr)
 	return c, nil
 }
 
@@ -90,6 +95,19 @@ func (c *Client) connect() error {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		c.logger.Warn("边缘节点连接未启用 TLS，将使用明文传输")
 	}
+
+	// 如果指定了本地地址，使用自定义Dialer绑定本地地址
+	if c.localAddr != "" {
+		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			d := &net.Dialer{
+				LocalAddr: &net.TCPAddr{IP: net.ParseIP(c.localAddr)},
+				Timeout:   10 * time.Second,
+			}
+			return d.DialContext(ctx, "tcp", addr)
+		}))
+		c.logger.Infof("使用本地地址绑定: %s", c.localAddr)
+	}
+
 	// 移除 grpc.WithBlock()，使用非阻塞连接
 
 	// 2. 建立连接（无锁）

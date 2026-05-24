@@ -808,12 +808,14 @@ func (c *Collector) collectHTTPFullMetrics(now int64) []*edge.MetricData {
 				"response_content_length": fmt.Sprintf("%d", resp.ContentLength),
 				"server":            resp.GetServer(),
 				"is_chunked":        fmt.Sprintf("%v", resp.IsChunked == 1),
-				"is_gzipped":        fmt.Sprintf("%v", resp.IsGzipped == 1),
-				"is_cached":         fmt.Sprintf("%v", resp.IsCached == 1),
-				"latency_us":        fmt.Sprintf("%d", resp.LatencyNs/1000),
-				"pid":               fmt.Sprintf("%d", txnKey.Pid),
-			},
-		}
+			"is_gzipped":        fmt.Sprintf("%v", resp.IsGzipped == 1),
+			"is_cached":         fmt.Sprintf("%v", resp.IsCached == 1),
+			"latency_us":        fmt.Sprintf("%d", resp.LatencyNs/1000),
+			"pid":               fmt.Sprintf("%d", txnKey.Pid),
+			"x_forwarded_for":   req.GetXForwardedFor(),
+			"x_real_ip":         req.GetXRealIP(),
+		},
+	}
 		metrics = append(metrics, metric)
 
 		// 从map中删除已处理的事务

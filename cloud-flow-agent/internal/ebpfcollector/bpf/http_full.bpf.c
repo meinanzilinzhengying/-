@@ -78,6 +78,12 @@ struct http_request_full {
     // 请求体大小
     __u32 content_length;
     
+    // 真实客户端IP（从代理头部提取）
+    __u8 x_forwarded_for[64];
+    __u8 xff_len;
+    __u8 x_real_ip[32];
+    __u8 xri_len;
+    
     // 连接信息
     __u8 is_https;
     __u8 http_version; // 0=1.0, 1=1.1, 2=2.0
@@ -361,6 +367,48 @@ int BPF_KPROBE(trace_http_sendmsg, struct sock *sk, struct msghdr *msg, size_t s
             if (content_length_str[i] >= '0' && content_length_str[i] <= '9') {
                 req.content_length = req.content_length * 10 + (content_length_str[i] - '0');
             }
+        }
+    }
+    
+    // 解析 X-Forwarded-For
+    const char *xff_header = bpf_strstr(buf, buf_len, "X-Forwarded-For:", 16);
+    if (xff_header) {
+        const char *value_start = xff_header + 16;
+        // 跳过冒号后的空格
+        while (value_start < buf + buf_len && (*value_start == ' ' || *value_start == '\t')) {
+            value_start++;
+        }
+        // 查找行尾
+        const char *line_end = bpf_strstr(value_start, buf_len - (value_start - buf), "\r\n", 2);
+        if (!line_end) {
+            line_end = buf + buf_len;
+        }
+        int value_len = line_end - value_start;
+        if (value_len > 0) {
+            req.xff_len = value_len < 64 ? value_len : 63;
+            bpf_probe_read_user(req.x_forwarded_for, req.xff_len, value_start);
+            req.x_forwarded_for[req.xff_len] = '\0';
+        }
+    }
+    
+    // 解析 X-Real-IP
+    const char *xri_header = bpf_strstr(buf, buf_len, "X-Real-IP:", 10);
+    if (xri_header) {
+        const char *value_start = xri_header + 10;
+        // 跳过冒号后的空格
+        while (value_start < buf + buf_len && (*value_start == ' ' || *value_start == '\t')) {
+            value_start++;
+        }
+        // 查找行尾
+        const char *line_end = bpf_strstr(value_start, buf_len - (value_start - buf), "\r\n", 2);
+        if (!line_end) {
+            line_end = buf + buf_len;
+        }
+        int value_len = line_end - value_start;
+        if (value_len > 0) {
+            req.xri_len = value_len < 32 ? value_len : 31;
+            bpf_probe_read_user(req.x_real_ip, req.xri_len, value_start);
+            req.x_real_ip[req.xri_len] = '\0';
         }
     }
     

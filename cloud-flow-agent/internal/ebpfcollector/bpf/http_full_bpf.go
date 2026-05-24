@@ -97,6 +97,12 @@ type HTTPRequestFull struct {
 	IsHttps     uint8
 	HttpVersion uint8
 	Padding     [2]byte
+
+	// 真实客户端IP（从代理头部提取）
+	XForwardedFor    [64]byte
+	XffLen           uint8
+	XRealIP          [32]byte
+	XriLen           uint8
 }
 
 // HTTPResponseFull HTTP响应完整信息
@@ -420,4 +426,20 @@ func (r *HTTPRequestFull) GetHttpVersion() string {
 	default:
 		return "UNKNOWN"
 	}
+}
+
+// GetXForwardedFor 获取X-Forwarded-For头部值
+func (r *HTTPRequestFull) GetXForwardedFor() string {
+	if r.XffLen == 0 {
+		return ""
+	}
+	return string(r.XForwardedFor[:r.XffLen])
+}
+
+// GetXRealIP 获取X-Real-IP头部值
+func (r *HTTPRequestFull) GetXRealIP() string {
+	if r.XriLen == 0 {
+		return ""
+	}
+	return string(r.XRealIP[:r.XriLen])
 }

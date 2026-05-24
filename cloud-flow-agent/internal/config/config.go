@@ -348,6 +348,8 @@ type EBPFConfig struct {
 	SelfMonitor     SelfMonitorConfig     // 自监控配置
 	VXLAN             VXLANConfig           // VXLAN解封装配置
 	PluginFramework   PluginFrameworkConfig // 插件化协议解析框架配置
+	DropMonitor       DropMonitorConfig     // 丢包监控配置
+	NTP               NTPConfig             // NTP时钟校准配置
 	PerfOptimizer     PerfOptimizerConfig   // 性能优化配置
 	CPUProfiler     CPUProfilerConfig     // ON-CPU剖析配置
 	SQLAggregator   SQLAggregatorConfig   // SQL聚合分析配置
@@ -370,6 +372,28 @@ type PluginFrameworkConfig struct {
 	MaxMemoryMB    int           // 单插件内存限制(MB)
 	GRPCTimeout    time.Duration // gRPC通信超时
 	EnableBuiltin  bool          // 启用内置插件(Oracle/PG/Redis/Kafka/Dubbo)
+}
+
+// DropMonitorConfig 丢包监控配置
+type DropMonitorConfig struct {
+	Enabled          bool          // 启用丢包监控
+	EnableKernelDrop bool          // 启用内核态丢包监控
+	EnableUserDrop   bool          // 启用用户态丢包监控
+	RingBufSize      int           // Ring Buffer大小
+	SampleRate       float64       // 采样率(0-1)
+	SnapshotInterval time.Duration // 快照间隔
+	AlertThreshold   float64       // 丢包率告警阈值(%)
+}
+
+// NTPConfig NTP时钟校准配置
+type NTPConfig struct {
+	Enabled       bool          // 启用NTP校准
+	Mode          string        // 同步模式: grpc/ntp/auto
+	NTPServers    []string      // NTP服务器列表
+	SyncInterval  time.Duration // 同步间隔
+	MaxOffset     time.Duration // 最大允许偏差
+	AdjustStep    bool          // 支持步进调整
+	AdjustSlew    bool          // 支持渐进调整
 }
 
 type Config struct {
@@ -504,6 +528,24 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.plugin_framework.max_memory_mb", 256)
 	viper.SetDefault("ebpf.plugin_framework.grpc_timeout", "5s")
 	viper.SetDefault("ebpf.plugin_framework.enable_builtin", true)
+
+	// 丢包监控配置默认值
+	viper.SetDefault("ebpf.drop_monitor.enabled", false)
+	viper.SetDefault("ebpf.drop_monitor.enable_kernel_drop", true)
+	viper.SetDefault("ebpf.drop_monitor.enable_user_drop", true)
+	viper.SetDefault("ebpf.drop_monitor.ringbuf_size", 262144) // 256KB
+	viper.SetDefault("ebpf.drop_monitor.sample_rate", 1.0)
+	viper.SetDefault("ebpf.drop_monitor.snapshot_interval", "10s")
+	viper.SetDefault("ebpf.drop_monitor.alert_threshold", 1.0) // 1%
+
+	// NTP时钟校准配置默认值
+	viper.SetDefault("ebpf.ntp.enabled", false)
+	viper.SetDefault("ebpf.ntp.mode", "auto") // auto/grpc/ntp
+	viper.SetDefault("ebpf.ntp.ntp_servers", []string{"pool.ntp.org", "time.windows.com"})
+	viper.SetDefault("ebpf.ntp.sync_interval", "5m")
+	viper.SetDefault("ebpf.ntp.max_offset", "100ms")
+	viper.SetDefault("ebpf.ntp.adjust_step", true)
+	viper.SetDefault("ebpf.ntp.adjust_slew", true)
 
 	// 性能优化配置默认值
 	viper.SetDefault("ebpf.perf_optimizer.enabled", true)
@@ -776,15 +818,33 @@ func Load() (*Config, error) {
 				ParseInnerProtocol: viper.GetBool("ebpf.vxlan.parse_inner_protocol"),
 			},
 			PluginFramework: PluginFrameworkConfig{
-				Enabled:       viper.GetBool("ebpf.plugin_framework.enabled"),
-				PluginDir:     viper.GetString("ebpf.plugin_framework.plugin_dir"),
-				AutoDiscovery: viper.GetBool("ebpf.plugin_framework.auto_discovery"),
-				CheckInterval: viper.GetDuration("ebpf.plugin_framework.check_interval"),
-				MaxMemoryMB:   viper.GetInt("ebpf.plugin_framework.max_memory_mb"),
-				GRPCTimeout:   viper.GetDuration("ebpf.plugin_framework.grpc_timeout"),
-				EnableBuiltin: viper.GetBool("ebpf.plugin_framework.enable_builtin"),
-			},
-			PerfOptimizer: PerfOptimizerConfig{
+			Enabled:       viper.GetBool("ebpf.plugin_framework.enabled"),
+			PluginDir:     viper.GetString("ebpf.plugin_framework.plugin_dir"),
+			AutoDiscovery: viper.GetBool("ebpf.plugin_framework.auto_discovery"),
+			CheckInterval: viper.GetDuration("ebpf.plugin_framework.check_interval"),
+			MaxMemoryMB:   viper.GetInt("ebpf.plugin_framework.max_memory_mb"),
+			GRPCTimeout:   viper.GetDuration("ebpf.plugin_framework.grpc_timeout"),
+			EnableBuiltin: viper.GetBool("ebpf.plugin_framework.enable_builtin"),
+		},
+		DropMonitor: DropMonitorConfig{
+			Enabled:          viper.GetBool("ebpf.drop_monitor.enabled"),
+			EnableKernelDrop: viper.GetBool("ebpf.drop_monitor.enable_kernel_drop"),
+			EnableUserDrop:   viper.GetBool("ebpf.drop_monitor.enable_user_drop"),
+			RingBufSize:      viper.GetInt("ebpf.drop_monitor.ringbuf_size"),
+			SampleRate:       viper.GetFloat64("ebpf.drop_monitor.sample_rate"),
+			SnapshotInterval: viper.GetDuration("ebpf.drop_monitor.snapshot_interval"),
+			AlertThreshold:   viper.GetFloat64("ebpf.drop_monitor.alert_threshold"),
+		},
+		NTP: NTPConfig{
+			Enabled:      viper.GetBool("ebpf.ntp.enabled"),
+			Mode:         viper.GetString("ebpf.ntp.mode"),
+			NTPServers:   viper.GetStringSlice("ebpf.ntp.ntp_servers"),
+			SyncInterval: viper.GetDuration("ebpf.ntp.sync_interval"),
+			MaxOffset:    viper.GetDuration("ebpf.ntp.max_offset"),
+			AdjustStep:   viper.GetBool("ebpf.ntp.adjust_step"),
+			AdjustSlew:   viper.GetBool("ebpf.ntp.adjust_slew"),
+		},
+		PerfOptimizer: PerfOptimizerConfig{
 				Enabled:         viper.GetBool("ebpf.perf_optimizer.enabled"),
 				SampleRate:      viper.GetFloat64("ebpf.perf_optimizer.sample_rate"),
 				BatchSize:       viper.GetInt("ebpf.perf_optimizer.batch_size"),

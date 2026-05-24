@@ -231,6 +231,32 @@ ebpf:
     grpc_timeout: "5s"                    # gRPC通信超时
     enable_builtin: true                  # 启用内置插件(Oracle/PostgreSQL/Redis/Kafka/Dubbo)
 
+  # 丢包监控配置
+  # 监控内核态丢包（kfree_skb）和用户态丢包（采集器内部各阶段）
+  # 支持按原因、按流统计丢包，丢包率告警
+  drop_monitor:
+    enabled: false                        # 启用丢包监控（默认关闭）
+    enable_kernel_drop: true              # 启用内核态丢包监控
+    enable_user_drop: true                # 启用用户态丢包监控
+    ringbuf_size: 262144                  # Ring Buffer大小(256KB)
+    sample_rate: 1.0                      # 采样率(0-1)
+    snapshot_interval: "10s"              # 快照间隔
+    alert_threshold: 1.0                  # 丢包率告警阈值(%)
+
+  # NTP时钟校准配置
+  # 以Center时间为准同步采集器时钟，误差控制在100ms以内
+  # 支持gRPC时间同步、标准NTP协议、自动选择
+  ntp:
+    enabled: false                        # 启用NTP校准（默认关闭）
+    mode: "auto"                          # 同步模式: auto/grpc/ntp
+    ntp_servers:                          # NTP服务器列表（NTP模式使用）
+      - "pool.ntp.org"
+      - "time.windows.com"
+    sync_interval: "5m"                   # 同步间隔
+    max_offset: "100ms"                   # 最大允许偏差（超过则调整）
+    adjust_step: true                     # 支持步进调整（settimeofday）
+    adjust_slew: true                     # 支持渐进调整（adjtime）
+
 # 历史数据存储配置
 # 支持: 历史数据默认存60天, 结构化压缩≥20:1, 日志≥6:1, 写入≥5万条/秒, 1亿行查询≤1秒
 storage:

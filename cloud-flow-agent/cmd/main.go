@@ -20,7 +20,9 @@ import (
 	"cloud-flow-agent/internal/ebpfcollector"
 	"cloud-flow-agent/internal/grpcclient"
 	"cloud-flow-agent/internal/http"
+	"cloud-flow-agent/internal/dropmonitor"
 	"cloud-flow-agent/internal/network"
+	"cloud-flow-agent/internal/ntp"
 	"cloud-flow-agent/internal/protocol"
 	"cloud-flow-agent/internal/reliable"
 	"cloud-flow-agent/internal/selfmonitor"
@@ -430,6 +432,74 @@ func main() {
 			plugins := pluginManager.ListPlugins()
 			log.Infof("[插件框架] 已启动: 插件目录=%s, 已加载插件=%d, 自动发现=%v",
 				pmCfg.PluginDir, len(plugins), pmCfg.AutoDiscovery)
+		}
+	}
+
+	// 初始化丢包监控器（如果启用）
+	var dropMonitor *dropmonitor.Monitor
+	if cfg.EBPF.DropMonitor.Enabled {
+		dmCfg := dropmonitor.Config{
+			Enabled:          cfg.EBPF.DropMonitor.Enabled,
+			EnableKernelDrop: cfg.EBPF.DropMonitor.EnableKernelDrop,
+			EnableUserDrop:   cfg.EBPF.DropMonitor.EnableUserDrop,
+			RingBufSize:      cfg.EBPF.DropMonitor.RingBufSize,
+			SampleRate:       cfg.EBPF.DropMonitor.SampleRate,
+			SnapshotInterval: cfg.EBPF.DropMonitor.SnapshotInterval,
+			AlertThreshold:   cfg.EBPF.DropMonitor.AlertThreshold,
+		}
+		dropMonitor = dropmonitor.NewMonitor(dmCfg, log)
+		dropMonitor.OnAlert(func(dropRate float64, message string) {
+			log.Errorf("[丢包监控告警] 丢包率=%.2f%%, %s", dropRate, message)
+		})
+		if err := dropMonitor.Start(); err != nil {
+			log.Warnf("[丢包监控] 启动失败: %v", err)
+			dropMonitor = nil
+		} else {
+			defer dropMonitor.Stop()
+			log.Infof("[丢包监控] 已启动: 内核态=%v, 用户态=%v, 告警阈值=%.1f%%",
+				dmCfg.EnableKernelDrop, dmCfg.EnableUserDrop, dmCfg.AlertThreshold)
+		}
+	}
+
+	// 初始化NTP时钟校准客户端（如果启用）
+	var ntpClient *ntp.Client
+	if cfg.EBPF.NTP.Enabled {
+		// 解析同步模式
+		var ntpMode ntp.SyncMode
+		switch cfg.EBPF.NTP.Mode {
+		case "grpc":
+			ntpMode = ntp.SyncModeGRPC
+		case "ntp":
+			ntpMode = ntp.SyncModeNTP
+		default:
+			ntpMode = ntp.SyncModeAuto
+		}
+
+		ntpCfg := ntp.Config{
+			Enabled:      cfg.EBPF.NTP.Enabled,
+			Mode:         ntpMode,
+			NTPServers:   cfg.EBPF.NTP.NTPServers,
+			CenterAddr:   cfg.EdgeAddr,
+			SyncInterval: cfg.EBPF.NTP.SyncInterval,
+			MaxOffset:    cfg.EBPF.NTP.MaxOffset,
+			AdjustStep:   cfg.EBPF.NTP.AdjustStep,
+			AdjustSlew:   cfg.EBPF.NTP.AdjustSlew,
+		}
+		ntpClient = ntp.NewClient(ntpCfg, log)
+		ntpClient.OnSync(func(result *ntp.SyncResult) {
+			log.Infof("[NTP] 时钟同步成功: 服务器=%s, 偏差=%v, 延迟=%v",
+				result.Server, result.Offset, result.Delay)
+		})
+		ntpClient.OnFail(func(err error) {
+			log.Warnf("[NTP] 时钟同步失败: %v", err)
+		})
+		if err := ntpClient.Start(); err != nil {
+			log.Warnf("[NTP] 启动失败: %v", err)
+			ntpClient = nil
+		} else {
+			defer ntpClient.Stop()
+			log.Infof("[NTP] 已启动: 模式=%s, 同步间隔=%v, 最大偏差=%v",
+				cfg.EBPF.NTP.Mode, ntpCfg.SyncInterval, ntpCfg.MaxOffset)
 		}
 	}
 

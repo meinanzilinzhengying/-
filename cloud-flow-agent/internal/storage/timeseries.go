@@ -55,6 +55,7 @@ const (
 	CompressionZSTD     // ZSTD压缩，高压缩率
 	CompressionLZ4      // LZ4压缩，高速度
 	CompressionDelta    // 增量编码压缩
+	CompressionSnappy   // Snappy压缩，日志数据专用，高速+合理压缩比
 )
 
 // DataPoint 数据点
@@ -74,6 +75,7 @@ type Chunk struct {
 	endTime   int64
 	dataType  DataType
 	compressed bool
+	compressionType CompressionType // 记录本块使用的压缩算法
 	data      []byte
 	index     *ChunkIndex
 	refCount  atomic.Int32
@@ -150,7 +152,8 @@ type TimeSeriesStore struct {
 	mu          sync.RWMutex
 	shards      map[uint32]*Shard // 按数据源分片
 	writeBuffer map[DataType]*WriteBuffer
-	compressor  Compressor
+	compressor  Compressor       // 默认压缩器（向后兼容）
+	compressors map[DataType]Compressor // 按数据类型路由的压缩器
 	index       Index
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
@@ -199,6 +202,13 @@ func NewTimeSeriesStore(opts *StorageOptions, log *logger.Logger) (*TimeSeriesSt
 	if err != nil {
 		return nil, fmt.Errorf("创建压缩器失败: %w", err)
 	}
+
+	// 按数据类型创建专用压缩器
+	compressors := make(map[DataType]Compressor)
+	compressors[DataTypeMetric] = NewMetricCompressor() // 结构化指标 → Zstandard 高压缩
+	compressors[DataTypeLog] = NewSnappyCompressor()    // 日志数据 → Snappy 快速压缩
+	compressors[DataTypeTrace] = compressor             // 追踪数据 → 使用默认压缩器
+	compressors[DataTypeEvent] = compressor             // 事件数据 → 使用默认压缩器
 	
 	// 创建索引
 	var index Index
@@ -212,6 +222,7 @@ func NewTimeSeriesStore(opts *StorageOptions, log *logger.Logger) (*TimeSeriesSt
 		shards:      make(map[uint32]*Shard),
 		writeBuffer: make(map[DataType]*WriteBuffer),
 		compressor:  compressor,
+		compressors: compressors,
 		index:       index,
 		stopCh:      make(chan struct{}),
 	}
@@ -376,8 +387,11 @@ func (s *TimeSeriesStore) writeChunk(dt DataType, points []DataPoint) error {
 		return fmt.Errorf("序列化数据失败: %w", err)
 	}
 	
+	// 按数据类型选择压缩器
+	cmp := s.getCompressor(dt)
+	
 	// 压缩数据
-	compressed, err := s.compressor.Compress(data)
+	compressed, err := cmp.Compress(data)
 	if err != nil {
 		return fmt.Errorf("压缩数据失败: %w", err)
 	}
@@ -387,6 +401,7 @@ func (s *TimeSeriesStore) writeChunk(dt DataType, points []DataPoint) error {
 	
 	chunk.data = compressed
 	chunk.compressed = true
+	chunk.compressionType = cmp.Type()
 	
 	// 创建索引
 	if s.index != nil {
@@ -765,7 +780,9 @@ func (s *TimeSeriesStore) decompressChunk(chunk *Chunk) ([]DataPoint, error) {
 		return nil, errors.New("数据块未压缩")
 	}
 	
-	data, err := s.compressor.Decompress(chunk.data)
+	// 按数据类型选择解压器
+	cmp := s.getCompressor(chunk.dataType)
+	data, err := cmp.Decompress(chunk.data)
 	if err != nil {
 		return nil, fmt.Errorf("解压失败: %w", err)
 	}
@@ -882,6 +899,32 @@ func (s *TimeSeriesStore) deserializePoints(data []byte) ([]DataPoint, error) {
 	}
 	
 	return points, nil
+}
+
+// getCompressor 按数据类型获取压缩器
+// 优先使用该类型专用压缩器，未配置时回退到默认压缩器
+func (s *TimeSeriesStore) getCompressor(dt DataType) Compressor {
+	if cmp, ok := s.compressors[dt]; ok {
+		return cmp
+	}
+	return s.compressor
+}
+
+// GetCompressor 获取指定数据类型的压缩器（外部接口）
+func (s *TimeSeriesStore) GetCompressor(dt DataType) Compressor {
+	return s.getCompressor(dt)
+}
+
+// SetCompressor 设置指定数据类型的压缩器（支持运行时替换）
+func (s *TimeSeriesStore) SetCompressor(dt DataType, cmp Compressor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.compressors[dt] = cmp
+}
+
+// GetCompressionRatio 获取指定数据类型的压缩比
+func (s *TimeSeriesStore) GetCompressionRatio(dt DataType) float64 {
+	return s.getCompressor(dt).Ratio()
 }
 
 // GetStats 获取存储统计

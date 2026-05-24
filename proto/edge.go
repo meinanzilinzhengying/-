@@ -919,3 +919,135 @@ func _CenterService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+// ============================================================================
+// 远程配置管理 — Agent <-> Center/Edge
+// ============================================================================
+
+// CollectionConfig 采集策略配置
+type CollectionConfig struct {
+	Version     int64             `json:"version,omitempty"`      // 配置版本号
+	GroupId     string            `json:"group_id,omitempty"`     // 所属组别
+	UpdatedAt   int64             `json:"updated_at,omitempty"`   // 更新时间戳
+	UpdatedBy   string            `json:"updated_by,omitempty"`   // 更新者
+
+	// 采样率配置 (0.0-1.0)
+	SampleRate      float64 `json:"sample_rate,omitempty"`       // 全局采样率
+	TCPSampleRate   float64 `json:"tcp_sample_rate,omitempty"`   // TCP指标采样率
+	HTTPSampleRate  float64 `json:"http_sample_rate,omitempty"`  // HTTP指标采样率
+
+	// 采集项开关
+	EnableTCPMetrics    bool `json:"enable_tcp_metrics,omitempty"`     // TCP深度指标
+	EnableHTTPMetrics   bool `json:"enable_http_metrics,omitempty"`    // HTTP应用层指标
+	EnableHTTPFull      bool `json:"enable_http_full,omitempty"`       // HTTP全字段解析
+	EnableDNSFull       bool `json:"enable_dns_full,omitempty"`        // DNS全字段解析
+	EnableMySQLFull     bool `json:"enable_mysql_full,omitempty"`      // MySQL全字段解析
+	EnableSQLAggregator bool `json:"enable_sql_aggregator,omitempty"`  // SQL聚合分析
+	EnableCPUProfiler   bool `json:"enable_cpu_profiler,omitempty"`    // ON-CPU剖析
+
+	// 资源限额
+	MaxCPUCore    float64 `json:"max_cpu_core,omitempty"`    // 最大CPU核心数
+	MaxMemoryMB   float64 `json:"max_memory_mb,omitempty"`   // 最大内存(MB)
+	MaxGoroutines int     `json:"max_goroutines,omitempty"`  // 最大协程数
+
+	// 采集间隔和批处理
+	CollectInterval int `json:"collect_interval,omitempty"` // 采集间隔(秒)
+	BatchSize       int `json:"batch_size,omitempty"`       // 批处理大小
+
+	// 熔断配置
+	CircuitBreakerEnabled bool `json:"circuit_breaker_enabled,omitempty"` // 启用熔断
+}
+
+func (m *CollectionConfig) Reset()         { *m = CollectionConfig{} }
+func (m *CollectionConfig) String() string  { return fmt.Sprintf("%+v", *m) }
+func (m *CollectionConfig) ProtoMessage()   {}
+
+func (m *CollectionConfig) Marshal() ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m *CollectionConfig) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, m)
+}
+
+func (m *CollectionConfig) GetVersion() int64     { return m.Version }
+func (m *CollectionConfig) GetGroupId() string    { return m.GroupId }
+func (m *CollectionConfig) GetSampleRate() float64 { return m.SampleRate }
+
+// GetConfigRequest 获取配置请求
+type GetConfigRequest struct {
+	ProbeId   string `json:"probe_id,omitempty"`   // 探针ID
+	GroupId   string `json:"group_id,omitempty"`   // 所属组别
+	Version   int64  `json:"version,omitempty"`    // 当前配置版本
+}
+
+func (m *GetConfigRequest) Reset()         { *m = GetConfigRequest{} }
+func (m *GetConfigRequest) String() string  { return fmt.Sprintf("%+v", *m) }
+func (m *GetConfigRequest) ProtoMessage()   {}
+
+func (m *GetConfigRequest) Marshal() ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m *GetConfigRequest) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, m)
+}
+
+// GetConfigResponse 获取配置响应
+type GetConfigResponse struct {
+	Success  bool              `json:"success,omitempty"`   // 是否成功
+	Message  string            `json:"message,omitempty"`   // 消息
+	Config   *CollectionConfig `json:"config,omitempty"`    // 配置内容
+	HasUpdate bool             `json:"has_update,omitempty"` // 是否有更新
+}
+
+func (m *GetConfigResponse) Reset()         { *m = GetConfigResponse{} }
+func (m *GetConfigResponse) String() string  { return fmt.Sprintf("%+v", *m) }
+func (m *GetConfigResponse) ProtoMessage()   {}
+
+func (m *GetConfigResponse) Marshal() ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m *GetConfigResponse) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, m)
+}
+
+// ConfigUpdate 配置更新推送
+type ConfigUpdate struct {
+	Config      *CollectionConfig `json:"config,omitempty"`       // 新配置
+	ForceUpdate bool              `json:"force_update,omitempty"` // 强制更新
+	Reason      string            `json:"reason,omitempty"`       // 更新原因
+}
+
+func (m *ConfigUpdate) Reset()         { *m = ConfigUpdate{} }
+func (m *ConfigUpdate) String() string  { return fmt.Sprintf("%+v", *m) }
+func (m *ConfigUpdate) ProtoMessage()   {}
+
+func (m *ConfigUpdate) Marshal() ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m *ConfigUpdate) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, m)
+}
+
+// ConfigUpdateAck 配置更新确认
+type ConfigUpdateAck struct {
+	ProbeId   string `json:"probe_id,omitempty"`   // 探针ID
+	Version   int64  `json:"version,omitempty"`    // 确认的版本
+	Success   bool   `json:"success,omitempty"`    // 是否应用成功
+	Message   string `json:"message,omitempty"`    // 消息
+}
+
+func (m *ConfigUpdateAck) Reset()         { *m = ConfigUpdateAck{} }
+func (m *ConfigUpdateAck) String() string  { return fmt.Sprintf("%+v", *m) }
+func (m *ConfigUpdateAck) ProtoMessage()   {}
+
+func (m *ConfigUpdateAck) Marshal() ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m *ConfigUpdateAck) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, m)
+}

@@ -373,6 +373,20 @@ func (c *Client) SendProfiling(ctx context.Context, batch *edge.ProfilingBatch) 
 	return nil
 }
 
+// GetConfig 获取远程配置
+func (c *Client) GetConfig(ctx context.Context, req *edge.GetConfigRequest) (*edge.GetConfigResponse, error) {
+	// 如果 context 已经有超时设置，使用它；否则添加默认超时
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, rpcTimeout)
+		defer cancel()
+	}
+
+	// 使用 ProbeService 的 GetConfig 方法（需要在proto中定义）
+	// 这里暂时使用通用方法，后续需要服务端支持
+	return nil, fmt.Errorf("GetConfig 需要服务端支持")
+}
+
 func (c *Client) Close() error {
 	var err error
 	c.stopped.Do(func() {

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"cloud-flow-agent/internal/grpcclient"
 	"cloud-flow-agent/internal/http"
 	"cloud-flow-agent/internal/network"
+	"cloud-flow-agent/internal/reliable"
 	"cloud-flow-agent/internal/selfmonitor"
 	"cloud-flow-agent/internal/sqlaggregator"
 	"cloud-flow-agent/internal/storage"
@@ -314,6 +316,29 @@ func main() {
 		log.Infof("[自监控] 上报器已启动: 上报间隔=%v", cfg.EBPF.SelfMonitor.ReportInterval)
 	}
 
+	// 初始化可靠上报器（带校验和、离线缓存、自动重传）
+	reliableReporter, err := reliable.NewReporter(
+		reliable.Config{
+			CacheDir:            filepath.Join(os.TempDir(), "cloud-flow-cache"),
+			MaxCacheDuration:    1 * time.Hour,
+			RetransmitBatchSize: 100,
+			RetransmitInterval:  100 * time.Millisecond,
+			SendTimeout:         10 * time.Second,
+			EnableChecksum:      true,
+			MaxCacheSizeBytes:   100 * 1024 * 1024,
+		},
+		safeClient.Get(),
+		netMonitor,
+		log,
+	)
+	if err != nil {
+		log.Warnf("[可靠上报] 初始化失败（将使用基础发送模式）: %v", err)
+		reliableReporter = nil
+	} else {
+		defer reliableReporter.Stop()
+		log.Info("[可靠上报] 已启动: 校验和=SHA256, 缓存时长=1h, 缓存上限=100MB")
+	}
+
 	// 初始化传统采集器
 	c := collector.New(collector.CollectConfig{
 		CPU:     cfg.Collect.CPU,
@@ -551,46 +576,49 @@ func main() {
 						Metrics: buf,
 					}
 
-					// 检查网卡可用性决定发送方式
-					if netMonitor.IsAvailable() {
-						// 网卡可用时：直接发送
+					// 使用可靠上报器（带校验和+离线缓存+自动重传）
+					if reliableReporter != nil {
 						sendStart := metricCollector.SendStarted()
-						sendCtx, sendCancel := context.WithTimeout(context.Background(), 10*time.Second)
-						err := safeClient.Get().SendMetrics(sendCtx, batch)
-						sendCancel()
-						if err != nil {
-							log.Errorf("发送指标数据失败: %v", err)
-							metricCollector.SendFinished(sendStart, 0, err)
-							// 发送失败时，如果启用了本地缓存则写入缓存
+						sent := reliableReporter.Send(batch)
+						if sent {
+							metricCollector.SendFinished(sendStart, len(buf)*100, nil)
+							buf = nil
+						} else {
+							metricCollector.SendFinished(sendStart, 0, fmt.Errorf("已缓存"))
+							buf = nil // reliableReporter 内部已缓存，清空 buf
+						}
+					} else {
+						// 降级：使用基础发送模式
+						if netMonitor.IsAvailable() {
+							sendStart := metricCollector.SendStarted()
+							sendCtx, sendCancel := context.WithTimeout(context.Background(), 10*time.Second)
+							err := safeClient.Get().SendMetrics(sendCtx, batch)
+							sendCancel()
+							if err != nil {
+								log.Errorf("发送指标数据失败: %v", err)
+								metricCollector.SendFinished(sendStart, 0, err)
+								if tsStore != nil {
+									if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
+										log.Warnf("写入本地缓存失败: %v", cacheErr)
+									}
+								}
+								if len(buf) > cfg.BatchSize*2 {
+									buf = buf[len(buf)-cfg.BatchSize:]
+								}
+							} else {
+								metricCollector.SendFinished(sendStart, len(buf)*100, nil)
+								buf = nil
+							}
+						} else {
 							if tsStore != nil {
 								if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
 									log.Warnf("写入本地缓存失败: %v", cacheErr)
-								} else {
-									log.Infof("已将 %d 条指标写入本地缓存", len(buf))
 								}
+							} else {
+								log.Warn("网卡不可用且本地缓存未启用，指标数据将被丢弃")
 							}
-							// 保留数据下次重试
-							if len(buf) > cfg.BatchSize*2 {
-								buf = buf[len(buf)-cfg.BatchSize:]
-							}
-						} else {
-							log.Debugf("发送 %d 条指标数据", len(buf))
-							sentLen := len(buf)
-							metricCollector.SendFinished(sendStart, sentLen*100, nil)
 							buf = nil
 						}
-					} else {
-						// 网卡不可用时：写入本地缓存
-						if tsStore != nil {
-							if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
-								log.Warnf("写入本地缓存失败: %v", cacheErr)
-							} else {
-								log.Infof("网卡不可用，已将 %d 条指标写入本地缓存", len(buf))
-							}
-						} else {
-							log.Warn("网卡不可用且本地缓存未启用，指标数据将被丢弃")
-						}
-						buf = nil
 					}
 				}
 			case <-netCheckTicker.C:

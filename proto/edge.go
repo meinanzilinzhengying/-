@@ -183,8 +183,11 @@ func (m *MetricData) GetTags() map[string]string    { return m.Tags }
 
 // MetricsBatch 指标批量数据
 type MetricsBatch struct {
-	ProbeId string        `json:"probe_id,omitempty"`
-	Metrics []*MetricData `json:"metrics,omitempty"`
+	ProbeId   string        `json:"probe_id,omitempty"`
+	Metrics   []*MetricData `json:"metrics,omitempty"`
+	Checksum  string        `json:"checksum,omitempty"`  // 数据校验和(SHA256)，用于验证传输完整性
+	SeqId     int64         `json:"seq_id,omitempty"`    // 序列号，用于排序和去重
+	Timestamp int64         `json:"timestamp,omitempty"` // 批次时间戳
 }
 
 func (m *MetricsBatch) Reset()         { *m = MetricsBatch{} }

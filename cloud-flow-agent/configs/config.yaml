@@ -209,6 +209,16 @@ ebpf:
     slow_query_max: 10       # 慢查询告警阈值
     conn_max: 100             # 连接数告警阈值
 
+  # VXLAN隧道解封装配置
+  # 支持解析华为云虚拟机VXLAN流量
+  # 提取内层五元组、协议信息
+  # 支持将解封装后的流量镜像至云下TAP设备
+  vxlan:
+    enabled: false              # 启用VXLAN解封装
+    enable_tap_mirror: false    # 启用TAP设备镜像
+    tap_device_name: "vxlan-tap0"  # TAP设备名称
+    parse_inner_protocol: true  # 解析内层协议(HTTP/DNS/MySQL)
+
 # 历史数据存储配置
 # 支持: 历史数据默认存60天, 结构化压缩≥20:1, 日志≥6:1, 写入≥5万条/秒, 1亿行查询≤1秒
 storage:

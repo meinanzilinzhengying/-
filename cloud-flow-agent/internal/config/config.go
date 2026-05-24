@@ -346,9 +346,18 @@ type EBPFConfig struct {
 	ResourceLimit   ResourceLimitConfig   // 资源限制配置
 	CircuitBreaker  CircuitBreakerConfig  // 熔断配置
 	SelfMonitor     SelfMonitorConfig     // 自监控配置
+	VXLAN           VXLANConfig           // VXLAN解封装配置
 	PerfOptimizer   PerfOptimizerConfig   // 性能优化配置
 	CPUProfiler     CPUProfilerConfig     // ON-CPU剖析配置
 	SQLAggregator   SQLAggregatorConfig   // SQL聚合分析配置
+}
+
+// VXLANConfig VXLAN解封装配置
+type VXLANConfig struct {
+	Enabled           bool   // 启用VXLAN解封装
+	EnableTapMirror   bool   // 启用TAP设备镜像
+	TapDeviceName     string // TAP设备名称
+	ParseInnerProtocol bool  // 解析内层协议
 }
 
 type Config struct {
@@ -468,6 +477,12 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.self_monitor.alert_memory_percent", 90.0)
 	viper.SetDefault("ebpf.self_monitor.alert_packet_drop_rate", 5.0)
 	viper.SetDefault("ebpf.self_monitor.alert_report_success_rate_min", 95.0)
+
+	// VXLAN解封装配置默认值
+	viper.SetDefault("ebpf.vxlan.enabled", false)
+	viper.SetDefault("ebpf.vxlan.enable_tap_mirror", false)
+	viper.SetDefault("ebpf.vxlan.tap_device_name", "vxlan-tap0")
+	viper.SetDefault("ebpf.vxlan.parse_inner_protocol", true)
 
 	// 性能优化配置默认值
 	viper.SetDefault("ebpf.perf_optimizer.enabled", true)
@@ -732,6 +747,12 @@ func Load() (*Config, error) {
 				AlertMemoryPercent:        viper.GetFloat64("ebpf.self_monitor.alert_memory_percent"),
 				AlertPacketDropRate:       viper.GetFloat64("ebpf.self_monitor.alert_packet_drop_rate"),
 				AlertReportSuccessRateMin: viper.GetFloat64("ebpf.self_monitor.alert_report_success_rate_min"),
+			},
+			VXLAN: VXLANConfig{
+				Enabled:            viper.GetBool("ebpf.vxlan.enabled"),
+				EnableTapMirror:    viper.GetBool("ebpf.vxlan.enable_tap_mirror"),
+				TapDeviceName:      viper.GetString("ebpf.vxlan.tap_device_name"),
+				ParseInnerProtocol: viper.GetBool("ebpf.vxlan.parse_inner_protocol"),
 			},
 			PerfOptimizer: PerfOptimizerConfig{
 				Enabled:         viper.GetBool("ebpf.perf_optimizer.enabled"),

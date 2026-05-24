@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
+	"cloud-flow-edge/internal/auth"
 	"cloud-flow-edge/internal/circuitbreaker"
 	"cloud-flow-edge/internal/config"
 	"cloud-flow-edge/internal/connpool"
@@ -29,6 +30,7 @@ import (
 	"cloud-flow-edge/internal/gopool"
 	"cloud-flow-edge/internal/iplimiter"
 	"cloud-flow-edge/internal/probemgr"
+	"cloud-flow-edge/internal/whitelist"
 	"cloud-flow-edge/pkg/logger"
 	"cloud-flow-edge/pkg/metrics"
 	"cloud-flow-edge/pkg/tlsutil"
@@ -52,6 +54,8 @@ type Server struct {
 	ipLimiter    *iplimiter.Limiter
 	goPool       *gopool.Pool
 	breaker      *circuitbreaker.Manager
+	whitelistMgr *whitelist.Manager
+	authInterceptor *auth.AuthInterceptor
 }
 
 // NewServer 创建 gRPC 服务端实例
@@ -83,6 +87,16 @@ func (s *Server) SetGoPool(pool *gopool.Pool) {
 // SetBreaker 设置熔断器
 func (s *Server) SetBreaker(breaker *circuitbreaker.Manager) {
 	s.breaker = breaker
+}
+
+// SetWhitelistManager 设置白名单管理器
+func (s *Server) SetWhitelistManager(mgr *whitelist.Manager) {
+	s.whitelistMgr = mgr
+}
+
+// SetAuthInterceptor 设置鉴权拦截器
+func (s *Server) SetAuthInterceptor(ai *auth.AuthInterceptor) {
+	s.authInterceptor = ai
 }
 
 // ============================================================================
@@ -364,11 +378,23 @@ func BuildServerOpts(
 
 		// 4. goroutine池分发
 		// 5. 熔断器
-		// 6. TraceID
-		// 7. API Key
-		// 由于拦截器嵌套复杂，简化为顺序调用
+		// 6. Agent鉴权（mTLS + Token + 白名单）
+		// 7. TraceID
+		// 8. API Key
 		return breakerInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
 			return goPoolInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+				// Agent鉴权拦截器（如果启用）
+				if s.authInterceptor != nil {
+					return s.authInterceptor.UnaryServerInterceptor()(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+						return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+							if apiKey != "" {
+								apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
+								return apiInterceptor(ctx, req, info, handler)
+							}
+							return handler(ctx, req)
+						})
+					})
+				}
 				return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
 					if apiKey != "" {
 						apiInterceptor := APIKeyAuthInterceptor(apiKey, log)

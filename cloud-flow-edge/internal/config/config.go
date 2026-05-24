@@ -92,6 +92,17 @@ type AggregatorConfig struct {
 	MinCompression    float64       // 最小压缩率要求（默认0.5，即50%）
 }
 
+// AuthConfig Agent接入鉴权配置
+type AuthConfig struct {
+	Enabled          bool          // 启用鉴权（默认启用）
+	RequireMTLS      bool          // 要求mTLS双向证书认证
+	RequireToken     bool          // 要求Agent Token认证
+	RequireWhitelist bool          // 要求白名单校验
+	TokenHeader      string        // Token metadata header键名
+	RejectLog        bool          // 记录被拒绝连接的详细日志
+	WhitelistSyncInterval time.Duration // Center白名单同步间隔
+}
+
 // Config 边缘节点服务配置
 type Config struct {
 	EdgeNodeID       string                 // 边缘节点唯一标识
@@ -112,6 +123,7 @@ type Config struct {
 	GoPool           GoPoolConfig           // goroutine池配置
 	CircuitBreaker   CircuitBreakerConfig   // 熔断器配置
 	Aggregator       AggregatorConfig       // 数据聚合配置
+	Auth             AuthConfig             // Agent接入鉴权配置
 	TLS              TLSConfig              // TLS 配置
 	Log              LogConfig              // 日志配置
 }
@@ -253,6 +265,15 @@ func Load() (*Config, error) {
 	viper.SetDefault("aggregator.filter_invalid", true)
 	viper.SetDefault("aggregator.min_compression", 0.5)
 
+	// Agent接入鉴权配置默认值
+	viper.SetDefault("auth.enabled", true)
+	viper.SetDefault("auth.require_mtls", false)
+	viper.SetDefault("auth.require_token", true)
+	viper.SetDefault("auth.require_whitelist", false)
+	viper.SetDefault("auth.token_header", "x-agent-token")
+	viper.SetDefault("auth.reject_log", true)
+	viper.SetDefault("auth.whitelist_sync_interval", "30s")
+
 	viper.SetDefault("service_discovery.enabled", false)
 	viper.SetDefault("service_discovery.type", "etcd")
 	viper.SetDefault("service_discovery.endpoints", []string{"localhost:2379"})
@@ -350,6 +371,15 @@ func Load() (*Config, error) {
 			Deduplication:  viper.GetBool("aggregator.deduplication"),
 			FilterInvalid:  viper.GetBool("aggregator.filter_invalid"),
 			MinCompression: viper.GetFloat64("aggregator.min_compression"),
+		},
+		Auth: AuthConfig{
+			Enabled:             viper.GetBool("auth.enabled"),
+			RequireMTLS:         viper.GetBool("auth.require_mtls"),
+			RequireToken:        viper.GetBool("auth.require_token"),
+			RequireWhitelist:    viper.GetBool("auth.require_whitelist"),
+			TokenHeader:         viper.GetString("auth.token_header"),
+			RejectLog:           viper.GetBool("auth.reject_log"),
+			WhitelistSyncInterval: viper.GetDuration("auth.whitelist_sync_interval"),
 		},
 		Log: LogConfig{
 			Level:  viper.GetString("log.level"),

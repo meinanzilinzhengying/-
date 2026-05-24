@@ -84,6 +84,16 @@ aggregator:
   filter_invalid: true       # 启用无效数据过滤
   min_compression: 0.5       # 最小压缩率要求（50%）
 
+# Agent接入鉴权配置（Token + 证书双向认证 + 白名单）
+auth:
+  enabled: true              # 启用鉴权
+  require_mtls: false        # 要求mTLS双向证书认证（需配置TLS CA证书）
+  require_token: true        # 要求Agent Token认证
+  require_whitelist: false   # 要求白名单校验（需Center端配置白名单）
+  token_header: "x-agent-token"  # Token metadata header键名
+  reject_log: true           # 记录被拒绝连接的详细日志
+  whitelist_sync_interval: "30s"  # Center白名单同步间隔
+
 # TLS 配置（默认启用，留空证书路径则自动使用内置自签名证书）
 tls:
   enabled: true

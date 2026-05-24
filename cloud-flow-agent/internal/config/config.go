@@ -116,6 +116,7 @@ type ResourceLimitConfig struct {
 	MaxCPUCore    float64 // 最大CPU核心数
 	MaxMemoryMB   float64 // 最大内存使用(MB)
 	MaxGoroutines int     // 最大协程数
+	UseCgroup     bool    // 使用cgroup v2进行系统级限制
 }
 
 // CircuitBreakerConfig 熔断配置
@@ -410,6 +411,7 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.resource_limit.max_cpu_core", 1.0)
 	viper.SetDefault("ebpf.resource_limit.max_memory_mb", 1024)
 	viper.SetDefault("ebpf.resource_limit.max_goroutines", 10000)
+	viper.SetDefault("ebpf.resource_limit.use_cgroup", true)
 
 	// 熔断配置默认值
 	viper.SetDefault("ebpf.circuit_breaker.enabled", true)
@@ -647,11 +649,12 @@ func Load() (*Config, error) {
 				MySQLFull: viper.GetBool("ebpf.protocol_parsing.mysql_full"),
 			},
 			ResourceLimit: ResourceLimitConfig{
-				Enabled:       viper.GetBool("ebpf.resource_limit.enabled"),
-				MaxCPUCore:    viper.GetFloat64("ebpf.resource_limit.max_cpu_core"),
-				MaxMemoryMB:   viper.GetFloat64("ebpf.resource_limit.max_memory_mb"),
-				MaxGoroutines: viper.GetInt("ebpf.resource_limit.max_goroutines"),
-			},
+			Enabled:       viper.GetBool("ebpf.resource_limit.enabled"),
+			MaxCPUCore:    viper.GetFloat64("ebpf.resource_limit.max_cpu_core"),
+			MaxMemoryMB:   viper.GetFloat64("ebpf.resource_limit.max_memory_mb"),
+			MaxGoroutines: viper.GetInt("ebpf.resource_limit.max_goroutines"),
+			UseCgroup:     viper.GetBool("ebpf.resource_limit.use_cgroup"),
+		},
 			CircuitBreaker: CircuitBreakerConfig{
 				Enabled:        viper.GetBool("ebpf.circuit_breaker.enabled"),
 				MaxFailures:    viper.GetInt("ebpf.circuit_breaker.max_failures"),

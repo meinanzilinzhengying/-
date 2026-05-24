@@ -6,10 +6,13 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
 
+	"cloud-flow-agent/internal/cgroup"
 	"cloud-flow-agent/internal/collector"
 	"cloud-flow-agent/internal/config"
 	"cloud-flow-agent/internal/ebpfcollector"
@@ -55,6 +58,47 @@ func main() {
 
 	log := logger.New(logger.Config{Level: cfg.Log.Level, Format: cfg.Log.Format})
 	defer log.Sync()
+
+	// 设置 GOMAXPROCS
+	if cfg.EBPF.ResourceLimit.Enabled && cfg.EBPF.ResourceLimit.MaxCPUCore > 0 {
+		procs := int(cfg.EBPF.ResourceLimit.MaxCPUCore)
+		if procs < 1 {
+			procs = 1
+		}
+		runtime.GOMAXPROCS(procs)
+		log.Infof("[Runtime] GOMAXPROCS 设置为 %d", procs)
+	}
+
+	// 设置 GOGC 和内存限制
+	if cfg.EBPF.ResourceLimit.Enabled && cfg.EBPF.ResourceLimit.MaxMemoryMB > 0 {
+		// 设置软内存限制 (Go 1.19+)
+		debug.SetMemoryLimit(int64(cfg.EBPF.ResourceLimit.MaxMemoryMB) * 1024 * 1024)
+		// 设置 GC 目标百分比
+		debug.SetGCPercent(100)
+		log.Infof("[Runtime] 内存限制设置为 %.0f MB", cfg.EBPF.ResourceLimit.MaxMemoryMB)
+	}
+
+	// 初始化 cgroup 管理器
+	var cgroupMgr *cgroup.Manager
+	if cfg.EBPF.ResourceLimit.Enabled && cfg.EBPF.ResourceLimit.UseCgroup {
+		cgroupCfg := &cgroup.Config{
+			MaxCPUCores: cfg.EBPF.ResourceLimit.MaxCPUCore,
+			MaxMemoryMB: int64(cfg.EBPF.ResourceLimit.MaxMemoryMB),
+		}
+		var err error
+		cgroupMgr, err = cgroup.NewManager(cgroupCfg)
+		if err != nil {
+			log.Warnf("[Cgroup] 初始化失败: %v，继续使用应用层限制", err)
+		} else {
+			if err := cgroupMgr.ApplyToCurrentProcess(); err != nil {
+				log.Warnf("[Cgroup] 应用限制失败: %v", err)
+			} else {
+				log.Infof("[Cgroup] 已应用限制: CPU≤%.1f核, 内存≤%.0fMB",
+					cfg.EBPF.ResourceLimit.MaxCPUCore, cfg.EBPF.ResourceLimit.MaxMemoryMB)
+			}
+			defer cgroupMgr.Close()
+		}
+	}
 
 	// 初始化指标收集器
 	metricCollector := metrics.New()

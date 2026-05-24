@@ -134,6 +134,7 @@ ebpf:
     max_cpu_core: 1.0         # 最大CPU核心数
     max_memory_mb: 1024       # 最大内存使用(MB)
     max_goroutines: 10000     # 最大协程数
+    use_cgroup: true          # 启用cgroup v2系统级限制
 
   # 熔断配置
   # 资源超限时自动静默，保护系统稳定性

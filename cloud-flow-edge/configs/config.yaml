@@ -94,6 +94,16 @@ auth:
   reject_log: true           # 记录被拒绝连接的详细日志
   whitelist_sync_interval: "30s"  # Center白名单同步间隔
 
+# Edge集群配置（多节点部署 + 服务发现 + 负载均衡）
+cluster:
+  enabled: false             # 启用集群模式（多Edge节点部署时启用）
+  node_id: ""                # 当前节点ID（留空则使用hostname）
+  service_name: "cloud-flow-edge"  # 集群服务名称（用于服务发现注册）
+  heartbeat_interval: "5s"   # 心跳间隔
+  health_check_timeout: "3s" # 健康检查超时
+  load_balance_strategy: "least-connections"  # 负载均衡策略
+  max_connections_per_node: 10000  # 每个节点最大连接数
+
 # TLS 配置（默认启用，留空证书路径则自动使用内置自签名证书）
 tls:
   enabled: true

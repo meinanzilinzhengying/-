@@ -39,11 +39,24 @@ type TLSConfig struct {
 // ServiceDiscoveryConfig 服务发现配置
 type ServiceDiscoveryConfig struct {
 	Enabled         bool     // 是否启用服务发现
-	Type            string   // 服务发现类型: etcd, consul, dns
+	Type            string   // 服务发现类型: etcd, consul, dns, nacos
 	Endpoints       []string // 服务发现端点
 	ServiceName     string   // 服务名称
 	RefreshInterval int      // 刷新间隔（秒）
 	Port            int      // 服务端口号（用于 DNS 发现）
+	Namespace       string   // Nacos命名空间
+	Group           string   // Nacos服务分组
+}
+
+// ClusterConfig Edge集群配置
+type ClusterConfig struct {
+	Enabled                bool          // 启用集群模式
+	NodeID                 string        // 当前节点ID
+	ServiceName            string        // 集群服务名称（用于服务发现）
+	HeartbeatInterval      time.Duration // 心跳间隔
+	HealthCheckTimeout     time.Duration // 健康检查超时
+	LoadBalanceStrategy    string        // 负载均衡策略: least-connections/round-robin/consistent-hash
+	MaxConnectionsPerNode  int           // 每个节点最大连接数
 }
 
 // RateLimitConfig 限流配置
@@ -124,6 +137,7 @@ type Config struct {
 	CircuitBreaker   CircuitBreakerConfig   // 熔断器配置
 	Aggregator       AggregatorConfig       // 数据聚合配置
 	Auth             AuthConfig             // Agent接入鉴权配置
+	Cluster          ClusterConfig          // Edge集群配置
 	TLS              TLSConfig              // TLS 配置
 	Log              LogConfig              // 日志配置
 }
@@ -274,6 +288,15 @@ func Load() (*Config, error) {
 	viper.SetDefault("auth.reject_log", true)
 	viper.SetDefault("auth.whitelist_sync_interval", "30s")
 
+	// Edge集群配置默认值
+	viper.SetDefault("cluster.enabled", false)
+	viper.SetDefault("cluster.node_id", "")
+	viper.SetDefault("cluster.service_name", "cloud-flow-edge")
+	viper.SetDefault("cluster.heartbeat_interval", "5s")
+	viper.SetDefault("cluster.health_check_timeout", "3s")
+	viper.SetDefault("cluster.load_balance_strategy", "least-connections")
+	viper.SetDefault("cluster.max_connections_per_node", 10000)
+
 	viper.SetDefault("service_discovery.enabled", false)
 	viper.SetDefault("service_discovery.type", "etcd")
 	viper.SetDefault("service_discovery.endpoints", []string{"localhost:2379"})
@@ -380,6 +403,15 @@ func Load() (*Config, error) {
 			TokenHeader:         viper.GetString("auth.token_header"),
 			RejectLog:           viper.GetBool("auth.reject_log"),
 			WhitelistSyncInterval: viper.GetDuration("auth.whitelist_sync_interval"),
+		},
+		Cluster: ClusterConfig{
+			Enabled:               viper.GetBool("cluster.enabled"),
+			NodeID:                viper.GetString("cluster.node_id"),
+			ServiceName:           viper.GetString("cluster.service_name"),
+			HeartbeatInterval:     viper.GetDuration("cluster.heartbeat_interval"),
+			HealthCheckTimeout:    viper.GetDuration("cluster.health_check_timeout"),
+			LoadBalanceStrategy:   viper.GetString("cluster.load_balance_strategy"),
+			MaxConnectionsPerNode: viper.GetInt("cluster.max_connections_per_node"),
 		},
 		Log: LogConfig{
 			Level:  viper.GetString("log.level"),

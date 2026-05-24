@@ -42,6 +42,9 @@ type TiDBStorage struct {
 	// key 为缓存类型（"overview" 或 "nodes"），value 为该 key 被标记失效的时间
 	cacheInvalidationTime map[string]time.Time
 	stopped       sync.Once
+
+	// 批量写入引擎
+	batchEngine *BatchWriteEngine
 }
 
 // NewTiDB 创建TiDB存储引擎实例
@@ -54,6 +57,9 @@ func NewTiDB(dsn string, retDays int, log *logger.Logger) (*TiDBStorage, error) 
 	db.SetMaxOpenConns(50)
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// 优化连接池（TiDB 分布式特性调优）
+	OptimizeConnectionPool(db, DefaultConnectionPoolConfig())
 
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -84,6 +90,15 @@ func NewTiDB(dsn string, retDays int, log *logger.Logger) (*TiDBStorage, error) 
 		log.Warnf("初始化数据节点表失败: %v", err)
 	}
 
+	// 初始化优化后的表结构（分区 + 索引）
+	if err := InitOptimizedTables(db, log); err != nil {
+		log.Warnf("初始化优化表结构失败: %v", err)
+	}
+
+	// 创建批量写入引擎
+	batchEngine := NewBatchWriteEngine(db, DefaultBatchWriterConfig(), log)
+	batchEngine.Start()
+
 	log.Infof("TiDB 存储引擎已连接: %s", maskDSN(dsn))
 	return &TiDBStorage{
 		db:            db,
@@ -95,6 +110,7 @@ func NewTiDB(dsn string, retDays int, log *logger.Logger) (*TiDBStorage, error) 
 		overviewCacheExpiry: time.Now().Add(1 * time.Minute),
 		nodesCacheExpiry:    time.Now().Add(1 * time.Minute),
 		cacheInvalidationTime: make(map[string]time.Time),
+		batchEngine:          batchEngine,
 	}, nil
 }
 
@@ -734,6 +750,15 @@ func (s *TiDBStorage) SaveMetrics(probeID string, metrics interface{}) error {
 		return nil
 	}
 
+	// 优先使用批量写入引擎（高性能路径）
+	if s.batchEngine != nil {
+		switch m := metrics.(type) {
+		case []*edge.MetricData:
+			return s.batchEngine.EnqueueMetrics(probeID, m)
+		}
+	}
+
+	// 回退到逐条写入（兼容路径）
 	switch m := metrics.(type) {
 	case []*edge.MetricData:
 		return s.saveMetricDataSlice(probeID, m)
@@ -865,6 +890,15 @@ func (s *TiDBStorage) SaveTraces(probeID string, spans interface{}) error {
 		return nil
 	}
 
+	// 优先使用批量写入引擎（高性能路径）
+	if s.batchEngine != nil {
+		switch m := spans.(type) {
+		case []*edge.TraceSpanData:
+			return s.batchEngine.EnqueueTraces(probeID, m)
+		}
+	}
+
+	// 回退到逐条写入（兼容路径）
 	switch m := spans.(type) {
 	case []*edge.TraceSpanData:
 		return s.saveTraceSpanDataSlice(probeID, m)
@@ -1040,6 +1074,15 @@ func (s *TiDBStorage) SaveProfiling(probeID string, profiles interface{}) error 
 		return nil
 	}
 
+	// 优先使用批量写入引擎（高性能路径）
+	if s.batchEngine != nil {
+		switch m := profiles.(type) {
+		case []*edge.ProfilingData:
+			return s.batchEngine.EnqueueProfiling(probeID, m)
+		}
+	}
+
+	// 回退到逐条写入（兼容路径）
 	switch m := profiles.(type) {
 	case []*edge.ProfilingData:
 		return s.saveProfilingDataSlice(probeID, m)
@@ -1695,6 +1738,10 @@ func (s *TiDBStorage) isCacheKeyInvalidatedLocked(key string, cachedAfter time.T
 // Stop 停止存储引擎
 func (s *TiDBStorage) Stop() {
 	s.stopped.Do(func() {
+		// 停止批量写入引擎
+		if s.batchEngine != nil {
+			s.batchEngine.Stop()
+		}
 		close(s.stopCh)
 		s.db.Close()
 		s.logger.Info("TiDB 存储引擎已关闭")

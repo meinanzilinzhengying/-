@@ -75,6 +75,15 @@ circuit_breaker:
   recovery_timeout: "30s"    # 熔断恢复超时
   half_open_max_requests: 10 # 半开状态试探请求数
 
+# 数据聚合配置（减少向Center上报的数据量）
+aggregator:
+  enabled: true              # 启用数据聚合
+  window_size: "1m"          # 聚合窗口大小（1分钟）
+  max_window_count: 10       # 最大窗口数量
+  deduplication: true        # 启用去重
+  filter_invalid: true       # 启用无效数据过滤
+  min_compression: 0.5       # 最小压缩率要求（50%）
+
 # TLS 配置（默认启用，留空证书路径则自动使用内置自签名证书）
 tls:
   enabled: true

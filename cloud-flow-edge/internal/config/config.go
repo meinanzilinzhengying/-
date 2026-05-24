@@ -82,6 +82,16 @@ type CircuitBreakerConfig struct {
 	HalfOpenMaxRequests int           // 半开状态最大请求数（默认10）
 }
 
+// AggregatorConfig 数据聚合配置
+type AggregatorConfig struct {
+	Enabled           bool          // 启用数据聚合（默认启用）
+	WindowSize        time.Duration // 聚合窗口大小（默认1分钟）
+	MaxWindowCount    int           // 最大窗口数量（默认10个）
+	Deduplication     bool          // 启用去重（默认启用）
+	FilterInvalid     bool          // 启用无效数据过滤（默认启用）
+	MinCompression    float64       // 最小压缩率要求（默认0.5，即50%）
+}
+
 // Config 边缘节点服务配置
 type Config struct {
 	EdgeNodeID       string                 // 边缘节点唯一标识
@@ -101,6 +111,7 @@ type Config struct {
 	IPLimit          IPLimitConfig          // 单IP限流配置
 	GoPool           GoPoolConfig           // goroutine池配置
 	CircuitBreaker   CircuitBreakerConfig   // 熔断器配置
+	Aggregator       AggregatorConfig       // 数据聚合配置
 	TLS              TLSConfig              // TLS 配置
 	Log              LogConfig              // 日志配置
 }
@@ -234,6 +245,14 @@ func Load() (*Config, error) {
 	viper.SetDefault("circuit_breaker.recovery_timeout", "30s")
 	viper.SetDefault("circuit_breaker.half_open_max_requests", 10)
 
+	// 数据聚合配置默认值
+	viper.SetDefault("aggregator.enabled", true)
+	viper.SetDefault("aggregator.window_size", "1m")
+	viper.SetDefault("aggregator.max_window_count", 10)
+	viper.SetDefault("aggregator.deduplication", true)
+	viper.SetDefault("aggregator.filter_invalid", true)
+	viper.SetDefault("aggregator.min_compression", 0.5)
+
 	viper.SetDefault("service_discovery.enabled", false)
 	viper.SetDefault("service_discovery.type", "etcd")
 	viper.SetDefault("service_discovery.endpoints", []string{"localhost:2379"})
@@ -323,6 +342,14 @@ func Load() (*Config, error) {
 			MinRequests:         viper.GetInt("circuit_breaker.min_requests"),
 			RecoveryTimeout:     viper.GetDuration("circuit_breaker.recovery_timeout"),
 			HalfOpenMaxRequests: viper.GetInt("circuit_breaker.half_open_max_requests"),
+		},
+		Aggregator: AggregatorConfig{
+			Enabled:        viper.GetBool("aggregator.enabled"),
+			WindowSize:     viper.GetDuration("aggregator.window_size"),
+			MaxWindowCount: viper.GetInt("aggregator.max_window_count"),
+			Deduplication:  viper.GetBool("aggregator.deduplication"),
+			FilterInvalid:  viper.GetBool("aggregator.filter_invalid"),
+			MinCompression: viper.GetFloat64("aggregator.min_compression"),
 		},
 		Log: LogConfig{
 			Level:  viper.GetString("log.level"),

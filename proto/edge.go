@@ -1315,6 +1315,291 @@ func (m *DiscoverEdgesResponse) GetInstances() []*EdgeInstance    { return m.Ins
 func (m *DiscoverEdgesResponse) GetStrategy() string              { return m.Strategy }
 
 // ============================================================================
+// Edge自监控消息类型
+// ============================================================================
+
+// ReportEdgeMetricsRequest Edge监控指标上报请求
+type ReportEdgeMetricsRequest struct {
+	EdgeNodeId    string  `json:"edge_node_id,omitempty"`     // Edge节点ID
+	EdgeAddress   string  `json:"edge_address,omitempty"`     // Edge地址
+	CloudPlatform string  `json:"cloud_platform,omitempty"`   // 云平台
+	Region        string  `json:"region,omitempty"`           // 区域
+	Zone          string  `json:"zone,omitempty"`             // 可用区
+	Version       string  `json:"version,omitempty"`          // 版本
+	Timestamp     int64   `json:"timestamp,omitempty"`        // 时间戳
+	Uptime        int64   `json:"uptime,omitempty"`           // 运行时长（秒）
+
+	// 连接指标
+	ActiveConnections   int64   `json:"active_connections,omitempty"`    // 当前活跃连接数
+	TotalConnections    int64   `json:"total_connections,omitempty"`     // 累计连接数
+	ConnectionErrors    int64   `json:"connection_errors,omitempty"`     // 连接错误数
+	ConnectionErrorRate float64 `json:"connection_error_rate,omitempty"` // 连接错误率
+
+	// 数据接收指标（当前周期）
+	MetricsReceivedDelta   int64 `json:"metrics_received_delta,omitempty"`    // 本周期接收metrics数
+	TracesReceivedDelta    int64 `json:"traces_received_delta,omitempty"`     // 本周期接收traces数
+	ProfilingReceivedDelta int64 `json:"profiling_received_delta,omitempty"`  // 本周期接收profiling数
+	LogsReceivedDelta      int64 `json:"logs_received_delta,omitempty"`       // 本周期接收logs数
+	BytesReceivedDelta     int64 `json:"bytes_received_delta,omitempty"`      // 本周期接收字节数
+
+	// 数据接收指标（累计）
+	MetricsReceivedTotal   int64 `json:"metrics_received_total,omitempty"`    // 累计接收metrics数
+	TracesReceivedTotal    int64 `json:"traces_received_total,omitempty"`     // 累计接收traces数
+	ProfilingReceivedTotal int64 `json:"profiling_received_total,omitempty"`  // 累计接收profiling数
+	LogsReceivedTotal      int64 `json:"logs_received_total,omitempty"`       // 累计接收logs数
+	BytesReceivedTotal     int64 `json:"bytes_received_total,omitempty"`      // 累计接收字节数
+
+	// 数据转发指标（当前周期）
+	MetricsForwardedDelta   int64 `json:"metrics_forwarded_delta,omitempty"`   // 本周期转发metrics数
+	TracesForwardedDelta    int64 `json:"traces_forwarded_delta,omitempty"`    // 本周期转发traces数
+	ProfilingForwardedDelta int64 `json:"profiling_forwarded_delta,omitempty"` // 本周期转发profiling数
+	LogsForwardedDelta      int64 `json:"logs_forwarded_delta,omitempty"`      // 本周期转发logs数
+	BytesForwardedDelta     int64 `json:"bytes_forwarded_delta,omitempty"`     // 本周期转发字节数
+	ForwardErrorsDelta      int64 `json:"forward_errors_delta,omitempty"`      // 本周期转发错误数
+
+	// 数据转发指标（累计）
+	MetricsForwardedTotal   int64 `json:"metrics_forwarded_total,omitempty"`   // 累计转发metrics数
+	TracesForwardedTotal    int64 `json:"traces_forwarded_total,omitempty"`    // 累计转发traces数
+	ProfilingForwardedTotal int64 `json:"profiling_forwarded_total,omitempty"` // 累计转发profiling数
+	LogsForwardedTotal      int64 `json:"logs_forwarded_total,omitempty"`      // 累计转发logs数
+	BytesForwardedTotal     int64 `json:"bytes_forwarded_total,omitempty"`     // 累计转发字节数
+	ForwardErrorsTotal      int64 `json:"forward_errors_total,omitempty"`      // 累计转发错误数
+
+	// 缓存指标
+	CacheHitsDelta   int64   `json:"cache_hits_delta,omitempty"`   // 本周期缓存命中
+	CacheMissesDelta int64   `json:"cache_misses_delta,omitempty"` // 本周期缓存未命中
+	CacheHitRate     float64 `json:"cache_hit_rate,omitempty"`     // 缓存命中率
+	CacheSize        int64   `json:"cache_size,omitempty"`         // 当前缓存大小（字节）
+	CacheItems       int64   `json:"cache_items,omitempty"`        // 当前缓存条目数
+
+	// 错误指标（当前周期）
+	TotalErrorsDelta         int64 `json:"total_errors_delta,omitempty"`          // 本周期总错误数
+	AuthErrorsDelta          int64 `json:"auth_errors_delta,omitempty"`           // 本周期认证错误数
+	RateLimitHitsDelta       int64 `json:"rate_limit_hits_delta,omitempty"`       // 本周期限流触发数
+	CircuitBreakerOpensDelta int64 `json:"circuit_breaker_opens_delta,omitempty"` // 本周期熔断器打开数
+
+	// 错误指标（累计）
+	TotalErrorsTotal         int64 `json:"total_errors_total,omitempty"`          // 累计总错误数
+	AuthErrorsTotal          int64 `json:"auth_errors_total,omitempty"`           // 累计认证错误数
+	RateLimitHitsTotal       int64 `json:"rate_limit_hits_total,omitempty"`       // 累计限流触发数
+	CircuitBreakerOpensTotal int64 `json:"circuit_breaker_opens_total,omitempty"` // 累计熔断器打开数
+
+	// 错误率
+	ErrorRate        float64 `json:"error_rate,omitempty"`         // 总错误率
+	ForwardErrorRate float64 `json:"forward_error_rate,omitempty"` // 转发错误率
+
+	// 资源指标
+	CpuUsage       float64 `json:"cpu_usage,omitempty"`       // CPU使用率
+	MemoryUsage    float64 `json:"memory_usage,omitempty"`    // 内存使用率
+	MemoryUsed     int64   `json:"memory_used,omitempty"`     // 内存使用量（字节）
+	GoroutineCount int64   `json:"goroutine_count,omitempty"` // 当前goroutine数
+
+	// 探针指标
+	ProbeCount       int32   `json:"probe_count,omitempty"`       // 当前探针数
+	OnlineProbeCount int32   `json:"online_probe_count,omitempty"` // 在线探针数
+	ProbeOnlineRate  float64 `json:"probe_online_rate,omitempty"`  // 探针在线率
+}
+
+func (m *ReportEdgeMetricsRequest) Reset()         { *m = ReportEdgeMetricsRequest{} }
+func (m *ReportEdgeMetricsRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ReportEdgeMetricsRequest) ProtoMessage()  {}
+
+func (m *ReportEdgeMetricsRequest) Marshal() ([]byte, error)    { return json.Marshal(m) }
+func (m *ReportEdgeMetricsRequest) Unmarshal(data []byte) error { return json.Unmarshal(data, m) }
+func (m *ReportEdgeMetricsRequest) GetEdgeNodeId() string       { return m.EdgeNodeId }
+func (m *ReportEdgeMetricsRequest) GetEdgeAddress() string      { return m.EdgeAddress }
+func (m *ReportEdgeMetricsRequest) GetCloudPlatform() string    { return m.CloudPlatform }
+func (m *ReportEdgeMetricsRequest) GetRegion() string           { return m.Region }
+func (m *ReportEdgeMetricsRequest) GetZone() string             { return m.Zone }
+func (m *ReportEdgeMetricsRequest) GetVersion() string          { return m.Version }
+func (m *ReportEdgeMetricsRequest) GetTimestamp() int64         { return m.Timestamp }
+func (m *ReportEdgeMetricsRequest) GetUptime() int64            { return m.Uptime }
+func (m *ReportEdgeMetricsRequest) GetActiveConnections() int64 { return m.ActiveConnections }
+func (m *ReportEdgeMetricsRequest) GetTotalConnections() int64  { return m.TotalConnections }
+func (m *ReportEdgeMetricsRequest) GetConnectionErrors() int64  { return m.ConnectionErrors }
+func (m *ReportEdgeMetricsRequest) GetConnectionErrorRate() float64 { return m.ConnectionErrorRate }
+func (m *ReportEdgeMetricsRequest) GetMetricsReceivedDelta() int64   { return m.MetricsReceivedDelta }
+func (m *ReportEdgeMetricsRequest) GetTracesReceivedDelta() int64    { return m.TracesReceivedDelta }
+func (m *ReportEdgeMetricsRequest) GetProfilingReceivedDelta() int64 { return m.ProfilingReceivedDelta }
+func (m *ReportEdgeMetricsRequest) GetLogsReceivedDelta() int64      { return m.LogsReceivedDelta }
+func (m *ReportEdgeMetricsRequest) GetBytesReceivedDelta() int64     { return m.BytesReceivedDelta }
+func (m *ReportEdgeMetricsRequest) GetMetricsReceivedTotal() int64   { return m.MetricsReceivedTotal }
+func (m *ReportEdgeMetricsRequest) GetTracesReceivedTotal() int64    { return m.TracesReceivedTotal }
+func (m *ReportEdgeMetricsRequest) GetProfilingReceivedTotal() int64 { return m.ProfilingReceivedTotal }
+func (m *ReportEdgeMetricsRequest) GetLogsReceivedTotal() int64      { return m.LogsReceivedTotal }
+func (m *ReportEdgeMetricsRequest) GetBytesReceivedTotal() int64     { return m.BytesReceivedTotal }
+func (m *ReportEdgeMetricsRequest) GetMetricsForwardedDelta() int64   { return m.MetricsForwardedDelta }
+func (m *ReportEdgeMetricsRequest) GetTracesForwardedDelta() int64    { return m.TracesForwardedDelta }
+func (m *ReportEdgeMetricsRequest) GetProfilingForwardedDelta() int64 { return m.ProfilingForwardedDelta }
+func (m *ReportEdgeMetricsRequest) GetLogsForwardedDelta() int64      { return m.LogsForwardedDelta }
+func (m *ReportEdgeMetricsRequest) GetBytesForwardedDelta() int64     { return m.BytesForwardedDelta }
+func (m *ReportEdgeMetricsRequest) GetForwardErrorsDelta() int64      { return m.ForwardErrorsDelta }
+func (m *ReportEdgeMetricsRequest) GetMetricsForwardedTotal() int64   { return m.MetricsForwardedTotal }
+func (m *ReportEdgeMetricsRequest) GetTracesForwardedTotal() int64    { return m.TracesForwardedTotal }
+func (m *ReportEdgeMetricsRequest) GetProfilingForwardedTotal() int64 { return m.ProfilingForwardedTotal }
+func (m *ReportEdgeMetricsRequest) GetLogsForwardedTotal() int64      { return m.LogsForwardedTotal }
+func (m *ReportEdgeMetricsRequest) GetBytesForwardedTotal() int64     { return m.BytesForwardedTotal }
+func (m *ReportEdgeMetricsRequest) GetForwardErrorsTotal() int64      { return m.ForwardErrorsTotal }
+func (m *ReportEdgeMetricsRequest) GetCacheHitsDelta() int64      { return m.CacheHitsDelta }
+func (m *ReportEdgeMetricsRequest) GetCacheMissesDelta() int64    { return m.CacheMissesDelta }
+func (m *ReportEdgeMetricsRequest) GetCacheHitRate() float64      { return m.CacheHitRate }
+func (m *ReportEdgeMetricsRequest) GetCacheSize() int64           { return m.CacheSize }
+func (m *ReportEdgeMetricsRequest) GetCacheItems() int64          { return m.CacheItems }
+func (m *ReportEdgeMetricsRequest) GetTotalErrorsDelta() int64    { return m.TotalErrorsDelta }
+func (m *ReportEdgeMetricsRequest) GetAuthErrorsDelta() int64     { return m.AuthErrorsDelta }
+func (m *ReportEdgeMetricsRequest) GetRateLimitHitsDelta() int64  { return m.RateLimitHitsDelta }
+func (m *ReportEdgeMetricsRequest) GetCircuitBreakerOpensDelta() int64 { return m.CircuitBreakerOpensDelta }
+func (m *ReportEdgeMetricsRequest) GetTotalErrorsTotal() int64    { return m.TotalErrorsTotal }
+func (m *ReportEdgeMetricsRequest) GetAuthErrorsTotal() int64     { return m.AuthErrorsTotal }
+func (m *ReportEdgeMetricsRequest) GetRateLimitHitsTotal() int64  { return m.RateLimitHitsTotal }
+func (m *ReportEdgeMetricsRequest) GetCircuitBreakerOpensTotal() int64 { return m.CircuitBreakerOpensTotal }
+func (m *ReportEdgeMetricsRequest) GetErrorRate() float64         { return m.ErrorRate }
+func (m *ReportEdgeMetricsRequest) GetForwardErrorRate() float64  { return m.ForwardErrorRate }
+func (m *ReportEdgeMetricsRequest) GetCpuUsage() float64          { return m.CpuUsage }
+func (m *ReportEdgeMetricsRequest) GetMemoryUsage() float64       { return m.MemoryUsage }
+func (m *ReportEdgeMetricsRequest) GetMemoryUsed() int64          { return m.MemoryUsed }
+func (m *ReportEdgeMetricsRequest) GetGoroutineCount() int64      { return m.GoroutineCount }
+func (m *ReportEdgeMetricsRequest) GetProbeCount() int32          { return m.ProbeCount }
+func (m *ReportEdgeMetricsRequest) GetOnlineProbeCount() int32    { return m.OnlineProbeCount }
+func (m *ReportEdgeMetricsRequest) GetProbeOnlineRate() float64   { return m.ProbeOnlineRate }
+
+// ReportEdgeMetricsResponse Edge监控指标上报响应
+type ReportEdgeMetricsResponse struct {
+	Success bool   `json:"success,omitempty"` // 是否成功
+	Code    string `json:"code,omitempty"`    // 错误码
+	Message string `json:"message,omitempty"` // 消息
+}
+
+func (m *ReportEdgeMetricsResponse) Reset()         { *m = ReportEdgeMetricsResponse{} }
+func (m *ReportEdgeMetricsResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ReportEdgeMetricsResponse) ProtoMessage()  {}
+
+func (m *ReportEdgeMetricsResponse) Marshal() ([]byte, error)    { return json.Marshal(m) }
+func (m *ReportEdgeMetricsResponse) Unmarshal(data []byte) error { return json.Unmarshal(data, m) }
+func (m *ReportEdgeMetricsResponse) GetSuccess() bool            { return m.Success }
+func (m *ReportEdgeMetricsResponse) GetCode() string             { return m.Code }
+func (m *ReportEdgeMetricsResponse) GetMessage() string          { return m.Message }
+
+// GetEdgeStatusRequest 获取Edge节点状态请求
+type GetEdgeStatusRequest struct {
+	EdgeNodeId string `json:"edge_node_id,omitempty"` // Edge节点ID（空表示查询所有）
+}
+
+func (m *GetEdgeStatusRequest) Reset()         { *m = GetEdgeStatusRequest{} }
+func (m *GetEdgeStatusRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *GetEdgeStatusRequest) ProtoMessage()  {}
+
+func (m *GetEdgeStatusRequest) Marshal() ([]byte, error)    { return json.Marshal(m) }
+func (m *GetEdgeStatusRequest) Unmarshal(data []byte) error { return json.Unmarshal(data, m) }
+func (m *GetEdgeStatusRequest) GetEdgeNodeId() string       { return m.EdgeNodeId }
+
+// EdgeStatus Edge节点状态信息
+type EdgeStatus struct {
+	EdgeNodeId    string  `json:"edge_node_id,omitempty"`     // Edge节点ID
+	EdgeAddress   string  `json:"edge_address,omitempty"`     // Edge地址
+	CloudPlatform string  `json:"cloud_platform,omitempty"`   // 云平台
+	Region        string  `json:"region,omitempty"`           // 区域
+	Zone          string  `json:"zone,omitempty"`             // 可用区
+	Version       string  `json:"version,omitempty"`          // 版本
+	Status        string  `json:"status,omitempty"`           // 状态: online/offline/error
+	LastHeartbeat int64   `json:"last_heartbeat,omitempty"`   // 最后心跳时间
+	Uptime        int64   `json:"uptime,omitempty"`           // 运行时长
+
+	// 连接指标
+	ActiveConnections int64 `json:"active_connections,omitempty"` // 当前活跃连接数
+	TotalConnections  int64 `json:"total_connections,omitempty"`  // 累计连接数
+
+	// 数据指标（最近周期）
+	MetricsReceived   int64 `json:"metrics_received,omitempty"`   // 接收metrics数
+	TracesReceived    int64 `json:"traces_received,omitempty"`    // 接收traces数
+	ProfilingReceived int64 `json:"profiling_received,omitempty"` // 接收profiling数
+	LogsReceived      int64 `json:"logs_received,omitempty"`      // 接收logs数
+
+	// 转发指标（最近周期）
+	MetricsForwarded   int64 `json:"metrics_forwarded,omitempty"`   // 转发metrics数
+	TracesForwarded    int64 `json:"traces_forwarded,omitempty"`    // 转发traces数
+	ProfilingForwarded int64 `json:"profiling_forwarded,omitempty"` // 转发profiling数
+	LogsForwarded      int64 `json:"logs_forwarded,omitempty"`      // 转发logs数
+
+	// 缓存指标
+	CacheHitRate float64 `json:"cache_hit_rate,omitempty"` // 缓存命中率
+	CacheSize    int64   `json:"cache_size,omitempty"`     // 缓存大小
+
+	// 错误指标
+	ErrorRate        float64 `json:"error_rate,omitempty"`         // 错误率
+	ForwardErrorRate float64 `json:"forward_error_rate,omitempty"` // 转发错误率
+
+	// 资源指标
+	CpuUsage       float64 `json:"cpu_usage,omitempty"`       // CPU使用率
+	MemoryUsage    float64 `json:"memory_usage,omitempty"`    // 内存使用率
+	GoroutineCount int64   `json:"goroutine_count,omitempty"` // goroutine数
+
+	// 探针指标
+	ProbeCount       int32   `json:"probe_count,omitempty"`       // 探针数
+	OnlineProbeCount int32   `json:"online_probe_count,omitempty"` // 在线探针数
+	ProbeOnlineRate  float64 `json:"probe_online_rate,omitempty"`  // 探针在线率
+}
+
+func (m *EdgeStatus) Reset()         { *m = EdgeStatus{} }
+func (m *EdgeStatus) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *EdgeStatus) ProtoMessage()  {}
+
+func (m *EdgeStatus) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *EdgeStatus) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+func (m *EdgeStatus) GetEdgeNodeId() string            { return m.EdgeNodeId }
+func (m *EdgeStatus) GetEdgeAddress() string           { return m.EdgeAddress }
+func (m *EdgeStatus) GetCloudPlatform() string         { return m.CloudPlatform }
+func (m *EdgeStatus) GetRegion() string                { return m.Region }
+func (m *EdgeStatus) GetZone() string                  { return m.Zone }
+func (m *EdgeStatus) GetVersion() string               { return m.Version }
+func (m *EdgeStatus) GetStatus() string                { return m.Status }
+func (m *EdgeStatus) GetLastHeartbeat() int64          { return m.LastHeartbeat }
+func (m *EdgeStatus) GetUptime() int64                 { return m.Uptime }
+func (m *EdgeStatus) GetActiveConnections() int64      { return m.ActiveConnections }
+func (m *EdgeStatus) GetTotalConnections() int64       { return m.TotalConnections }
+func (m *EdgeStatus) GetMetricsReceived() int64        { return m.MetricsReceived }
+func (m *EdgeStatus) GetTracesReceived() int64         { return m.TracesReceived }
+func (m *EdgeStatus) GetProfilingReceived() int64      { return m.ProfilingReceived }
+func (m *EdgeStatus) GetLogsReceived() int64           { return m.LogsReceived }
+func (m *EdgeStatus) GetMetricsForwarded() int64       { return m.MetricsForwarded }
+func (m *EdgeStatus) GetTracesForwarded() int64        { return m.TracesForwarded }
+func (m *EdgeStatus) GetProfilingForwarded() int64     { return m.ProfilingForwarded }
+func (m *EdgeStatus) GetLogsForwarded() int64          { return m.LogsForwarded }
+func (m *EdgeStatus) GetCacheHitRate() float64         { return m.CacheHitRate }
+func (m *EdgeStatus) GetCacheSize() int64              { return m.CacheSize }
+func (m *EdgeStatus) GetErrorRate() float64            { return m.ErrorRate }
+func (m *EdgeStatus) GetForwardErrorRate() float64     { return m.ForwardErrorRate }
+func (m *EdgeStatus) GetCpuUsage() float64             { return m.CpuUsage }
+func (m *EdgeStatus) GetMemoryUsage() float64          { return m.MemoryUsage }
+func (m *EdgeStatus) GetGoroutineCount() int64         { return m.GoroutineCount }
+func (m *EdgeStatus) GetProbeCount() int32             { return m.ProbeCount }
+func (m *EdgeStatus) GetOnlineProbeCount() int32       { return m.OnlineProbeCount }
+func (m *EdgeStatus) GetProbeOnlineRate() float64      { return m.ProbeOnlineRate }
+
+// GetEdgeStatusResponse 获取Edge节点状态响应
+type GetEdgeStatusResponse struct {
+	Success bool          `json:"success,omitempty"` // 是否成功
+	Code    string        `json:"code,omitempty"`    // 错误码
+	Message string        `json:"message,omitempty"` // 消息
+	Status  *EdgeStatus   `json:"status,omitempty"`  // 单个Edge状态（按ID查询时）
+	Statuses []*EdgeStatus `json:"statuses,omitempty"` // Edge状态列表（查询所有时）
+	Total   int32         `json:"total,omitempty"`   // 总数
+}
+
+func (m *GetEdgeStatusResponse) Reset()         { *m = GetEdgeStatusResponse{} }
+func (m *GetEdgeStatusResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *GetEdgeStatusResponse) ProtoMessage()  {}
+
+func (m *GetEdgeStatusResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *GetEdgeStatusResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+func (m *GetEdgeStatusResponse) GetSuccess() bool                 { return m.Success }
+func (m *GetEdgeStatusResponse) GetCode() string                  { return m.Code }
+func (m *GetEdgeStatusResponse) GetMessage() string               { return m.Message }
+func (m *GetEdgeStatusResponse) GetStatus() *EdgeStatus           { return m.Status }
+func (m *GetEdgeStatusResponse) GetStatuses() []*EdgeStatus       { return m.Statuses }
+func (m *GetEdgeStatusResponse) GetTotal() int32                  { return m.Total }
+
+// ============================================================================
 // gRPC 服务接口定义
 // ============================================================================
 
@@ -1633,6 +1918,8 @@ type CenterServiceServer interface {
 	ForwardProfiling(context.Context, *ProfilingBatch) (*ForwardResponse, error)
 	ForwardLogs(context.Context, *LogBatch) (*ForwardResponse, error)
 	Heartbeat(context.Context, *EdgeHeartbeatRequest) (*EdgeHeartbeatResponse, error)
+	ReportEdgeMetrics(context.Context, *ReportEdgeMetricsRequest) (*ReportEdgeMetricsResponse, error)
+	GetEdgeStatus(context.Context, *GetEdgeStatusRequest) (*GetEdgeStatusResponse, error)
 }
 
 // UnimplementedCenterServiceServer can be embedded to have forward compatible implementations.
@@ -1656,6 +1943,12 @@ func (UnimplementedCenterServiceServer) ForwardLogs(context.Context, *LogBatch) 
 func (UnimplementedCenterServiceServer) Heartbeat(context.Context, *EdgeHeartbeatRequest) (*EdgeHeartbeatResponse, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+func (UnimplementedCenterServiceServer) ReportEdgeMetrics(context.Context, *ReportEdgeMetricsRequest) (*ReportEdgeMetricsResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (UnimplementedCenterServiceServer) GetEdgeStatus(context.Context, *GetEdgeStatusRequest) (*GetEdgeStatusResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
 
 // UnsafeCenterServiceServer may be embedded to opt out of forward compatibility for this service.
 type UnsafeCenterServiceServer interface {
@@ -1670,6 +1963,8 @@ type CenterServiceClient interface {
 	ForwardProfiling(ctx context.Context, in *ProfilingBatch, opts ...grpc.CallOption) (*ForwardResponse, error)
 	ForwardLogs(ctx context.Context, in *LogBatch, opts ...grpc.CallOption) (*ForwardResponse, error)
 	Heartbeat(ctx context.Context, in *EdgeHeartbeatRequest, opts ...grpc.CallOption) (*EdgeHeartbeatResponse, error)
+	ReportEdgeMetrics(ctx context.Context, in *ReportEdgeMetricsRequest, opts ...grpc.CallOption) (*ReportEdgeMetricsResponse, error)
+	GetEdgeStatus(ctx context.Context, in *GetEdgeStatusRequest, opts ...grpc.CallOption) (*GetEdgeStatusResponse, error)
 }
 
 type centerServiceClient struct {
@@ -1735,6 +2030,24 @@ func (c *centerServiceClient) Heartbeat(ctx context.Context, in *EdgeHeartbeatRe
 	return out, nil
 }
 
+func (c *centerServiceClient) ReportEdgeMetrics(ctx context.Context, in *ReportEdgeMetricsRequest, opts ...grpc.CallOption) (*ReportEdgeMetricsResponse, error) {
+	out := new(ReportEdgeMetricsResponse)
+	err := c.cc.Invoke(ctx, "/edge.CenterService/ReportEdgeMetrics", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *centerServiceClient) GetEdgeStatus(ctx context.Context, in *GetEdgeStatusRequest, opts ...grpc.CallOption) (*GetEdgeStatusResponse, error) {
+	out := new(GetEdgeStatusResponse)
+	err := c.cc.Invoke(ctx, "/edge.CenterService/GetEdgeStatus", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RegisterCenterServiceServer registers the CenterService server.
 func RegisterCenterServiceServer(s *grpc.Server, srv CenterServiceServer) {
 	s.RegisterService(&_CenterService_serviceDesc, srv)
@@ -1750,6 +2063,8 @@ var _CenterService_serviceDesc = grpc.ServiceDesc{
 		{MethodName: "ForwardProfiling", Handler: _CenterService_ForwardProfiling_Handler},
 		{MethodName: "ForwardLogs", Handler: _CenterService_ForwardLogs_Handler},
 		{MethodName: "Heartbeat", Handler: _CenterService_Heartbeat_Handler},
+		{MethodName: "ReportEdgeMetrics", Handler: _CenterService_ReportEdgeMetrics_Handler},
+		{MethodName: "GetEdgeStatus", Handler: _CenterService_GetEdgeStatus_Handler},
 	},
 	Metadata: "edge.proto",
 }
@@ -1862,6 +2177,42 @@ func _CenterService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CenterService_ReportEdgeMetrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportEdgeMetricsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CenterServiceServer).ReportEdgeMetrics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/edge.CenterService/ReportEdgeMetrics",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CenterServiceServer).ReportEdgeMetrics(ctx, req.(*ReportEdgeMetricsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CenterService_GetEdgeStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetEdgeStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CenterServiceServer).GetEdgeStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/edge.CenterService/GetEdgeStatus",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CenterServiceServer).GetEdgeStatus(ctx, req.(*GetEdgeStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ============================================================================
 // 编译时检查：所有消息类型实现 proto.Message 接口
 // ============================================================================
@@ -1919,4 +2270,11 @@ var (
 	_ proto.Message = (*EdgeInstance)(nil)
 	_ proto.Message = (*DiscoverEdgesRequest)(nil)
 	_ proto.Message = (*DiscoverEdgesResponse)(nil)
+
+	// Edge自监控类型
+	_ proto.Message = (*ReportEdgeMetricsRequest)(nil)
+	_ proto.Message = (*ReportEdgeMetricsResponse)(nil)
+	_ proto.Message = (*GetEdgeStatusRequest)(nil)
+	_ proto.Message = (*GetEdgeStatusResponse)(nil)
+	_ proto.Message = (*EdgeStatus)(nil)
 )

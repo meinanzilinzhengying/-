@@ -219,6 +219,18 @@ ebpf:
     tap_device_name: "vxlan-tap0"  # TAP设备名称
     parse_inner_protocol: true  # 解析内层协议(HTTP/DNS/MySQL)
 
+  # 插件化协议解析框架配置
+  # 支持动态加载Oracle/PostgreSQL/Redis/Kafka/Dubbo协议解析插件
+  # 插件与主程序通过gRPC进程间通信，完全解耦，可独立升级
+  plugin_framework:
+    enabled: false                        # 启用插件框架（默认关闭）
+    plugin_dir: "/opt/cloud-flow-agent/plugins"  # 插件目录路径
+    auto_discovery: true                  # 自动发现并加载插件目录中的插件
+    check_interval: "30s"                 # 插件健康检查间隔
+    max_memory_mb: 256                    # 单插件内存限制(MB)
+    grpc_timeout: "5s"                    # gRPC通信超时
+    enable_builtin: true                  # 启用内置插件(Oracle/PostgreSQL/Redis/Kafka/Dubbo)
+
 # 历史数据存储配置
 # 支持: 历史数据默认存60天, 结构化压缩≥20:1, 日志≥6:1, 写入≥5万条/秒, 1亿行查询≤1秒
 storage:

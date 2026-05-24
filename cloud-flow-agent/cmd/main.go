@@ -21,6 +21,7 @@ import (
 	"cloud-flow-agent/internal/grpcclient"
 	"cloud-flow-agent/internal/http"
 	"cloud-flow-agent/internal/network"
+	"cloud-flow-agent/internal/protocol"
 	"cloud-flow-agent/internal/reliable"
 	"cloud-flow-agent/internal/selfmonitor"
 	"cloud-flow-agent/internal/sqlaggregator"
@@ -401,6 +402,34 @@ func main() {
 				cfg.EBPF.SQLAggregator.SlowQueryThresholdMs, cfg.EBPF.SQLAggregator.EnableCorrelation)
 			sqlAggregator.Start()
 			defer sqlAggregator.Stop()
+		}
+	}
+
+	// 初始化插件化协议解析框架（如果启用）
+	var pluginManager *protocol.Manager
+	if cfg.EBPF.PluginFramework.Enabled {
+		// 注册内置插件（Oracle/PostgreSQL/Redis/Kafka/Dubbo）
+		if cfg.EBPF.PluginFramework.EnableBuiltin {
+			protocol.RegisterBuiltinPlugins()
+			log.Info("[插件框架] 已注册5个内置协议解析插件: Oracle/PostgreSQL/Redis/Kafka/Dubbo")
+		}
+
+		pmCfg := protocol.ManagerConfig{
+			PluginDir:     cfg.EBPF.PluginFramework.PluginDir,
+			AutoDiscovery: cfg.EBPF.PluginFramework.AutoDiscovery,
+			CheckInterval: cfg.EBPF.PluginFramework.CheckInterval,
+			MaxMemoryMB:   cfg.EBPF.PluginFramework.MaxMemoryMB,
+			GRPCTimeout:   cfg.EBPF.PluginFramework.GRPCTimeout,
+		}
+		pluginManager = protocol.NewManager(pmCfg, log)
+		if err := pluginManager.Start(); err != nil {
+			log.Warnf("[插件框架] 启动失败: %v", err)
+			pluginManager = nil
+		} else {
+			defer pluginManager.Stop()
+			plugins := pluginManager.ListPlugins()
+			log.Infof("[插件框架] 已启动: 插件目录=%s, 已加载插件=%d, 自动发现=%v",
+				pmCfg.PluginDir, len(plugins), pmCfg.AutoDiscovery)
 		}
 	}
 

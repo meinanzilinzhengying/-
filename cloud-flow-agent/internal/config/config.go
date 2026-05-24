@@ -346,8 +346,9 @@ type EBPFConfig struct {
 	ResourceLimit   ResourceLimitConfig   // 资源限制配置
 	CircuitBreaker  CircuitBreakerConfig  // 熔断配置
 	SelfMonitor     SelfMonitorConfig     // 自监控配置
-	VXLAN           VXLANConfig           // VXLAN解封装配置
-	PerfOptimizer   PerfOptimizerConfig   // 性能优化配置
+	VXLAN             VXLANConfig           // VXLAN解封装配置
+	PluginFramework   PluginFrameworkConfig // 插件化协议解析框架配置
+	PerfOptimizer     PerfOptimizerConfig   // 性能优化配置
 	CPUProfiler     CPUProfilerConfig     // ON-CPU剖析配置
 	SQLAggregator   SQLAggregatorConfig   // SQL聚合分析配置
 }
@@ -358,6 +359,17 @@ type VXLANConfig struct {
 	EnableTapMirror   bool   // 启用TAP设备镜像
 	TapDeviceName     string // TAP设备名称
 	ParseInnerProtocol bool  // 解析内层协议
+}
+
+// PluginFrameworkConfig 插件化协议解析框架配置
+type PluginFrameworkConfig struct {
+	Enabled        bool          // 启用插件框架
+	PluginDir      string        // 插件目录路径
+	AutoDiscovery  bool          // 自动发现并加载插件
+	CheckInterval  time.Duration // 健康检查间隔
+	MaxMemoryMB    int           // 单插件内存限制(MB)
+	GRPCTimeout    time.Duration // gRPC通信超时
+	EnableBuiltin  bool          // 启用内置插件(Oracle/PG/Redis/Kafka/Dubbo)
 }
 
 type Config struct {
@@ -483,6 +495,15 @@ func Load() (*Config, error) {
 	viper.SetDefault("ebpf.vxlan.enable_tap_mirror", false)
 	viper.SetDefault("ebpf.vxlan.tap_device_name", "vxlan-tap0")
 	viper.SetDefault("ebpf.vxlan.parse_inner_protocol", true)
+
+	// 插件化协议解析框架配置默认值
+	viper.SetDefault("ebpf.plugin_framework.enabled", false)
+	viper.SetDefault("ebpf.plugin_framework.plugin_dir", "/opt/cloud-flow-agent/plugins")
+	viper.SetDefault("ebpf.plugin_framework.auto_discovery", true)
+	viper.SetDefault("ebpf.plugin_framework.check_interval", "30s")
+	viper.SetDefault("ebpf.plugin_framework.max_memory_mb", 256)
+	viper.SetDefault("ebpf.plugin_framework.grpc_timeout", "5s")
+	viper.SetDefault("ebpf.plugin_framework.enable_builtin", true)
 
 	// 性能优化配置默认值
 	viper.SetDefault("ebpf.perf_optimizer.enabled", true)
@@ -753,6 +774,15 @@ func Load() (*Config, error) {
 				EnableTapMirror:    viper.GetBool("ebpf.vxlan.enable_tap_mirror"),
 				TapDeviceName:      viper.GetString("ebpf.vxlan.tap_device_name"),
 				ParseInnerProtocol: viper.GetBool("ebpf.vxlan.parse_inner_protocol"),
+			},
+			PluginFramework: PluginFrameworkConfig{
+				Enabled:       viper.GetBool("ebpf.plugin_framework.enabled"),
+				PluginDir:     viper.GetString("ebpf.plugin_framework.plugin_dir"),
+				AutoDiscovery: viper.GetBool("ebpf.plugin_framework.auto_discovery"),
+				CheckInterval: viper.GetDuration("ebpf.plugin_framework.check_interval"),
+				MaxMemoryMB:   viper.GetInt("ebpf.plugin_framework.max_memory_mb"),
+				GRPCTimeout:   viper.GetDuration("ebpf.plugin_framework.grpc_timeout"),
+				EnableBuiltin: viper.GetBool("ebpf.plugin_framework.enable_builtin"),
 			},
 			PerfOptimizer: PerfOptimizerConfig{
 				Enabled:         viper.GetBool("ebpf.perf_optimizer.enabled"),

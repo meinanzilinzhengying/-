@@ -18,12 +18,13 @@ RUN go mod download
 COPY . .
 
 # 构建参数
+ARG TARGETARCH
 ARG VERSION=dev
 ARG BUILD_TIME
 ARG GIT_COMMIT
 
-# 构建
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# 构建（TARGETARCH 由 Docker BuildKit 自动注入，支持多架构）
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}" \
     -o /build/cloud-flow-agent ./cmd/agent
 

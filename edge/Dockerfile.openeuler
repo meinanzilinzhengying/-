@@ -1,0 +1,75 @@
+# Cloud Flow Edge - openEuler 欧拉基础镜像
+# 支持海光(x86_64) + 鲲鹏(ARM64) 多架构
+
+# ==================== 构建阶段 ====================
+FROM golang:1.21-alpine AS builder
+
+# 安装构建依赖
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+# 复制 go.mod 和 go.sum
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制源代码
+COPY . .
+
+# 构建参数（TARGETARCH 由 Docker BuildKit 自动注入）
+ARG TARGETARCH
+
+# 构建（静态链接，适配多架构）
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o /build/edge \
+    ./cmd/edge
+
+# ==================== 运行阶段 ====================
+FROM openeuler/openeuler:22.03-lts-sp3
+
+# 安装运行时依赖
+RUN yum install -y ca-certificates tzdata curl procps-ng \
+    && yum clean all \
+    && rm -rf /var/cache/yum
+
+# 创建非root用户
+RUN groupadd -g 1000 cloudflow && \
+    useradd -u 1000 -g cloudflow -s /bin/sh -m cloudflow
+
+WORKDIR /app
+
+# 复制二进制文件
+COPY --from=builder /build/edge .
+
+# 设置权限
+RUN chown -R cloudflow:cloudflow /app
+
+# 切换用户
+USER cloudflow
+
+# 暴露端口
+# 8080 - HTTP API
+# 8081 - HTTP健康检查
+# 50051 - gRPC服务
+# 50052 - gRPC健康检查
+EXPOSE 8080 8081 50051 50052
+
+# 健康检查
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8081/healthz || exit 1
+
+# 环境变量
+ENV TZ=Asia/Shanghai
+
+# 入口点
+ENTRYPOINT ["/app/edge"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Edge (openEuler)" \
+      org.opencontainers.image.description="Cloud Flow Edge for openEuler - 海光/鲲鹏" \
+      org.opencontainers.image.vendor="Cloud Flow" \
+      com.cloudflow.base="openeuler" \
+      com.cloudflow.chips="hygon,kunpeng" \
+      com.openeuler.version="22.03-lts-sp3"

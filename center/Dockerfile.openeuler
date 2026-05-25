@@ -1,6 +1,7 @@
-# Cloud Flow Center - 无状态中心控制服务
-# 支持多实例部署，所有数据存储在TiDB/Redis
+# Cloud Flow Center - openEuler 欧拉基础镜像
+# 支持海光(x86_64) + 鲲鹏(ARM64) 多架构
 
+# ==================== 构建阶段 ====================
 FROM golang:1.22-alpine AS builder
 
 # 安装构建依赖
@@ -8,19 +9,20 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /build
 
-# 复制go mod文件
+# 复制 go mod 文件
 COPY go.mod go.sum ./
 RUN go mod download
 
 # 复制源代码
 COPY . .
 
-# 构建参数（TARGETARCH 由 Docker BuildKit 自动注入，支持多架构）
+# 构建参数（TARGETARCH 由 Docker BuildKit 自动注入）
 ARG TARGETARCH
 ARG VERSION=dev
 ARG BUILD_TIME=
 ARG GIT_COMMIT=
 
+# 构建（静态链接，适配多架构）
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w \
     -X main.Version=${VERSION} \
@@ -29,15 +31,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     -o /cloud-flow-center \
     ./cmd/center
 
-# 运行镜像
-FROM alpine:3.19
+# ==================== 运行阶段 ====================
+FROM openeuler/openeuler:22.03-lts-sp3
 
 # 安装运行时依赖
-RUN apk add --no-cache ca-certificates tzdata curl
+RUN yum install -y ca-certificates tzdata curl procps-ng \
+    && yum clean all \
+    && rm -rf /var/cache/yum
 
 # 创建非root用户
-RUN addgroup -g 1000 cloudflow && \
-    adduser -u 1000 -G cloudflow -s /bin/sh -D cloudflow
+RUN groupadd -g 1000 cloudflow && \
+    useradd -u 1000 -g cloudflow -s /bin/sh -m cloudflow
 
 WORKDIR /app
 
@@ -57,14 +61,23 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # 暴露端口
 EXPOSE 8080 8081 50051
 
-# 环境变量说明
+# 环境变量
 ENV \
     CENTER_ID=center-1 \
     CENTER_MODE=standalone \
     HTTP_ADDR=:8080 \
     HEALTH_PORT=8081 \
     LOG_LEVEL=info \
-    LOG_FORMAT=json
+    LOG_FORMAT=json \
+    TZ=Asia/Shanghai
 
 # 启动命令
 ENTRYPOINT ["/app/cloud-flow-center"]
+
+# 元数据
+LABEL org.opencontainers.image.title="Cloud Flow Center (openEuler)" \
+      org.opencontainers.image.description="Cloud Flow Center for openEuler - 海光/鲲鹏" \
+      org.opencontainers.image.vendor="Cloud Flow" \
+      com.cloudflow.base="openeuler" \
+      com.cloudflow.chips="hygon,kunpeng" \
+      com.openeuler.version="22.03-lts-sp3"

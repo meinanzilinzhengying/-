@@ -15,8 +15,11 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
+# 构建参数（TARGETARCH 由 Docker BuildKit 自动注入，支持多架构）
+ARG TARGETARCH
+
 # 构建
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a -installsuffix cgo \
     -o /build/edge \

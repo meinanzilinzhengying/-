@@ -1,0 +1,158 @@
+# =============================================================================
+# Cloud Flow Agent - DaemonSet 部署（每个节点一个）
+# =============================================================================
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agent
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: cloud-flow
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent
+        app.kubernetes.io/component: agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cloud-flow
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: agent
+          image: ghcr.io/meinanzilinzhengying/cloudflow/agent:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: TENANT_ID
+              value: "default"
+            - name: REGION
+              value: "default"
+            - name: ZONE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['topology.kubernetes.io/zone']
+            - name: CENTER_ADDR
+              value: "center:8080"
+            - name: EDGE_ADDR
+              value: "edge:8080"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: LOG_FORMAT
+              value: "json"
+            - name: CLOUD_FLOW_CONFIG
+              value: "/etc/cloud-flow/agent.yaml"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -x
+                - cloud-flow-agent
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - -x
+                - cloud-flow-agent
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloud-flow
+              readOnly: true
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: cgroup
+              mountPath: /host/cgroup
+              readOnly: true
+            - name: debug
+              mountPath: /sys/kernel/debug
+            - name: modules
+              mountPath: /lib/modules
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/cloud-flow
+            - name: data
+              mountPath: /var/lib/cloud-flow
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+      volumes:
+        - name: config
+          configMap:
+            name: cloud-flow-config
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+        - name: debug
+          hostPath:
+            path: /sys/kernel/debug
+        - name: modules
+          hostPath:
+            path: /lib/modules
+        - name: logs
+          hostPath:
+            path: /var/log/cloud-flow
+            type: DirectoryOrCreate
+        - name: data
+          hostPath:
+            path: /var/lib/cloud-flow
+            type: DirectoryOrCreate
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: CriticalAddonsOnly
+          operator: Exists
+      nodeSelector:
+        kubernetes.io/os: linux

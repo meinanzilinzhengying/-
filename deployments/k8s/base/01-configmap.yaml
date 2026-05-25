@@ -1,0 +1,147 @@
+# =============================================================================
+# Cloud Flow - ConfigMap 配置
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-flow-config
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: cloud-flow
+    app.kubernetes.io/component: config
+data:
+  # Center 服务配置
+  center.yaml: |
+    server:
+      http_addr: ":8080"
+      grpc_addr: ":50051"
+      health_port: 8081
+    
+    database:
+      type: "${DB_TYPE:-postgres}"
+      host: "${DB_HOST:-postgres}"
+      port: ${DB_PORT:-5432}
+      database: "${DB_NAME:-cloudflow}"
+      user: "${DB_USER:-cloudflow}"
+      max_open_conns: 100
+      max_idle_conns: 10
+    
+    redis:
+      address: "${REDIS_ADDR:-redis:6379}"
+      password: "${REDIS_PASSWORD:-}"
+      db: ${REDIS_DB:-0}
+      pool_size: 10
+    
+    log:
+      level: "${LOG_LEVEL:-info}"
+      format: "${LOG_FORMAT:-json}"
+    
+    mode: "${CENTER_MODE:-standalone}"
+
+  # Edge 服务配置
+  edge.yaml: |
+    server:
+      http_addr: ":8080"
+      grpc_addr: ":50051"
+      health_port: 8081
+      health_grpc_port: 50052
+    
+    redis:
+      address: "${REDIS_ADDR:-redis:6379}"
+      password: "${REDIS_PASSWORD:-}"
+      db: ${REDIS_DB:-0}
+      pool_size: 10
+    
+    center:
+      address: "${CENTER_ADDR:-center:8080}"
+      heartbeat_interval: "30s"
+    
+    loadbalancer:
+      strategy: "${LB_STRATEGY:-least_conn}"
+      health_check_interval: "10s"
+    
+    log:
+      level: "${LOG_LEVEL:-info}"
+      format: "${LOG_FORMAT:-json}"
+
+  # Agent 服务配置
+  agent.yaml: |
+    agent:
+      id: "${AGENT_ID:-}"
+      tenant_id: "${TENANT_ID:-default}"
+      region: "${REGION:-default}"
+      zone: "${ZONE:-default}"
+    
+    center:
+      address: "${CENTER_ADDR:-center:8080}"
+    
+    edge:
+      address: "${EDGE_ADDR:-edge:9090}"
+    
+    collectors:
+      - type: network
+        enabled: true
+        interval: 30s
+      - type: system
+        enabled: true
+        interval: 60s
+      - type: application
+        enabled: true
+        interval: 30s
+    
+    log:
+      level: "${LOG_LEVEL:-info}"
+      format: "${LOG_FORMAT:-json}"
+      output: "${LOG_OUTPUT:-stdout}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-flow-scripts
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: cloud-flow
+    app.kubernetes.io/component: scripts
+data:
+  # 健康检查脚本
+  health-check.sh: |
+    #!/bin/sh
+    set -e
+    
+    component="$1"
+    case "$component" in
+      center)
+        curl -sf http://localhost:8081/health > /dev/null
+        ;;
+      edge)
+        curl -sf http://localhost:8081/healthz > /dev/null
+        ;;
+      agent)
+        pgrep -x cloud-flow-agent > /dev/null
+        ;;
+      *)
+        echo "Unknown component: $component"
+        exit 1
+        ;;
+    esac
+
+  # 就绪检查脚本
+  ready-check.sh: |
+    #!/bin/sh
+    set -e
+    
+    component="$1"
+    case "$component" in
+      center)
+        curl -sf http://localhost:8081/ready > /dev/null
+        ;;
+      edge)
+        curl -sf http://localhost:8081/readyz > /dev/null
+        ;;
+      *)
+        echo "Unknown component: $component"
+        exit 1
+        ;;
+    esac

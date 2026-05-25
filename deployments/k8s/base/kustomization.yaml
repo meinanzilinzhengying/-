@@ -1,0 +1,30 @@
+# =============================================================================
+# Cloud Flow - Kustomize 基础配置
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cloud-flow
+
+resources:
+  - 00-namespace.yaml
+  - 99-rbac.yaml
+  - 01-configmap.yaml
+  - 02-secret.yaml
+  - 20-dependencies.yaml
+  - 10-center.yaml
+  - 11-edge.yaml
+  - 12-agent.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: cloud-flow
+  app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: ghcr.io/meinanzilinzhengying/cloudflow/center
+    newTag: latest
+  - name: ghcr.io/meinanzilinzhengying/cloudflow/edge
+    newTag: latest
+  - name: ghcr.io/meinanzilinzhengying/cloudflow/agent
+    newTag: latest

@@ -1,0 +1,218 @@
+# =============================================================================
+# Cloud Flow Edge - 无状态边缘服务
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: edge
+    app.kubernetes.io/component: edge
+    app.kubernetes.io/part-of: cloud-flow
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: edge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: edge
+        app.kubernetes.io/component: edge
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cloud-flow
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: edge
+          image: ghcr.io/meinanzilinzhengying/cloudflow/edge:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            - name: health-grpc
+              containerPort: 50052
+              protocol: TCP
+          env:
+            - name: EDGE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: EDGE_INSTANCE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: EDGE_REGION
+              value: "default"
+            - name: EDGE_ZONE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['topology.kubernetes.io/zone']
+            - name: EDGE_SERVER_HOST
+              value: "0.0.0.0"
+            - name: EDGE_SERVER_PORT
+              value: "8080"
+            - name: EDGE_GRPC_HOST
+              value: "0.0.0.0"
+            - name: EDGE_GRPC_PORT
+              value: "50051"
+            - name: EDGE_HEALTH_PORT
+              value: "8081"
+            - name: EDGE_HEALTH_GRPC_PORT
+              value: "50052"
+            - name: EDGE_REDIS_ENABLED
+              value: "true"
+            - name: EDGE_REDIS_ADDRESS
+              value: "redis:6379"
+            - name: EDGE_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-flow-secrets
+                  key: redis-password
+                  optional: true
+            - name: EDGE_CENTER_ADDRESS
+              value: "center:8080"
+            - name: EDGE_CENTER_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-flow-secrets
+                  key: center-token
+            - name: EDGE_LB_STRATEGY
+              value: "least_conn"
+            - name: EDGE_LOG_LEVEL
+              value: "info"
+            - name: EDGE_LOG_FORMAT
+              value: "json"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloud-flow
+              readOnly: true
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+      volumes:
+        - name: config
+          configMap:
+            name: cloud-flow-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - edge
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: edge
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: edge
+    app.kubernetes.io/component: edge
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+    - name: health
+      port: 8081
+      targetPort: health
+      protocol: TCP
+    - name: health-grpc
+      port: 50052
+      targetPort: health-grpc
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: edge
+
+---
+# Edge 负载均衡器服务（用于 Agent 连接）
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-lb
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: edge
+    app.kubernetes.io/component: edge-lb
+spec:
+  type: LoadBalancer
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: edge

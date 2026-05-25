@@ -1,0 +1,202 @@
+# =============================================================================
+# Cloud Flow Center - 无状态中心控制服务
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: center
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: center
+    app.kubernetes.io/component: control
+    app.kubernetes.io/part-of: cloud-flow
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: center
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: center
+        app.kubernetes.io/component: control
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cloud-flow
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: center
+          image: ghcr.io/meinanzilinzhengying/cloudflow/center:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: CENTER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CENTER_MODE
+              value: "cluster"
+            - name: HTTP_ADDR
+              value: ":8080"
+            - name: HEALTH_PORT
+              value: "8081"
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "cloudflow"
+            - name: DB_USER
+              value: "cloudflow"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-flow-secrets
+                  key: db-password
+            - name: REDIS_ADDR
+              value: "redis:6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-flow-secrets
+                  key: redis-password
+                  optional: true
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-flow-secrets
+                  key: jwt-secret
+            - name: LOG_LEVEL
+              value: "info"
+            - name: LOG_FORMAT
+              value: "json"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloud-flow
+              readOnly: true
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
+      volumes:
+        - name: config
+          configMap:
+            name: cloud-flow-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - center
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: center
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: center
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: center
+    app.kubernetes.io/component: control
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+    - name: health
+      port: 8081
+      targetPort: health
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: center
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: center-headless
+  namespace: cloud-flow
+  labels:
+    app.kubernetes.io/name: center
+    app.kubernetes.io/component: control
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: center

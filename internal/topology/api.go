@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cloud-flow-agent/internal/network"
 )
 
 // APIConfig API配置
@@ -32,6 +34,8 @@ type TopologyAPI struct {
 	fsHandler    *FullStackHandler
 	appTopology  *AppTopologyManager
 	appHandler   *AppTopologyHandler
+	netAnalysis  *network.AnalysisManager
+	netHandler   *network.AnalysisHandler
 	server       *http.Server
 }
 
@@ -45,6 +49,10 @@ func NewTopologyAPI(config *APIConfig, discovery *DiscoveryEngine, tracer *PathT
 	appTopologyManager := NewAppTopologyManager(discovery, tracer, storage)
 	appHandler := NewAppTopologyHandler(appTopologyManager)
 	
+	// 创建网络分析管理器
+	netAnalysisManager := network.NewAnalysisManager()
+	netHandler := network.NewAnalysisHandler(netAnalysisManager)
+	
 	return &TopologyAPI{
 		config:      config,
 		discovery:   discovery,
@@ -54,6 +62,8 @@ func NewTopologyAPI(config *APIConfig, discovery *DiscoveryEngine, tracer *PathT
 		fsHandler:   fsHandler,
 		appTopology: appTopologyManager,
 		appHandler:  appHandler,
+		netAnalysis: netAnalysisManager,
+		netHandler:  netHandler,
 	}
 }
 
@@ -83,6 +93,9 @@ func (a *TopologyAPI) Start() error {
 	
 	// 应用拓扑API
 	a.appHandler.RegisterRoutes(mux)
+	
+	// 网络分析API
+	a.netHandler.RegisterRoutes(mux)
 	
 	// 静态文件服务 - 拓扑可视化页面
 	mux.HandleFunc("/topology", a.handleTopologyPage)

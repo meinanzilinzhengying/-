@@ -24,13 +24,15 @@ type APIConfig struct {
 
 // TopologyAPI 拓扑API服务
 type TopologyAPI struct {
-	config      *APIConfig
-	discovery   *DiscoveryEngine
-	tracer      *PathTracer
-	storage     *TopologyStorage
-	fullstack   *FullStackManager
-	fsHandler   *FullStackHandler
-	server      *http.Server
+	config       *APIConfig
+	discovery    *DiscoveryEngine
+	tracer       *PathTracer
+	storage      *TopologyStorage
+	fullstack    *FullStackManager
+	fsHandler    *FullStackHandler
+	appTopology  *AppTopologyManager
+	appHandler   *AppTopologyHandler
+	server       *http.Server
 }
 
 // NewTopologyAPI 创建拓扑API服务
@@ -39,13 +41,19 @@ func NewTopologyAPI(config *APIConfig, discovery *DiscoveryEngine, tracer *PathT
 	fullstackManager := NewFullStackManager(discovery, tracer, storage)
 	fsHandler := NewFullStackHandler(fullstackManager)
 	
+	// 创建应用拓扑管理器
+	appTopologyManager := NewAppTopologyManager(discovery, tracer, storage)
+	appHandler := NewAppTopologyHandler(appTopologyManager)
+	
 	return &TopologyAPI{
-		config:    config,
-		discovery: discovery,
-		tracer:    tracer,
-		storage:   storage,
-		fullstack: fullstackManager,
-		fsHandler: fsHandler,
+		config:      config,
+		discovery:   discovery,
+		tracer:      tracer,
+		storage:     storage,
+		fullstack:   fullstackManager,
+		fsHandler:   fsHandler,
+		appTopology: appTopologyManager,
+		appHandler:  appHandler,
 	}
 }
 
@@ -73,9 +81,14 @@ func (a *TopologyAPI) Start() error {
 	// 全栈拓扑API
 	a.fsHandler.RegisterRoutes(mux)
 	
+	// 应用拓扑API
+	a.appHandler.RegisterRoutes(mux)
+	
 	// 静态文件服务 - 拓扑可视化页面
 	mux.HandleFunc("/topology", a.handleTopologyPage)
 	mux.HandleFunc("/topology/", a.handleTopologyPage)
+	mux.HandleFunc("/app-topology", a.handleAppTopologyPage)
+	mux.HandleFunc("/app-topology/", a.handleAppTopologyPage)
 	
 	mux.HandleFunc("/api/v1/health", a.handleHealth)
 	
@@ -612,6 +625,12 @@ func (a *TopologyAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (a *TopologyAPI) handleTopologyPage(w http.ResponseWriter, r *http.Request) {
 	// 读取并返回拓扑HTML页面
 	http.ServeFile(w, r, "web/topology.html")
+}
+
+// handleAppTopologyPage 处理应用拓扑页面请求
+func (a *TopologyAPI) handleAppTopologyPage(w http.ResponseWriter, r *http.Request) {
+	// 读取并返回应用拓扑HTML页面
+	http.ServeFile(w, r, "web/app-topology.html")
 }
 
 // respondJSON 返回JSON响应

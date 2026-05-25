@@ -4,6 +4,7 @@ package huaweicloud
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -463,6 +464,7 @@ type AssetStore interface {
 
 // MemoryAssetStore 内存资产存储（用于测试）
 type MemoryAssetStore struct {
+	mu      sync.RWMutex
 	vms     map[string]*VM
 	vpcs    map[string]*VPC
 	subnets map[string]*Subnet
@@ -480,42 +482,60 @@ func NewMemoryAssetStore() *MemoryAssetStore {
 }
 
 func (s *MemoryAssetStore) SaveVM(vm *VM) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.vms[vm.ID] = vm
 	return nil
 }
 
 func (s *MemoryAssetStore) SaveVPC(vpc *VPC) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.vpcs[vpc.ID] = vpc
 	return nil
 }
 
 func (s *MemoryAssetStore) SaveSubnet(subnet *Subnet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.subnets[subnet.ID] = subnet
 	return nil
 }
 
 func (s *MemoryAssetStore) SaveHost(host *Host) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.hosts[host.ID] = host
 	return nil
 }
 
 func (s *MemoryAssetStore) GetVM(id string) (*VM, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.vms[id], nil
 }
 
 func (s *MemoryAssetStore) GetVPC(id string) (*VPC, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.vpcs[id], nil
 }
 
 func (s *MemoryAssetStore) GetSubnet(id string) (*Subnet, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.subnets[id], nil
 }
 
 func (s *MemoryAssetStore) GetHost(id string) (*Host, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.hosts[id], nil
 }
 
 func (s *MemoryAssetStore) ListVMs() ([]*VM, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make([]*VM, 0, len(s.vms))
 	for _, vm := range s.vms {
 		result = append(result, vm)
@@ -524,6 +544,8 @@ func (s *MemoryAssetStore) ListVMs() ([]*VM, error) {
 }
 
 func (s *MemoryAssetStore) ListVPCs() ([]*VPC, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make([]*VPC, 0, len(s.vpcs))
 	for _, vpc := range s.vpcs {
 		result = append(result, vpc)
@@ -532,6 +554,8 @@ func (s *MemoryAssetStore) ListVPCs() ([]*VPC, error) {
 }
 
 func (s *MemoryAssetStore) ListSubnets() ([]*Subnet, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make([]*Subnet, 0, len(s.subnets))
 	for _, subnet := range s.subnets {
 		result = append(result, subnet)

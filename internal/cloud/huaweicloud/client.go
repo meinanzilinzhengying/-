@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud-flow-agent/pkg/logger"
@@ -23,10 +24,11 @@ type Client struct {
 	config     ClientConfig
 	httpClient *http.Client
 	log        *logger.Logger
-	
-	// 认证信息
-	authToken  string
+
+	// 认证信息（需要锁保护）
+	authToken   string
 	tokenExpire time.Time
+	authMu      sync.Mutex // 保护认证过程
 }
 
 // ClientConfig 客户端配置
@@ -151,10 +153,15 @@ func (c *Client) Authenticate() error {
 
 // ensureAuthenticated 确保已认证
 func (c *Client) ensureAuthenticated() error {
-	if c.authToken == "" || time.Now().After(c.tokenExpire.Add(-5*time.Minute)) {
-		return c.Authenticate()
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+
+	// 双重检查（持有锁后再次检查）
+	if c.authToken != "" && time.Now().Before(c.tokenExpire.Add(-5*time.Minute)) {
+		return nil
 	}
-	return nil
+
+	return c.Authenticate()
 }
 
 // ==================== 通用请求方法 ====================

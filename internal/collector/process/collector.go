@@ -33,8 +33,9 @@ type Collector struct {
 	eventChan  chan *models.ProcessEvent
 	errorChan  chan error
 
-	// 进程缓存
-	processCache map[uint32]*processInfo
+	// 进程缓存（需要独立锁保护）
+	processCache   map[uint32]*processInfo
+	processCacheMu sync.RWMutex
 
 	// 统计
 	eventsCount uint64
@@ -189,7 +190,9 @@ func (c *Collector) initProcessCache() {
 
 		info := c.readProcessInfo(uint32(pid))
 		if info != nil {
+			c.processCacheMu.Lock()
 			c.processCache[uint32(pid)] = info
+			c.processCacheMu.Unlock()
 		}
 	}
 }
@@ -366,7 +369,9 @@ func (c *Collector) parseForkEvent(data []byte) *models.ProcessEvent {
 	childTid := binary.LittleEndian.Uint32(data[12:16])
 
 	// 获取父进程信息
+	c.processCacheMu.RLock()
 	parentInfo := c.processCache[parentPid]
+	c.processCacheMu.RUnlock()
 
 	event := &models.ProcessEvent{
 		Timestamp: time.Now(),
@@ -381,11 +386,13 @@ func (c *Collector) parseForkEvent(data []byte) *models.ProcessEvent {
 	}
 
 	// 更新缓存
+	c.processCacheMu.Lock()
 	c.processCache[childPid] = &processInfo{
 		PID:  childPid,
 		PPID: parentPid,
 		Seen: time.Now(),
 	}
+	c.processCacheMu.Unlock()
 
 	return event
 }
@@ -406,7 +413,9 @@ func (c *Collector) parseExecEvent(data []byte) *models.ProcessEvent {
 	}
 
 	// 更新缓存
+	c.processCacheMu.Lock()
 	c.processCache[pid] = info
+	c.processCacheMu.Unlock()
 
 	return &models.ProcessEvent{
 		Timestamp: time.Now(),
@@ -435,7 +444,9 @@ func (c *Collector) parseExitEvent(data []byte) *models.ProcessEvent {
 	signal := binary.LittleEndian.Uint32(data[12:16])
 
 	// 获取进程信息
+	c.processCacheMu.RLock()
 	info := c.processCache[pid]
+	c.processCacheMu.RUnlock()
 
 	event := &models.ProcessEvent{
 		Timestamp: time.Now(),
@@ -452,7 +463,9 @@ func (c *Collector) parseExitEvent(data []byte) *models.ProcessEvent {
 	}
 
 	// 从缓存中删除
+	c.processCacheMu.Lock()
 	delete(c.processCache, pid)
+	c.processCacheMu.Unlock()
 
 	return event
 }
@@ -487,6 +500,7 @@ func (c *Collector) scanProcesses() {
 
 	currentPids := make(map[uint32]bool)
 
+	c.processCacheMu.Lock()
 	for _, entry := range entries {
 		pid, err := strconv.ParseUint(entry, 10, 32)
 		if err != nil {
@@ -540,6 +554,7 @@ func (c *Collector) scanProcesses() {
 			}
 		}
 	}
+	c.processCacheMu.Unlock()
 }
 
 // filterProcess 过滤进程

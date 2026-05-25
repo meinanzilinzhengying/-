@@ -5,8 +5,12 @@ package ebpf
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -131,7 +135,6 @@ func (r *ResourceLimiter) adjust() {
 	r.statsMu.Lock()
 	r.stats.CurrentCPUUsage = cpuUsage
 	r.stats.CurrentMemoryMB = memUsage
-	r
 	// 检查是否需要调整
 	needAdjust := false
 	newRate := r.currentRate
@@ -213,8 +216,39 @@ func (r *ResourceLimiter) GetStats() *LimiterStats {
 
 // getCPUUsage 获取CPU使用率
 func (r *ResourceLimiter) getCPUUsage() float64 {
-	// 简化实现，实际应读取/proc/stat
-	// 这里返回一个模拟值
+	// 读取/proc/stat获取CPU使用率
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 10.0 // 默认值
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "cpu ") {
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				return 10.0
+			}
+
+			var total, idle uint64
+			for i, field := range fields[1:] {
+				val, err := strconv.ParseUint(field, 10, 64)
+				if err != nil {
+					return 10.0
+				}
+				total += val
+				if i == 3 { // idle is 4th field (index 3)
+					idle = val
+				}
+			}
+
+			if total == 0 {
+				return 10.0
+			}
+
+			return float64(total-idle) / float64(total) * 100
+		}
+	}
 	return 10.0
 }
 
@@ -248,6 +282,7 @@ type TrafficAwareSampler struct {
 	config         *ResourceLimitConfig
 	limiter        *ResourceLimiter
 	trafficCounter *TrafficCounter
+	randomCounter  uint64 // 用于采样的随机计数器
 	mu             sync.RWMutex
 }
 
@@ -283,13 +318,16 @@ func (t *TrafficAwareSampler) ShouldSample() bool {
 	if !t.config.Enabled {
 		return true
 	}
-	
+
 	// 基于当前采样率决定是否采样
 	rate := t.limiter.GetSampleRate()
-	
-	// 简化实现：使用随机数
-	// 实际应使用更精确的采样算法
-	return true
+	if rate >= 100 {
+		return true
+	}
+
+	// 基于采样率决定是否采样
+	// rate = 10 表示采样 10% 的数据包
+	return atomic.LoadUint64(&t.randomCounter)%100 < uint64(rate)
 }
 
 // Record 记录流量
@@ -298,7 +336,10 @@ func (t *TrafficAwareSampler) Record(bytes int64) {
 	t.trafficCounter.packets++
 	t.trafficCounter.bytes += bytes
 	t.trafficCounter.mu.Unlock()
-	
+
+	// 更新随机计数器用于采样决策
+	atomic.AddUint64(&t.randomCounter, 1)
+
 	t.limiter.RecordPacket()
 }
 

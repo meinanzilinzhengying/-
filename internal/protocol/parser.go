@@ -543,7 +543,7 @@ type MySQLPacket struct {
 	
 	// SQL错误详情
 	SQLState  string `json:"sql_state,omitempty"`
-	SQL errno string `json:"sql_errno,omitempty"`
+	SQLErrno  int    `json:"sql_errno,omitempty"`
 	
 	// 响应信息
 	AffectedRows uint64 `json:"affected_rows,omitempty"`

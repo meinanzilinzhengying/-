@@ -369,12 +369,14 @@ func (s *CacheStore) evict(requiredSpace int) {
 func (s *CacheStore) cleanup() {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
 			s.cleanExpired()
 			s.cleanOverflow()
+		case <-s.ctx.Done():
+			return
 		}
 	}
 }

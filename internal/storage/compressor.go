@@ -445,7 +445,12 @@ func CompressFile(srcPath, dstPath string, config *CompressionConfig) error {
 		if dstPath == "" {
 			dstPath = srcPath
 		}
-		_, err := io.Copy(os.Create(dstPath), srcFile)
+		dstFile, err := os.Create(dstPath)
+		if err != nil {
+			return fmt.Errorf("create destination file: %w", err)
+		}
+		defer dstFile.Close()
+		_, err = io.Copy(dstFile, srcFile)
 		return err
 	}
 

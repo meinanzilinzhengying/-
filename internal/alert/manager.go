@@ -303,7 +303,58 @@ func (m *AlertManager) checkAutoResolve() {
 				event.Level.String(), event.RuleName, m.config.ResolveTimeout)
 			continue
 		}
+
+		// 检查连续正常次数是否达到恢复阈值
+		if event.ConsecutiveOK >= m.config.ResolveThreshold {
+			m.resolveAlertInternal(event)
+			m.stats.autoResolved.Add(1)
+			m.log.Infof("告警自动恢复: [%s] %s - 连续%d次指标正常",
+				event.Level.String(), event.RuleName, event.ConsecutiveOK)
+			continue
+		}
 	}
+}
+
+// ProcessEvaluationResult 处理规则评估结果（由规则引擎调用）
+// 用于更新告警的连续正常/异常计数，实现智能恢复检测
+func (m *AlertManager) ProcessEvaluationResult(ruleID string, metric string, 
+	labels map[string]string, isViolating bool, currentValue float64) {
+	
+	if !m.config.Enabled {
+		return
+	}
+
+	fingerprint := generateFingerprint(ruleID, metric, labels)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	event, exists := m.activeAlerts[fingerprint]
+	if !exists {
+		// 没有活跃告警，无需处理
+		return
+	}
+
+	// 更新最后值时间
+	event.LastValueAt = time.Now()
+	event.Value = currentValue
+
+	if isViolating {
+		// 指标仍然异常，重置连续正常计数
+		event.ConsecutiveOK = 0
+	} else {
+		// 指标恢复正常，增加连续正常计数
+		event.ConsecutiveOK++
+	}
+}
+
+// generateFingerprint 生成告警指纹
+func generateFingerprint(ruleID, metric string, labels map[string]string) string {
+	instance := labels["instance"]
+	if instance == "" {
+		instance = labels["host"]
+	}
+	return fmt.Sprintf("%s:%s:%s", ruleID, metric, instance)
 }
 
 // resolveAlertInternal 内部恢复告警

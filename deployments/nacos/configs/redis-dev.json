@@ -1,0 +1,13 @@
+{
+  "addr": "redis:6379",
+  "password": "",
+  "db": 0,
+  "poolSize": 50,
+  "minIdleConns": 5,
+  "dialTimeout": "5s",
+  "readTimeout": "3s",
+  "writeTimeout": "3s",
+  "mode": "single",
+  "masterName": "mymaster",
+  "username": ""
+}

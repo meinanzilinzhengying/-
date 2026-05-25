@@ -1,0 +1,11 @@
+{
+  "addr": "postgres:5432",
+  "username": "cloudflow",
+  "password": "${DB_PASSWORD}",
+  "name": "cloudflow_test",
+  "maxOpenConns": 100,
+  "maxIdleConns": 20,
+  "connMaxLife": "30m",
+  "sslMode": "require",
+  "connTimeout": "10s"
+}

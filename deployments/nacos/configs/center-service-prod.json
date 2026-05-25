@@ -1,0 +1,10 @@
+{
+  "centerId": "center-prod-1",
+  "mode": "cluster",
+  "addr": ":8080",
+  "port": 8080,
+  "healthPort": 8081,
+  "readTimeout": "30s",
+  "writeTimeout": "30s",
+  "idleTimeout": "60s"
+}

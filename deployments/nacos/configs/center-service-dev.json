@@ -1,0 +1,10 @@
+{
+  "centerId": "center-dev-1",
+  "mode": "standalone",
+  "addr": ":8080",
+  "port": 8080,
+  "healthPort": 8081,
+  "readTimeout": "60s",
+  "writeTimeout": "60s",
+  "idleTimeout": "120s"
+}

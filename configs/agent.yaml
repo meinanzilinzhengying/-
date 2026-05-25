@@ -1,0 +1,218 @@
+
+# ============================================================
+# 资产下钻配置
+# 支持单资产网络/应用指标采集与查询
+# ============================================================
+asset_drilldown:
+  enabled: true                   # 启用资产下钻
+  
+  # 资产指标采集器配置
+  collector:
+    enabled: true                 # 启用采集
+    interval_sec: 15              # 采集间隔（秒）
+    network_enabled: true         # 采集网络指标
+    app_enabled: true             # 采集应用指标
+    system_enabled: true          # 采集系统指标
+    proc_path: "/proc"            # /proc路径
+    sys_path: "/sys"              # /sys路径
+    enable_per_process: true      # 启用进程级采集
+    enable_per_interface: true    # 启用接口级采集
+    max_processes: 100            # 最大进程数
+  
+  # 指标聚合器配置
+  aggregator:
+    enabled: true                 # 启用聚合
+    interval_sec: 60              # 聚合间隔（秒）
+    default_granularity: "1m"     # 默认粒度: 1s/10s/1m/5m/1h/1d
+    retention_days: 7             # 数据保留天数
+    max_data_points: 10000        # 最大数据点数
+    enable_pre_aggregation: true  # 启用预聚合
+    pre_agg_granularities:        # 预聚合粒度列表
+      - "1m"
+      - "5m"
+      - "1h"
+  
+  # 指标存储配置
+  storage:
+    enabled: true                 # 启用存储
+    driver: "sqlite"              # 驱动: sqlite/mysql/postgres
+    dsn: "/var/lib/cloud-flow/asset_metrics.db"  # 数据源
+    max_connections: 10           # 最大连接数
+    retention_days: 7             # 数据保留天数
+    cleanup_interval: 60          # 清理间隔（分钟）
+    enable_compression: true      # 启用压缩
+    batch_size: 100               # 批量写入大小
+    write_interval_sec: 10        # 写入间隔（秒）
+  
+  # 资产下钻API配置
+  api:
+    enabled: true                 # 启用API
+    listen_addr: ":8082"          # 监听地址
+    auth_enabled: false           # 启用认证
+    auth_token: ""                # 认证Token
+    rate_limit: 1000              # 限流（请求/分钟）
+    read_timeout: 30              # 读超时（秒）
+    write_timeout: 30             # 写超时（秒）
+
+# ============================================================
+# 数据检索配置
+# 支持网络/应用/SQL多条件筛选和历史趋势图
+# ============================================================
+query:
+  enabled: true                   # 启用数据检索
+  
+  # 筛选引擎配置
+  filter:
+    enabled: true                 # 启用筛选引擎
+    driver: "sqlite"              # 驱动: sqlite/mysql/postgres
+    dsn: "/var/lib/cloud-flow/query.db"  # 数据源
+    max_connections: 10           # 最大连接数
+    query_timeout_sec: 30         # 查询超时（秒）
+    enable_cache: true            # 启用查询缓存
+    cache_ttl_sec: 60             # 缓存TTL（秒）
+  
+  # 趋势生成器配置
+  trend:
+    enabled: true                 # 启用趋势生成
+    default_granularity: "5m"     # 默认时间粒度: 1s/10s/1m/5m/1h/1d
+    max_data_points: 1000         # 最大数据点数
+    enable_compare: true          # 启用同比/环比
+    smooth_window: 3              # 平滑窗口
+    fill_gap: true                # 填充数据间隙
+    supported_types:              # 支持的趋势类型
+      - "line"
+      - "area"
+      - "bar"
+      - "stacked"
+      - "step"
+  
+  # 数据检索API配置
+  api:
+    enabled: true                 # 启用API
+    listen_addr: ":8083"          # 监听地址
+    auth_enabled: false           # 启用认证
+    auth_token: ""                # 认证Token
+    rate_limit: 1000              # 限流（请求/分钟）
+    read_timeout: 30              # 读超时（秒）
+    write_timeout: 30             # 写超时（秒）
+
+# ============================================================
+# 告警高亮配置
+# 拓扑异常高亮显示，故障快速定位
+# ============================================================
+alert_highlight:
+  enabled: true                   # 启用告警高亮
+  update_interval: 5              # 更新间隔（秒）
+  highlight_duration: 300         # 高亮持续时间（秒）
+  max_highlights: 100             # 最大高亮数
+  enable_animation: true          # 启用动画效果
+  enable_sound: false             # 启用声音提示
+  
+  # 严重级别样式配置
+  severity_styles:
+    critical:
+      color: "#FF0000"            # 红色
+      border_color: "#8B0000"     # 深红边框
+      border_width: 3
+      opacity: 1.0
+      size: 1.5
+      pulse: true                 # 脉冲动画
+      blink: true                 # 闪烁动画
+      icon: "🔴"
+      badge: "CRITICAL"
+    warning:
+      color: "#FFA500"            # 橙色
+      border_color: "#FF8C00"     # 深橙边框
+      border_width: 2
+      opacity: 0.9
+      size: 1.3
+      pulse: true
+      blink: false
+      icon: "🟡"
+      badge: "WARNING"
+    info:
+      color: "#3498DB"            # 蓝色
+      border_color: "#2980B9"     # 深蓝边框
+      border_width: 1
+      opacity: 0.8
+      size: 1.1
+      pulse: false
+      blink: false
+      icon: "🔵"
+      badge: "INFO"
+    normal:
+      color: "#2ECC71"            # 绿色
+      border_color: "#27AE60"     # 深绿边框
+      border_width: 1
+      opacity: 0.7
+      size: 1.0
+      pulse: false
+      blink: false
+      icon: "🟢"
+      badge: "NORMAL"
+  
+  # 影响分析配置
+  impact_analysis:
+    enabled: true                 # 启用影响分析
+    max_depth: 5                  # 最大分析深度
+    max_related_entities: 50      # 最大相关实体数
+    propagation_timeout: 30       # 传播超时（秒）
+    enable_path_discovery: true   # 启用路径发现
+
+# ============================================================
+# 采集器管理配置
+# Web端部署/启停/配置探针
+# ============================================================
+collector_manager:
+  enabled: true                   # 启用采集器管理
+  web_port: 8080                  # Web管理端口
+  auth_enabled: true              # 启用认证
+  jwt_secret: "your-secret-key"   # JWT密钥（请修改）
+  session_timeout: 1800           # 会话超时（秒）
+  max_probes: 1000                # 最大探针数
+  deploy_timeout: 600             # 部署超时（秒）
+  heartbeat_interval: 30          # 心跳间隔（秒）
+  
+  # 默认采集器配置
+  default_collectors: []
+
+# ============================================================
+# 租户视图配置
+# 管理员/租户权限界面区分
+# ============================================================
+tenant_view:
+  enabled: true                   # 启用租户视图
+  session_timeout: 86400          # 会话超时（秒）
+  max_users_per_tenant: 100       # 每租户最大用户数
+  enable_registration: true       # 启用自助注册
+  require_approval: false         # 需要审批
+  
+  # 默认配额配置
+  default_quota:
+    max_collectors: 50            # 最大采集器数
+    max_users: 10                 # 最大用户数
+    max_alerts: 1000              # 最大告警数
+    max_storage_gb: 100           # 最大存储(GB)
+    max_network_mbps: 100         # 最大带宽(Mbps)
+    retention_days: 30            # 数据保留天数
+  
+  # 默认租户配置
+  default_tenants:
+    - id: "default"
+      name: "默认租户"
+      description: "系统默认租户"
+      quota:
+        max_collectors: 50
+        max_users: 10
+        max_alerts: 1000
+        max_storage_gb: 100
+        max_network_mbps: 100
+        retention_days: 30
+  
+  # 默认用户配置
+  default_users:
+    - id: "admin"
+      username: "admin"
+      email: "admin@example.com"
+      role: "admin"
+      tenant_id: "default"

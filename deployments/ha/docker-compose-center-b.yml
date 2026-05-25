@@ -1,0 +1,302 @@
+# Cloud Flow Agent - 同城双中心高可用部署配置
+# 中心B（备中心）- 自动故障切换
+
+version: '3.8'
+
+# ==================== 通用配置 ====================
+x-common-env: &common-env
+  TZ: Asia/Shanghai
+  CLOUD_FLOW_LOG_LEVEL: info
+  CLOUD_FLOW_LOG_FORMAT: json
+
+x-healthcheck: &default-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+# ==================== 中心B（备中心） ====================
+services:
+  # ------------------------------------------------
+  # Center-B（备中心控制节点）
+  # ------------------------------------------------
+  center-b:
+    image: cloud-flow-center:${VERSION:-latest}
+    container_name: cloud-flow-center-b
+    hostname: center-b
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      <<: *common-env
+      CENTER_ID: center-b
+      CENTER_ROLE: standby
+      CENTER_PEER: center-a:8080
+      REDIS_ADDR: redis-b:6379,redis-a:6379
+      POSTGRES_ADDR: postgres-b:5432,postgres-a:5432
+      ETCD_ENDPOINTS: etcd-a:2379,etcd-b:2379,etcd-c:2379
+      FAILOVER_ENABLED: "true"
+      FAILOVER_THRESHOLD: 3
+      FAILOVER_TIMEOUT: 30s
+    volumes:
+      - ./config/center-b.yaml:/etc/cloud-flow/center.yaml:ro
+      - center-b-data:/var/lib/cloud-flow/center
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 30s
+      restart_policy:
+        condition: on-failure
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    depends_on:
+      redis-b:
+        condition: service_healthy
+      postgres-b:
+        condition: service_healthy
+      etcd-b:
+        condition: service_healthy
+    networks:
+      - cloud-flow-ha
+      - center-b-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # ------------------------------------------------
+  # Edge-B（备中心边缘节点）
+  # ------------------------------------------------
+  edge-b:
+    image: cloud-flow-edge:${VERSION:-latest}
+    container_name: cloud-flow-edge-b
+    hostname: edge-b
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    environment:
+      <<: *common-env
+      EDGE_ID: edge-b
+      EDGE_REGION: center-b
+      EDGE_ZONE: zone-b
+      CENTER_URL: http://center-b:8080
+      CENTER_PEER: http://center-a:8080
+      REDIS_ADDR: redis-b:6379
+      POSTGRES_ADDR: postgres-b:5432
+    volumes:
+      - ./config/edge-b.yaml:/etc/cloud-flow/edge.yaml:ro
+      - edge-b-data:/var/lib/cloud-flow/edge
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    depends_on:
+      - center-b
+    networks:
+      - cloud-flow-ha
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ------------------------------------------------
+  # Redis-B（备中心缓存 - 从节点）
+  # ------------------------------------------------
+  redis-b:
+    image: redis:7-alpine
+    container_name: cloud-flow-redis-b
+    hostname: redis-b
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 4gb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --replica-announce-ip redis-b
+      --replica-announce-port 6379
+      --replicaof redis-a 6379
+    volumes:
+      - redis-b-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    networks:
+      - center-b-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------
+  # PostgreSQL-B（备中心数据库 - 从节点）
+  # ------------------------------------------------
+  postgres-b:
+    image: postgres:15-alpine
+    container_name: cloud-flow-postgres-b
+    hostname: postgres-b
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-cloudflow}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cloudflow123}
+      POSTGRES_DB: ${DB_NAME:-cloudflow}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_REPLICATION_USER: replicator
+      POSTGRES_REPLICATION_PASSWORD: ${REPL_PASSWORD:-repl123}
+      PGUSER: replicator
+      PGPASSWORD: ${REPL_PASSWORD:-repl123}
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby=on
+      -c synchronous_commit=on
+    volumes:
+      - postgres-b-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-cloudflow} -d ${DB_NAME:-cloudflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    networks:
+      - center-b-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------
+  # etcd-B（分布式协调）
+  # ------------------------------------------------
+  etcd-b:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: cloud-flow-etcd-b
+    hostname: etcd-b
+    restart: unless-stopped
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      ETCD_NAME: etcd-b
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-b:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-b:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_INITIAL_CLUSTER: etcd-a=http://etcd-a:2380,etcd-b=http://etcd-b:2380,etcd-c=http://etcd-c:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: cloud-flow-cluster
+    volumes:
+      - etcd-b-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cloud-flow-ha
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------
+  # Keepalived-B（VIP管理 - 备节点）
+  # ------------------------------------------------
+  keepalived-b:
+    image: osixia/keepalived:2.0.20
+    container_name: cloud-flow-keepalived-b
+    hostname: keepalived-b
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KEEPALIVED_INTERFACE: eth0
+      KEEPALIVED_VIRTUAL_IPS: ${VIP:-192.168.1.100}
+      KEEPALIVED_UNICAST_PEERS: "#PYTHON2BASH:['${PEER_A:-192.168.1.10}']"
+      KEEPALIVED_PRIORITY: 50
+      KEEPALIVED_STATE: BACKUP
+    volumes:
+      - ./config/keepalived/keepalived-b.conf:/container/service/keepalived/assets/keepalived.conf:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_BROADCAST
+      - NET_RAW
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ==================== 数据卷 ====================
+volumes:
+  center-b-data:
+    driver: local
+  edge-b-data:
+    driver: local
+  redis-b-data:
+    driver: local
+  postgres-b-data:
+    driver: local
+  etcd-b-data:
+    driver: local
+
+# ==================== 网络 ====================
+networks:
+  cloud-flow-ha:
+    name: cloud-flow-ha
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+  center-b-internal:
+    name: center-b-internal
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16

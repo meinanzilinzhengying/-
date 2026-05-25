@@ -24,20 +24,28 @@ type APIConfig struct {
 
 // TopologyAPI 拓扑API服务
 type TopologyAPI struct {
-	config    *APIConfig
-	discovery *DiscoveryEngine
-	tracer    *PathTracer
-	storage   *TopologyStorage
-	server    *http.Server
+	config      *APIConfig
+	discovery   *DiscoveryEngine
+	tracer      *PathTracer
+	storage     *TopologyStorage
+	fullstack   *FullStackManager
+	fsHandler   *FullStackHandler
+	server      *http.Server
 }
 
 // NewTopologyAPI 创建拓扑API服务
 func NewTopologyAPI(config *APIConfig, discovery *DiscoveryEngine, tracer *PathTracer, storage *TopologyStorage) *TopologyAPI {
+	// 创建全栈拓扑管理器
+	fullstackManager := NewFullStackManager(discovery, tracer, storage)
+	fsHandler := NewFullStackHandler(fullstackManager)
+	
 	return &TopologyAPI{
 		config:    config,
 		discovery: discovery,
 		tracer:    tracer,
 		storage:   storage,
+		fullstack: fullstackManager,
+		fsHandler: fsHandler,
 	}
 }
 
@@ -61,6 +69,14 @@ func (a *TopologyAPI) Start() error {
 	mux.HandleFunc("/api/v1/topology/search", a.authMiddleware(a.handleSearch))
 	mux.HandleFunc("/api/v1/topology/trace/", a.authMiddleware(a.handleTrace))
 	mux.HandleFunc("/api/v1/topology/dependencies/", a.authMiddleware(a.handleDependencies))
+	
+	// 全栈拓扑API
+	a.fsHandler.RegisterRoutes(mux)
+	
+	// 静态文件服务 - 拓扑可视化页面
+	mux.HandleFunc("/topology", a.handleTopologyPage)
+	mux.HandleFunc("/topology/", a.handleTopologyPage)
+	
 	mux.HandleFunc("/api/v1/health", a.handleHealth)
 	
 	a.server = &http.Server{
@@ -585,10 +601,17 @@ func (a *TopologyAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"discovery": a.discovery != nil,
 			"tracer":    a.tracer != nil,
 			"storage":   a.storage != nil,
+			"fullstack": a.fullstack != nil,
 		},
 	}
 	
 	a.respondJSON(w, http.StatusOK, status)
+}
+
+// handleTopologyPage 处理拓扑页面请求
+func (a *TopologyAPI) handleTopologyPage(w http.ResponseWriter, r *http.Request) {
+	// 读取并返回拓扑HTML页面
+	http.ServeFile(w, r, "web/topology.html")
 }
 
 // respondJSON 返回JSON响应

@@ -27,16 +27,24 @@ type AssetAPI struct {
 	collector   *MetricsCollector
 	aggregator  *MetricsAggregator
 	storage     *AssetStorage
+	pageManager *AssetPageManager
+	pageHandler *AssetPageHandler
 	server      *http.Server
 }
 
 // NewAssetAPI 创建资产API服务
 func NewAssetAPI(config *AssetAPIConfig, collector *MetricsCollector, aggregator *MetricsAggregator, storage *AssetStorage) *AssetAPI {
+	// 创建资产页面管理器
+	pageManager := NewAssetPageManager(collector, aggregator, storage)
+	pageHandler := NewAssetPageHandler(pageManager)
+	
 	return &AssetAPI{
-		config:     config,
-		collector:  collector,
-		aggregator: aggregator,
-		storage:    storage,
+		config:      config,
+		collector:   collector,
+		aggregator:  aggregator,
+		storage:     storage,
+		pageManager: pageManager,
+		pageHandler: pageHandler,
 	}
 }
 
@@ -64,6 +72,9 @@ func (a *AssetAPI) Start() error {
 	
 	// 资产下钻
 	mux.HandleFunc("/api/v1/assets/drilldown/", a.authMiddleware(a.handleAssetDrilldown))
+	
+	// 资产页面API（双视图、筛选、下钻）
+	a.pageHandler.RegisterRoutes(mux)
 	
 	// 健康检查
 	mux.HandleFunc("/api/v1/assets/health", a.handleHealth)

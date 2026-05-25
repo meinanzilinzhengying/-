@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Flow - 资产管理</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:#0a0e1a;color:#e0e6ed;overflow:hidden}
+        .container{width:100vw;height:100vh;display:flex;flex-direction:column}
+
+        /* 顶部工具栏 */
+        .toolbar{height:56px;background:linear-gradient(135deg,#1a1f2e,#0d1117);border-bottom:1px solid #2d3748;display:flex;align-items:center;padding:0 20px;gap:12px;z-index:100}
+        .toolbar h1{font-size:17px;font-weight:600;color:#63b3ed;margin-right:auto}
+        .toolbar-section{display:flex;align-items:center;gap:8px;padding:0 12px;border-right:1px solid #2d3748}
+        .toolbar-section:last-child{border-right:none}
+
+        /* 视图切换 */
+        .view-switch{display:flex;background:#1a202c;border-radius:6px;padding:3px}
+        .view-btn{padding:6px 16px;background:transparent;border:none;border-radius:4px;color:#9ca3af;font-size:13px;cursor:pointer;transition:all .2s;font-weight:500}
+        .view-btn:hover{color:#e0e6ed}
+        .view-btn.active{background:#3182ce;color:#fff}
+
+        /* 租户选择 */
+        .tenant-select{padding:7px 12px;background:#1a202c;border:1px solid #2d3748;border-radius:6px;color:#e0e6ed;font-size:13px;cursor:pointer;min-width:140px}
+        .tenant-select:focus{outline:none;border-color:#63b3ed}
+
+        /* 搜索框 */
+        .search-box{position:relative;width:220px}
+        .search-box input{width:100%;padding:7px 12px 7px 34px;background:#1a202c;border:1px solid #2d3748;border-radius:6px;color:#e0e6ed;font-size:13px}
+        .search-box input:focus{outline:none;border-color:#63b3ed}
+        .search-box::before{content:'🔍';position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px}
+
+        /* 工具按钮 */
+        .tb-btn{padding:7px 14px;background:#2d3748;border:1px solid #4a5568;border-radius:6px;color:#e0e6ed;cursor:pointer;font-size:13px;transition:all .2s;display:flex;align-items:center;gap:5px}
+        .tb-btn:hover{background:#4a5568;border-color:#63b3ed}
+
+        /* 主内容 */
+        .main{flex:1;display:flex;overflow:hidden}
+
+        /* 左侧筛选 */
+        .filter-panel{width:240px;background:#111827;border-right:1px solid #2d3748;padding:16px;overflow-y:auto}
+        .filter-title{font-size:11px;font-weight:600;color:#718096;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+        .filter-title .cnt{background:#2d3748;padding:1px 7px;border-radius:10px;font-size:10px;color:#a0aec0}
+        .filter-section{margin-bottom:20px}
+        .filter-opt{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#cbd5e0;transition:background .15s}
+        .filter-opt:hover{background:#1f2937}
+        .filter-opt input[type=checkbox]{width:14px;height:14px;accent-color:#3182ce}
+        .filter-opt .badge{margin-left:auto;background:#2d3748;padding:1px 6px;border-radius:8px;font-size:10px;color:#718096}
+
+        /* 内容区 */
+        .content-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+        /* 汇总卡片 */
+        .summary-bar{padding:16px 20px;display:flex;gap:12px;overflow-x:auto;border-bottom:1px solid #1f2937}
+        .summary-card{min-width:150px;background:#111827;border:1px solid #2d3748;border-radius:8px;padding:14px 16px;flex-shrink:0}
+        .summary-card .val{font-size:24px;font-weight:700;margin-bottom:2px}
+        .summary-card .lbl{font-size:11px;color:#718096;text-transform:uppercase}
+        .val-blue{color:#63b3ed}.val-green{color:#48bb78}.val-yellow{color:#f1c40f}.val-red{color:#e53e3e}.val-purple{color:#9f7aea}
+
+        /* 资产类型标签页 */
+        .type-tabs{padding:12px 20px;display:flex;gap:6px;border-bottom:1px solid #1f2937;overflow-x:auto}
+        .type-tab{padding:6px 14px;background:#1a202c;border:1px solid #2d3748;border-radius:6px;color:#a0aec0;font-size:12px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px;white-space:nowrap}
+        .type-tab:hover{border-color:#63b3ed;color:#e0e6ed}
+        .type-tab.active{background:#3182ce;border-color:#3182ce;color:#fff}
+        .type-tab .tab-count{background:rgba(255,255,255,.15);padding:1px 6px;border-radius:8px;font-size:10px}
+
+        /* 资产表格 */
+        .table-container{flex:1;overflow:auto;padding:0 20px 20px}
+        table{width:100%;border-collapse:collapse;font-size:13px}
+        thead{position:sticky;top:0;z-index:10}
+        th{background:#111827;padding:10px 12px;text-align:left;font-weight:600;color:#718096;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #2d3748;white-space:nowrap}
+        td{padding:10px 12px;border-bottom:1px solid #1f2937;white-space:nowrap}
+        tr.asset-row{cursor:pointer;transition:background .15s}
+        tr.asset-row:hover{background:rgba(49,130,206,.08)}
+        tr.asset-row.selected{background:rgba(49,130,206,.15)}
+
+        /* 状态标签 */
+        .status-tag{padding:3px 10px;border-radius:4px;font-size:11px;font-weight:500}
+        .status-running{background:rgba(72,187,120,.15);color:#48bb78}
+        .status-warning{background:rgba(237,137,54,.15);color:#ed8936}
+        .status-error{background:rgba(229,62,62,.15);color:#e53e3e}
+        .status-offline{background:rgba(113,128,150,.15);color:#718096}
+
+        /* 进度条 */
+        .progress-bar{width:80px;height:6px;background:#2d3748;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}
+        .progress-fill{height:100%;border-radius:3px;transition:width .3s}
+        .fill-green{background:#48bb78}.fill-yellow{background:#ed8936}.fill-red{background:#e53e3e}
+
+        /* 告警标记 */
+        .alert-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500}
+        .alert-critical{background:rgba(229,62,62,.15);color:#e53e3e}
+        .alert-warning{background:rgba(237,137,54,.15);color:#ed8936}
+        .alert-none{color:#4a5568}
+
+        /* 分页 */
+        .pagination{padding:12px 20px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1f2937}
+        .page-info{font-size:12px;color:#718096}
+        .page-btns{display:flex;gap:4px}
+        .page-btn{padding:6px 12px;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#e0e6ed;font-size:12px;cursor:pointer;transition:all .15s}
+        .page-btn:hover{background:#4a5568}
+        .page-btn.active{background:#3182ce;border-color:#3182ce}
+        .page-btn:disabled{opacity:.4;cursor:not-allowed}
+
+        /* 右侧详情面板 */
+        .detail-panel{width:480px;background:#111827;border-left:1px solid #2d3748;display:flex;flex-direction:column;transition:transform .3s;flex-shrink:0}
+        .detail-panel.hidden{transform:translateX(100%);width:0;overflow:hidden}
+        .detail-header{padding:16px 20px;border-bottom:1px solid #2d3748;display:flex;justify-content:space-between;align-items:center}
+        .detail-title{font-size:15px;font-weight:600}
+        .detail-close{background:none;border:none;color:#718096;cursor:pointer;font-size:20px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+        .detail-close:hover{background:#2d3748;color:#e0e6ed}
+        .detail-content{flex:1;overflow-y:auto;padding:16px 20px}
+
+        /* 详情指标卡片 */
+        .detail-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+        .d-metric{background:#1a202c;border:1px solid #2d3748;border-radius:8px;padding:12px;text-align:center}
+        .d-metric .v{font-size:18px;font-weight:700;color:#63b3ed;margin-bottom:2px}
+        .d-metric .l{font-size:10px;color:#718096;text-transform:uppercase}
+
+        /* 详情标签页 */
+        .detail-tabs{display:flex;gap:4px;margin-bottom:16px}
+        .detail-tab{padding:6px 14px;background:#1a202c;border:1px solid #2d3748;border-radius:4px;color:#a0aec0;font-size:12px;cursor:pointer;transition:all .2s}
+        .detail-tab:hover{color:#e0e6ed}
+        .detail-tab.active{background:#3182ce;border-color:#3182ce;color:#fff}
+
+        /* 详情表格 */
+        .detail-table{width:100%;font-size:12px;border-collapse:collapse;margin-bottom:16px}
+        .detail-table th{background:#1a202c;padding:8px 10px;text-align:left;color:#718096;font-weight:600;border-bottom:1px solid #2d3748}
+        .detail-table td{padding:8px 10px;border-bottom:1px solid #1f2937;color:#cbd5e0}
+        .detail-table tr:hover td{background:#1a202c}
+
+        /* SQL高亮 */
+        .sql-text{font-family:'Fira Code',monospace;font-size:11px;background:#0d1117;padding:8px 10px;border-radius:4px;color:#a0d8ef;word-break:break-all;line-height:1.5;margin-bottom:8px}
+
+        /* 告警列表 */
+        .alert-item{padding:10px 12px;background:#1a202c;border:1px solid #2d3748;border-radius:6px;margin-bottom:8px}
+        .alert-item .alert-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+        .alert-item .alert-title{font-size:13px;font-weight:500}
+        .alert-item .alert-time{font-size:11px;color:#718096}
+        .alert-item .alert-msg{font-size:12px;color:#9ca3af}
+
+        /* 排序下拉 */
+        .sort-select{padding:5px 8px;background:#1a202c;border:1px solid #2d3748;border-radius:4px;color:#a0aec0;font-size:12px}
+        .sort-select:focus{outline:none}
+
+        /* 加载 */
+        .loading{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(10,14,26,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200}
+        .spinner{width:40px;height:40px;border:3px solid #2d3748;border-top-color:#63b3ed;border-radius:50%;animation:spin 1s linear infinite}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .loading-text{margin-top:12px;color:#9ca3af;font-size:13px}
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+        <h1>📊 资产管理</h1>
+        <div class="toolbar-section">
+            <div class="view-switch">
+                <button class="view-btn active" data-view="admin">管理员视图</button>
+                <button class="view-btn" data-view="tenant">租户视图</button>
+            </div>
+            <select class="tenant-select" id="tenantSelect" style="display:none">
+                <option value="">全部租户</option>
+            </select>
+        </div>
+        <div class="toolbar-section">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="搜索资产名称/IP...">
+            </div>
+        </div>
+        <div class="toolbar-section">
+            <select class="sort-select" id="sortSelect">
+                <option value="cpu_usage desc">CPU ↓</option>
+                <option value="memory_usage desc">内存 ↓</option>
+                <option value="error_rate desc">错误率 ↓</option>
+                <option value="response_time desc">响应时间 ↓</option>
+                <option value="alert_count desc">告警数 ↓</option>
+                <option value="name asc">名称 ↑</option>
+            </select>
+        </div>
+        <button class="tb-btn" id="refreshBtn">🔄 刷新</button>
+    </div>
+
+    <!-- 主内容 -->
+    <div class="main">
+        <!-- 左侧筛选 -->
+        <div class="filter-panel">
+            <div class="filter-section">
+                <div class="filter-title">资产类型 <span class="cnt" id="typeCount">0</span></div>
+                <div id="typeFilters"></div>
+            </div>
+            <div class="filter-section">
+                <div class="filter-title">运行状态</div>
+                <div id="statusFilters">
+                    <label class="filter-opt"><input type="checkbox" value="running" checked data-f="status"><span>🟢 正常</span></label>
+                    <label class="filter-opt"><input type="checkbox" value="warning" checked data-f="status"><span>🟡 警告</span></label>
+                    <label class="filter-opt"><input type="checkbox" value="error" checked data-f="status"><span>🔴 异常</span></label>
+                    <label class="filter-opt"><input type="checkbox" value="offline" checked data-f="status"><span>⚫ 离线</span></label>
+                </div>
+            </div>
+            <div class="filter-section">
+                <div class="filter-title">业务分组</div>
+                <div id="groupFilters"></div>
+            </div>
+            <div class="filter-section">
+                <div class="filter-title">标签</div>
+                <div id="labelFilters"></div>
+            </div>
+        </div>
+
+        <!-- 内容区 -->
+        <div class="content-area">
+            <!-- 汇总卡片 -->
+            <div class="summary-bar" id="summaryBar"></div>
+
+            <!-- 类型标签页 -->
+            <div class="type-tabs" id="typeTabs"></div>
+
+            <!-- 资产表格 -->
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>状态</th>
+                            <th>资产名称</th>
+                            <th>类型</th>
+                            <th>业务分组</th>
+                            <th>CPU</th>
+                            <th>内存</th>
+                            <th>网络流入</th>
+                            <th>网络流出</th>
+                            <th>错误率</th>
+                            <th>响应时间</th>
+                            <th>告警</th>
+                        </tr>
+                    </thead>
+                    <tbody id="assetTableBody"></tbody>
+                </table>
+            </div>
+
+            <!-- 分页 -->
+            <div class="pagination">
+                <div class="page-info" id="pageInfo">共 0 条</div>
+                <div class="page-btns" id="pageBtns"></div>
+            </div>
+        </div>
+
+        <!-- 右侧详情面板 -->
+        <div class="detail-panel hidden" id="detailPanel">
+            <div class="detail-header">
+                <span class="detail-title" id="detailTitle">资产详情</span>
+                <button class="detail-close" id="detailClose">×</button>
+            </div>
+            <div class="detail-content" id="detailContent"></div>
+        </div>
+    </div>
+</div>
+
+<div class="loading" id="loading" style="display:none"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+
+<script>
+// ==================== 状态 ====================
+const S = {
+    viewMode: 'admin',
+    tenantId: '',
+    assets: [],
+    filteredAssets: [],
+    dashboard: null,
+    selectedType: '',
+    page: 1,
+    pageSize: 20,
+    sortKey: 'cpu_usage',
+    sortOrder: 'desc',
+    searchQuery: '',
+    filters: { types: [], statuses: ['running','warning','error','offline'], groups: [], labels: [] },
+    selectedAsset: null,
+    detailTab: 'network',
+    filterOptions: null
+};
+
+// ==================== 初始化 ====================
+document.addEventListener('DOMContentLoaded', () => {
+    initEvents();
+    loadFilterOptions();
+    loadDashboard();
+});
+
+function initEvents() {
+    // 视图切换
+    document.querySelectorAll('.view-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            S.viewMode = btn.dataset.view;
+            document.getElementById('tenantSelect').style.display = S.viewMode === 'tenant' ? '' : 'none';
+            loadDashboard();
+        });
+    });
+
+    // 租户选择
+    document.getElementById('tenantSelect').addEventListener('change', e => {
+        S.tenantId = e.target.value;
+        loadDashboard();
+    });
+
+    // 搜索
+    document.getElementById('searchInput').addEventListener('input', e => {
+        S.searchQuery = e.target.value.toLowerCase();
+        applyFilters();
+    });
+
+    // 排序
+    document.getElementById('sortSelect').addEventListener('change', e => {
+        const [key, order] = e.target.value.split(' ');
+        S.sortKey = key;
+        S.sortOrder = order;
+        applyFilters();
+    });
+
+    // 刷新
+    document.getElementById('refreshBtn').addEventListener('click', () => loadDashboard());
+
+    // 关闭详情
+    document.getElementById('detailClose').addEventListener('click', closeDetail);
+}
+
+// ==================== 数据加载 ====================
+async function loadFilterOptions() {
+    try {
+        const res = await fetch('/api/v1/assets/page/filters');
+        S.filterOptions = await res.json();
+        renderFilterOptions();
+    } catch(e) {
+        console.error('加载筛选选项失败', e);
+        S.filterOptions = {
+            types: ['host','vm','container','pod','service','node'],
+            statuses: ['running','warning','error','offline'],
+            business_groups: ['订单中心','支付中心','用户中心','商品中心','营销中心','基础设施'],
+            tenants: [{id:'tenant-001',name:'交易平台'},{id:'tenant-002',name:'支付中心'},{id:'tenant-003',name:'用户中心'},{id:'tenant-004',name:'商品中心'},{id:'tenant-005',name:'营销中心'}],
+            labels: ['env:production','env:test','tier:frontend','tier:backend','critical:true']
+        };
+        renderFilterOptions();
+    }
+}
+
+function renderFilterOptions() {
+    const fo = S.filterOptions;
+    const typeNames = {host:'🖥️ 主机',vm:'💻 虚拟机',container:'📦 容器',pod:'🟢 Pod',service:'⚙️ 服务',node:'🖥️ 节点'};
+
+    // 类型筛选
+    document.getElementById('typeCount').textContent = fo.types.length;
+    document.getElementById('typeFilters').innerHTML = fo.types.map(t =>
+        `<label class="filter-opt"><input type="checkbox" value="${t}" data-f="type"><span>${typeNames[t]||t}</span></label>`
+    ).join('');
+
+    // 业务分组
+    document.getElementById('groupFilters').innerHTML = fo.business_groups.map(g =>
+        `<label class="filter-opt"><input type="checkbox" value="${g}" data-f="group"><span>${g}</span></label>`
+    ).join('');
+
+    // 标签
+    document.getElementById('labelFilters').innerHTML = fo.labels.map(l =>
+        `<label class="filter-opt"><input type="checkbox" value="${l}" data-f="label"><span>${l}</span></label>`
+    ).join('');
+
+    // 租户下拉
+    const sel = document.getElementById('tenantSelect');
+    sel.innerHTML = '<option value="">全部租户</option>' + fo.tenants.map(t =>
+        `<option value="${t.id}">${t.name}</option>`
+    ).join('');
+
+    // 绑定筛选事件
+    document.querySelectorAll('[data-f]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            S.filters.types = Array.from(document.querySelectorAll('[data-f="type"]:checked')).map(c=>c.value);
+            S.filters.statuses = Array.from(document.querySelectorAll('[data-f="status"]:checked')).map(c=>c.value);
+            S.filters.groups = Array.from(document.querySelectorAll('[data-f="group"]:checked')).map(c=>c.value);
+            S.filters.labels = Array.from(document.querySelectorAll('[data-f="label"]:checked')).map(c=>c.value);
+            applyFilters();
+        });
+    });
+}
+
+async function loadDashboard() {
+    showLoading(true);
+    try {
+        const params = new URLSearchParams({mode: S.viewMode, tenant_id: S.tenantId});
+        const res = await fetch(`/api/v1/assets/page/dashboard?${params}`);
+        S.dashboard = await res.json();
+        S.assets = [];
+        S.dashboard.assets_by_type.forEach(g => S.assets.push(...g.assets));
+        renderSummary();
+        renderTypeTabs();
+        applyFilters();
+    } catch(e) {
+        console.error('加载仪表盘失败', e);
+    } finally {
+        showLoading(false);
+    }
+}
+
+// ==================== 渲染 ====================
+function renderSummary() {
+    const s = S.dashboard.summary;
+    document.getElementById('summaryBar').innerHTML = `
+        <div class="summary-card"><div class="val val-blue">${s.total_assets}</div><div class="lbl">资产总数</div></div>
+        <div class="summary-card"><div class="val val-green">${s.healthy_assets}</div><div class="lbl">正常</div></div>
+        <div class="summary-card"><div class="val val-yellow">${s.warning_assets}</div><div class="lbl">警告</div></div>
+        <div class="summary-card"><div class="val val-red">${s.error_assets}</div><div class="lbl">异常</div></div>
+        <div class="summary-card"><div class="val val-red">${s.total_alerts}</div><div class="lbl">告警总数</div></div>
+        <div class="summary-card"><div class="val val-red">${s.critical_alerts}</div><div class="lbl">严重告警</div></div>
+        <div class="summary-card"><div class="val val-purple">${s.avg_cpu_usage.toFixed(1)}%</div><div class="lbl">平均CPU</div></div>
+        <div class="summary-card"><div class="val val-purple">${s.avg_memory_usage.toFixed(1)}%</div><div class="lbl">平均内存</div></div>
+    `;
+}
+
+function renderTypeTabs() {
+    const groups = S.dashboard.assets_by_type;
+    let html = `<div class="type-tab ${S.selectedType===''?'active':''}" data-type="">全部 <span class="tab-count">${S.assets.length}</span></div>`;
+    groups.forEach(g => {
+        html += `<div class="type-tab ${S.selectedType===g.type?'active':''}" data-type="${g.type}">${g.icon} ${g.type_name} <span class="tab-count">${g.count}</span></div>`;
+    });
+    document.getElementById('typeTabs').innerHTML = html;
+    document.querySelectorAll('.type-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            S.selectedType = tab.dataset.type;
+            S.page = 1;
+            renderTypeTabs();
+            applyFilters();
+        });
+    });
+}
+
+function applyFilters() {
+    let list = [...S.assets];
+
+    // 类型筛选
+    if (S.selectedType) list = list.filter(a => a.type === S.selectedType);
+    if (S.filters.types.length) list = list.filter(a => S.filters.types.includes(a.type));
+    if (S.filters.statuses.length) list = list.filter(a => S.filters.statuses.includes(a.status));
+    if (S.filters.groups.length) list = list.filter(a => S.filters.groups.includes(a.business_group));
+    if (S.filters.labels.length) {
+        list = list.filter(a => {
+            const aLabels = Object.entries(a.labels||{}).map(([k,v])=>k+':'+v);
+            return S.filters.labels.some(l => aLabels.includes(l));
+        });
+    }
+
+    // 搜索
+    if (S.searchQuery) {
+        list = list.filter(a => a.name.toLowerCase().includes(S.searchQuery) || a.id.toLowerCase().includes(S.searchQuery));
+    }
+
+    // 排序
+    list.sort((a,b) => {
+        let va = a[S.sortKey], vb = b[S.sortKey];
+        if (typeof va === 'string') return S.sortOrder==='asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        return S.sortOrder==='asc' ? va-vb : vb-va;
+    });
+
+    S.filteredAssets = list;
+    renderTable();
+    renderPagination();
+}
+
+function renderTable() {
+    const start = (S.page-1)*S.pageSize;
+    const page = S.filteredAssets.slice(start, start+S.pageSize);
+
+    document.getElementById('assetTableBody').innerHTML = page.map(a => `
+        <tr class="asset-row" data-id="${a.id}">
+            <td><span class="status-tag status-${a.status}">${statusText(a.status)}</span></td>
+            <td><strong>${a.name}</strong><br><span style="font-size:11px;color:#718096">${a.id}</span></td>
+            <td>${a.type_name}</td>
+            <td>${a.business_group||'-'}</td>
+            <td>${progressBar(a.cpu_usage)}</td>
+            <td>${progressBar(a.memory_usage)}</td>
+            <td>${fmtBytes(a.network_in)}/s</td>
+            <td>${fmtBytes(a.network_out)}/s</td>
+            <td style="color:${a.error_rate>0.05?'#e53e3e':a.error_rate>0.01?'#ed8936':'#48bb78'}">${(a.error_rate*100).toFixed(2)}%</td>
+            <td>${a.response_time.toFixed(1)}ms</td>
+            <td>${a.alert_count>0?`<span class="alert-badge ${a.critical_count>0?'alert-critical':'alert-warning'}">⚠ ${a.alert_count}</span>`:'<span class="alert-none">-</span>'}</td>
+        </tr>
+    `).join('');
+
+    document.querySelectorAll('.asset-row').forEach(row => {
+        row.addEventListener('click', () => openDetail(row.dataset.id));
+    });
+}
+
+function renderPagination() {
+    const total = S.filteredAssets.length;
+    const totalPages = Math.ceil(total/S.pageSize)||1;
+    document.getElementById('pageInfo').textContent = `共 ${total} 条，第 ${S.page}/${totalPages} 页`;
+
+    let btns = '';
+    btns += `<button class="page-btn" ${S.page<=1?'disabled':''} onclick="goPage(${S.page-1})">上一页</button>`;
+    for (let i=1;i<=totalPages&&i<=7;i++) {
+        btns += `<button class="page-btn ${i===S.page?'active':''}" onclick="goPage(${i})">${i}</button>`;
+    }
+    btns += `<button class="page-btn" ${S.page>=totalPages?'disabled':''} onclick="goPage(${S.page+1})">下一页</button>`;
+    document.getElementById('pageBtns').innerHTML = btns;
+}
+
+function goPage(p) {
+    const totalPages = Math.ceil(S.filteredAssets.length/S.pageSize)||1;
+    if (p<1||p>totalPages) return;
+    S.page = p;
+    renderTable();
+    renderPagination();
+}
+
+// ==================== 详情面板 ====================
+async function openDetail(assetId) {
+    // 高亮行
+    document.querySelectorAll('.asset-row').forEach(r => r.classList.remove('selected'));
+    document.querySelector(`.asset-row[data-id="${assetId}"]`)?.classList.add('selected');
+
+    const asset = S.assets.find(a => a.id === assetId);
+    if (!asset) return;
+    S.selectedAsset = asset;
+    S.detailTab = 'network';
+
+    document.getElementById('detailTitle').textContent = asset.name;
+    document.getElementById('detailPanel').classList.remove('hidden');
+
+    try {
+        const res = await fetch(`/api/v1/assets/page/detail/${assetId}?dimension=all`);
+        const detail = await res.json();
+        renderDetail(detail);
+    } catch(e) {
+        console.error('加载详情失败', e);
+        renderDetailMock(asset);
+    }
+}
+
+function renderDetail(d) {
+    const a = d.asset_item || d;
+    const c = document.getElementById('detailContent');
+
+    c.innerHTML = `
+        <div class="detail-metrics">
+            <div class="d-metric"><div class="v">${a.cpu_usage.toFixed(1)}%</div><div class="l">CPU</div></div>
+            <div class="d-metric"><div class="v">${a.memory_usage.toFixed(1)}%</div><div class="l">内存</div></div>
+            <div class="d-metric"><div class="v" style="color:${a.error_rate>0.05?'#e53e3e':'#63b3ed'}">${(a.error_rate*100).toFixed(2)}%</div><div class="l">错误率</div></div>
+            <div class="d-metric"><div class="v">${a.response_time.toFixed(1)}ms</div><div class="l">响应时间</div></div>
+            <div class="d-metric"><div class="v">${fmtBytes(a.network_in)}/s</div><div class="l">网络流入</div></div>
+            <div class="d-metric"><div class="v">${fmtBytes(a.network_out)}/s</div><div class="l">网络流出</div></div>
+        </div>
+
+        <div class="detail-tabs">
+            <button class="detail-tab active" data-tab="network">网络指标</button>
+            <button class="detail-tab" data-tab="application">应用指标</button>
+            <button class="detail-tab" data-tab="sql">SQL指标</button>
+            <button class="detail-tab" data-tab="system">系统指标</button>
+            <button class="detail-tab" data-tab="alerts">告警 (${d.alerts?.length||0})</button>
+        </div>
+
+        <div id="detailTabContent"></div>
+    `;
+
+    document.querySelectorAll('.detail-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            S.detailTab = tab.dataset.tab;
+            renderDetailTab(d);
+        });
+    });
+
+    renderDetailTab(d);
+}
+
+function renderDetailTab(d) {
+    const el = document.getElementById('detailTabContent');
+    switch(S.detailTab) {
+        case 'network': el.innerHTML = renderNetworkTab(d.network); break;
+        case 'application': el.innerHTML = renderAppTab(d.application); break;
+        case 'sql': el.innerHTML = renderSQLTab(d.sql); break;
+        case 'system': el.innerHTML = renderSystemTab(d.system); break;
+        case 'alerts': el.innerHTML = renderAlertsTab(d.alerts); break;
+    }
+}
+
+function renderNetworkTab(net) {
+    if (!net) return '<div style="color:#718096;text-align:center;padding:40px">暂无网络指标数据</div>';
+    let html = '<table class="detail-table"><thead><tr><th>网卡</th><th>发送</th><th>接收</th><th>错误</th><th>丢包</th></tr></thead><tbody>';
+    if (net.interfaces) {
+        Object.values(net.interfaces).forEach(iface => {
+            html += `<tr><td>${iface.name}</td><td>${fmtBytes(iface.bytes_sent)}</td><td>${fmtBytes(iface.bytes_recv)}</td><td>${iface.errors}</td><td>${iface.drops}</td></tr>`;
+        });
+    }
+    html += '</tbody></table>';
+
+    if (net.tcp_states && Object.keys(net.tcp_states).length) {
+        html += '<div style="margin-top:16px"><div style="font-size:12px;color:#718096;margin-bottom:8px;font-weight:600">TCP连接状态</div>';
+        html += '<table class="detail-table"><thead><tr><th>状态</th><th>连接数</th></tr></thead><tbody>';
+        Object.entries(net.tcp_states).forEach(([state, count]) => {
+            html += `<tr><td>${state}</td><td>${count}</td></tr>`;
+        });
+        html += '</tbody></table></div>';
+    }
+
+    html += `<div style="margin-top:12px;font-size:12px;color:#718096">总连接数: ${net.total_connections||0} | 重传: ${net.total_retransmits||0}</div>`;
+    return html;
+}
+
+function renderAppTab(app) {
+    if (!app) return '<div style="color:#718096;text-align:center;padding:40px">暂无应用指标数据</div>';
+    let html = `
+        <div class="detail-metrics" style="grid-template-columns:repeat(2,1fr)">
+            <div class="d-metric"><div class="v">${app.avg_cpu_usage?.toFixed(1)||0}%</div><div class="l">CPU</div></div>
+            <div class="d-metric"><div class="v">${app.avg_memory_usage?.toFixed(1)||0}%</div><div class="l">内存</div></div>
+            <div class="d-metric"><div class="v">${app.avg_response_time?.toFixed(1)||0}ms</div><div class="l">响应时间</div></div>
+            <div class="d-metric"><div class="v">${app.avg_throughput?.toFixed(0)||0} rps</div><div class="l">吞吐量</div></div>
+        </div>`;
+
+    if (app.processes && Object.keys(app.processes).length) {
+        html += '<div style="font-size:12px;color:#718096;margin-bottom:8px;font-weight:600">进程列表</div>';
+        html += '<table class="detail-table"><thead><tr><th>PID</th><th>名称</th><th>CPU</th><th>内存</th><th>线程</th><th>文件描述符</th></tr></thead><tbody>';
+        Object.values(app.processes).forEach(p => {
+            html += `<tr><td>${p.pid}</td><td>${p.name}</td><td>${p.cpu_usage?.toFixed(1)||0}%</td><td>${fmtBytes(p.memory_rss)}</td><td>${p.threads}</td><td>${p.open_files}</td></tr>`;
+        });
+        html += '</tbody></table>';
+    }
+    return html;
+}
+
+function renderSQLTab(sql) {
+    if (!sql) return '<div style="color:#718096;text-align:center;padding:40px">暂无SQL指标数据</div>';
+    let html = `
+        <div class="detail-metrics" style="grid-template-columns:repeat(3,1fr)">
+            <div class="d-metric"><div class="v">${sql.total_queries?.toLocaleString()||0}</div><div class="l">总查询</div></div>
+            <div class="d-metric"><div class="v" style="color:#ed8936">${sql.slow_queries||0}</div><div class="l">慢查询</div></div>
+            <div class="d-metric"><div class="v" style="color:#e53e3e">${sql.error_queries||0}</div><div class="l">错误查询</div></div>
+            <div class="d-metric"><div class="v">${sql.avg_latency?.toFixed(1)||0}ms</div><div class="l">平均延迟</div></div>
+            <div class="d-metric"><div class="v">${sql.p95_latency?.toFixed(1)||0}ms</div><div class="l">P95延迟</div></div>
+            <div class="d-metric"><div class="v">${sql.p99_latency?.toFixed(1)||0}ms</div><div class="l">P99延迟</div></div>
+        </div>`;
+
+    if (sql.top_slow_queries?.length) {
+        html += '<div style="font-size:12px;color:#ed8936;margin-bottom:8px;font-weight:600">Top 慢查询</div>';
+        sql.top_slow_queries.forEach(q => {
+            html += `<div class="sql-text">${q.query}</div>
+                <div style="font-size:11px;color:#718096;margin-bottom:12px">调用: ${q.calls} | 平均: ${q.avg_time?.toFixed(1)}ms | 最大: ${q.max_time?.toFixed(1)}ms | 扫描行: ${q.rows_examined?.toLocaleString()}</div>`;
+        });
+    }
+
+    if (sql.top_error_queries?.length) {
+        html += '<div style="font-size:12px;color:#e53e3e;margin-bottom:8px;font-weight:600">Top 错误查询</div>';
+        sql.top_error_queries.forEach(q => {
+            html += `<div class="sql-text">${q.query}</div>
+                <div style="font-size:11px;color:#718096;margin-bottom:12px">调用: ${q.calls} | 平均: ${q.avg_time?.toFixed(1)}ms | 最大: ${q.max_time?.toFixed(1)}ms</div>`;
+        });
+    }
+    return html;
+}
+
+function renderSystemTab(sys) {
+    if (!sys) return '<div style="color:#718096;text-align:center;padding:40px">暂无系统指标数据</div>';
+    return `
+        <div class="detail-metrics" style="grid-template-columns:repeat(2,1fr)">
+            <div class="d-metric"><div class="v">${sys.avg_cpu_usage?.toFixed(1)||0}%</div><div class="l">CPU</div></div>
+            <div class="d-metric"><div class="v">${sys.avg_memory_usage?.toFixed(1)||0}%</div><div class="l">内存</div></div>
+            <div class="d-metric"><div class="v">${sys.avg_load1?.toFixed(2)||0}</div><div class="l">Load 1m</div></div>
+            <div class="d-metric"><div class="v">${sys.avg_load5?.toFixed(2)||0}</div><div class="l">Load 5m</div></div>
+        </div>
+        <table class="detail-table">
+            <tr><td style="color:#718096">内存总量</td><td>${fmtBytes(sys.memory_total)}</td></tr>
+            <tr><td style="color:#718096">内存使用</td><td>${fmtBytes(sys.memory_used)}</td></tr>
+            <tr><td style="color:#718096">磁盘总量</td><td>${fmtBytes(sys.disk_total)}</td></tr>
+            <tr><td style="color:#718096">磁盘使用</td><td>${fmtBytes(sys.disk_used)}</td></tr>
+            <tr><td style="color:#718096">Load 15m</td><td>${sys.avg_load15?.toFixed(2)||0}</td></tr>
+            <tr><td style="color:#718096">操作系统</td><td>${sys.os||'Linux'}</td></tr>
+            <tr><td style="color:#718096">内核版本</td><td>${sys.kernel_version||'-'}</td></tr>
+            <tr><td style="color:#718096">运行时间</td><td>${sys.uptime||'-'}</td></tr>
+        </table>`;
+}
+
+function renderAlertsTab(alerts) {
+    if (!alerts?.length) return '<div style="color:#718096;text-align:center;padding:40px">暂无告警</div>';
+    return alerts.map(a => `
+        <div class="alert-item">
+            <div class="alert-head">
+                <span class="alert-title"><span class="status-tag status-${a.severity==='critical'?'error':'warning'}">${a.severity==='critical'?'严重':'警告'}</span> ${a.title}</span>
+                <span class="alert-time">${new Date(a.fired_at).toLocaleString('zh-CN')}</span>
+            </div>
+            <div class="alert-msg">${a.message}</div>
+        </div>
+    `).join('');
+}
+
+function renderDetailMock(asset) {
+    renderDetail({
+        asset_item: asset,
+        network: {interfaces:{eth0:{name:'eth0',bytes_sent:asset.network_out,bytes_recv:asset.network_in,packets_sent:50000,packets_recv:60000,errors:0,drops:0}},tcp_states:{ESTABLISHED:120,CLOSE_WAIT:3,TIME_WAIT:15},total_connections:138,total_retransmits:5},
+        application: {avg_cpu_usage:asset.cpu_usage,avg_memory_usage:asset.memory_usage,avg_response_time:asset.response_time,avg_error_rate:asset.error_rate,avg_throughput:1500,processes:{1:{pid:1,name:'main',cpu_usage:asset.cpu_usage,memory_rss:524288000,threads:50,open_files:200}},process_count:1},
+        sql: {total_queries:15000,slow_queries:25,error_queries:3,avg_latency:12.5,p95_latency:85.3,p99_latency:250.8,top_slow_queries:[{query:'SELECT * FROM orders WHERE status=? ORDER BY created_at DESC LIMIT 1000',database:'order_db',calls:500,avg_time:320.5,max_time:1200.3,rows_examined:500000}],top_error_queries:[{query:'INSERT INTO payment_records VALUES(?,?)',database:'payment_db',calls:2,avg_time:50,max_time:120,rows_examined:0}]},
+        system: {avg_cpu_usage:asset.cpu_usage,avg_memory_usage:asset.memory_usage,memory_total:17179869184,memory_used:10737418240,disk_total:107374182400,disk_used:53687091200,avg_load1:2.5,avg_load5:2.1,avg_load15:1.8,os:'Linux',kernel_version:'5.10.0',uptime:'30d 12h'},
+        alerts: []
+    });
+}
+
+function closeDetail() {
+    document.getElementById('detailPanel').classList.add('hidden');
+    document.querySelectorAll('.asset-row').forEach(r => r.classList.remove('selected'));
+    S.selectedAsset = null;
+}
+
+// ==================== 工具函数 ====================
+function statusText(s) { return {running:'正常',warning:'警告',error:'异常',offline:'离线'}[s]||s; }
+
+function progressBar(pct) {
+    const cls = pct>85?'fill-red':pct>65?'fill-yellow':'fill-green';
+    return `<div class="progress-bar"><div class="progress-fill ${cls}" style="width:${Math.min(pct,100)}%"></div></div><span style="font-size:12px">${pct.toFixed(1)}%</span>`;
+}
+
+function fmtBytes(b) {
+    if (!b || b===0) return '0 B';
+    const u = ['B','KB','MB','GB','TB'];
+    let i = 0;
+    while (b>=1024 && i<u.length-1) { b/=1024; i++; }
+    return b.toFixed(1)+' '+u[i];
+}
+
+function showLoading(v) { document.getElementById('loading').style.display = v?'flex':'none'; }
+</script>
+</body>
+</html>

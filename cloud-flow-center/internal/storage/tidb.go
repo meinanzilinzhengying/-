@@ -2177,6 +2177,7 @@ func (s *TiDBStorage) GetDB() *sql.DB {
 }
 
 // GetRecentMetrics 获取最近的指标数据
+// M4 修复: 使用参数化查询避免 SQL 注入风险
 func (s *TiDBStorage) GetRecentMetrics(metricType string, limit int, timeWindow time.Duration) ([]*edge.MetricData, error) {
 	if limit <= 0 {
 		limit = 5
@@ -2185,12 +2186,13 @@ func (s *TiDBStorage) GetRecentMetrics(metricType string, limit int, timeWindow 
 		timeWindow = 5 * time.Minute
 	}
 
-	// 计算时间范围，获取指定时间窗口内的数据
-	timeWindowSec := int(timeWindow.Seconds())
-	query := fmt.Sprintf(`SELECT probe_id, UNIX_TIMESTAMP(ts) as timestamp, src_ip, dst_ip, src_port, dst_port, protocol, bytes, packets, latency, cpu_usage, memory_usage, disk_usage
+	// M4 修复: 使用 DATE_SUB 配合参数化查询，避免 fmt.Sprintf 拼接
+	// 计算截止时间戳，使用参数化查询
+	cutoffTime := time.Now().Add(-timeWindow)
+	query := `SELECT probe_id, UNIX_TIMESTAMP(ts) as timestamp, src_ip, dst_ip, src_port, dst_port, protocol, bytes, packets, latency, cpu_usage, memory_usage, disk_usage
 			FROM metrics
-			WHERE ts >= NOW() - INTERVAL %d SECOND `, timeWindowSec)
-	args := []interface{}{}
+			WHERE ts >= ? `
+	args := []interface{}{cutoffTime}
 
 	// 根据 metricType 过滤数据
 	switch metricType {

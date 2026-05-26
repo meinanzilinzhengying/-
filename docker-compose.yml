@@ -128,7 +128,11 @@ services:
       GRPC_LISTEN_PORT: "50051"
       METRICS_PORT: "9092"
       HEALTH_PORT: "8081"
+      # N1 修复: API Key 配置说明
+      # CLOUD_FLOW_API_KEY: 用于 Agent 连接 Edge 的认证
+      # 生产环境必须设置，否则 Edge 会发出安全警告
       CLOUD_FLOW_API_KEY: "${CLOUD_FLOW_API_KEY:-}"
+      # CLOUD_FLOW_CENTER_API_KEY: 用于 Edge 连接 Center 的认证
       CLOUD_FLOW_CENTER_API_KEY: "${CLOUD_FLOW_CENTER_API_KEY:-}"
     networks:
       - cloud-flow-net

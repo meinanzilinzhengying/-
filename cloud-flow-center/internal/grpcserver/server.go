@@ -139,8 +139,9 @@ func BuildServerOpts(tlsCfg config.TLSConfig, rateLimit config.RateLimitConfig, 
 
 	// H2 修复: 强制要求 API Key，不允许绕过认证
 	// 原因: 未配置 API Key 时，虽然启用了限流等拦截器，但缺少认证是严重的安全隐患
+	// N1 修复: 更正错误提示中的环境变量名称（实际绑定的是 CLOUD_FLOW_API_KEY）
 	if apiKey == "" {
-		return nil, fmt.Errorf("API Key 未配置。请设置 CLOUD_FLOW_CENTER_API_KEY 环境变量或配置文件 center.api_key")
+		return nil, fmt.Errorf("API Key 未配置。请设置 CLOUD_FLOW_API_KEY 环境变量或配置文件 center.api_key")
 	}
 
 	// 组合拦截器: Trace ID + 限流 + API Key 认证

@@ -140,9 +140,15 @@ func TraceIDInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
 
 // APIKeyAuthInterceptor API Key认证拦截器
 // M2 修复: 使用 gRPC status code 返回错误，与 Center 保持一致
+// N1 修复: 添加安全警告，提醒用户配置 API Key
 func APIKeyAuthInterceptor(apiKey string, log *logger.Logger) grpc.UnaryServerInterceptor {
+	// N1: 检查 API Key 是否配置，发出安全警告
+	if apiKey == "" {
+		log.Warnf("[N1] API Key 未配置，跳过认证。生产环境请设置 CLOUD_FLOW_API_KEY 环境变量")
+	}
+
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// 如果未配置 API Key，跳过认证
+		// 如果未配置 API Key，跳过认证（开发/测试环境）
 		if apiKey == "" {
 			return handler(ctx, req)
 		}

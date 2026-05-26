@@ -95,6 +95,20 @@ type CircuitBreakerConfig struct {
 	HalfOpenMaxRequests int           // 半开状态最大请求数（默认10）
 }
 
+// KafkaConfig Kafka 配置（P0: Flow Ingest Pipeline）
+type KafkaConfig struct {
+	Enabled           bool     // 启用 Kafka 转发（默认 false，兼容旧模式）
+	Brokers           []string // Kafka broker 地址列表
+	Compression       string   // 压缩算法: snappy/gzip/lz4/zstd
+	MaxMessageBytes   int      // 单条消息最大字节数
+	BatchSize         int      // 批量发送大小
+	LingerMs          int      // 批量等待时间（毫秒）
+	BufferMemory      int      // Producer 缓冲区大小（字节）
+	Retries           int      // 发送重试次数
+	RetryBackoffMs    int      // 重试基础延迟（毫秒）
+	ChannelBufferSize int      // 内部通道缓冲区大小
+}
+
 // AggregatorConfig 数据聚合配置
 type AggregatorConfig struct {
 	Enabled           bool          // 启用数据聚合（默认启用）
@@ -140,6 +154,7 @@ type Config struct {
 	Cluster          ClusterConfig          // Edge集群配置
 	TLS              TLSConfig              // TLS 配置
 	Log              LogConfig              // 日志配置
+	Kafka            KafkaConfig            // P0: Kafka 配置（Flow Ingest Pipeline）
 
 	// L1 修复: 可配置的定时任务间隔
 	HeartbeatInterval       time.Duration // 心跳上报间隔（默认 30s）

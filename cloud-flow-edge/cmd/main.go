@@ -21,6 +21,7 @@ import (
 	"cloud-flow-edge/internal/grpcclient"
 	"cloud-flow-edge/internal/grpcserver"
 	"cloud-flow-edge/internal/http"
+	"cloud-flow-edge/internal/kafkafwd"
 	"cloud-flow-edge/internal/probemgr"
 	"cloud-flow-edge/internal/servicediscovery"
 	"cloud-flow-edge/pkg/logger"
@@ -33,6 +34,7 @@ const gracefulShutdownTimeout = 30 * time.Second
 
 var cfg atomic.Value
 var fwd *forwarder.Forwarder
+var kafkaFwd *kafkafwd.KafkaForwarder // P0: Kafka 转发器（Flow Ingest Pipeline）
 var client *grpcclient.Client
 var clientMu sync.RWMutex
 var healthServer *http.Server
@@ -176,11 +178,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 6. 创建并启动数据转发器（注入 metrics）
-	// L1 修复: 使用配置的 MaxBufferLimit
-	fwd = forwarder.NewForwarder(client, localCfg.BatchSize, localCfg.FlushInterval, localCfg.MaxBufferLimit, log)
-	fwd.SetMetrics(metricCollector)
-	fwd.Start()
+	// P0: Flow Ingest Pipeline - 根据配置选择 Kafka 或 gRPC 转发
+	if localCfg.Kafka.Enabled && len(localCfg.Kafka.Brokers) > 0 {
+		// 使用 Kafka 转发器（异步，零阻塞）
+		log.Infof("P0: 启用 Kafka 转发器 (brokers=%v)", localCfg.Kafka.Brokers)
+		kafkaFwd, err = kafkafwd.New(localCfg.Kafka.Brokers, &kafkafwd.ProtoSerializer{}, log)
+		if err != nil {
+			log.Errorf("创建 Kafka 转发器失败: %v", err)
+			os.Exit(1)
+		}
+		// 创建适配器，让 gRPC server 可以调用 Kafka 转发器
+		fwd = forwarder.NewKafkaAdapter(kafkaFwd, log)
+		fwd.SetMetrics(metricCollector)
+		fwd.Start()
+	} else {
+		// 使用传统 gRPC 转发器（同步）
+		log.Info("使用传统 gRPC 转发器（Kafka 未启用）")
+		fwd = forwarder.NewForwarder(client, localCfg.BatchSize, localCfg.FlushInterval, localCfg.MaxBufferLimit, log)
+		fwd.SetMetrics(metricCollector)
+		fwd.Start()
+	}
 
 	// 7. 创建 gRPC 服务端并注册探针服务
 	srv := grpcserver.NewServer(manager, fwd, log, metricCollector, localCfg.APIKey)

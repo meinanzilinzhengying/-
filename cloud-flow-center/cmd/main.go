@@ -20,6 +20,7 @@ import (
 	"cloud-flow-center/internal/config"
 	"cloud-flow-center/internal/edgeregistry"
 	"cloud-flow-center/internal/grpcserver"
+	"cloud-flow-center/internal/kafkaconsumer"
 	"cloud-flow-center/internal/portal"
 	"cloud-flow-center/internal/storage"
 	"cloud-flow-center/pkg/audit"
@@ -176,6 +177,33 @@ func main() {
 			log.Errorf("Portal HTTP 服务异常: %v", err)
 		}
 	}()
+
+	// P0: Flow Ingest Pipeline - 启动 Kafka 消费者（如果启用）
+	var kafkaConsumer *kafkaconsumer.Consumer
+	if cfg.KafkaConsumer.Enabled && len(cfg.KafkaConsumer.Brokers) > 0 {
+		topics := cfg.KafkaConsumer.Topics
+		if len(topics) == 0 {
+			// 默认订阅所有数据 topic
+			topics = []string{"flow.raw", "metrics", "traces", "logs", "profiling"}
+		}
+		groupID := cfg.KafkaConsumer.GroupID
+		if groupID == "" {
+			groupID = "cloud-flow-center"
+		}
+		kafkaConsumer, err = kafkaconsumer.New(cfg.KafkaConsumer.Brokers, groupID, topics, store, log)
+		if err != nil {
+			log.Errorf("创建 Kafka 消费者失败: %v", err)
+		} else {
+			if err := kafkaConsumer.Start(); err != nil {
+				log.Errorf("启动 Kafka 消费者失败: %v", err)
+			} else {
+				defer kafkaConsumer.Stop()
+				log.Infof("P0: Kafka 消费者已启动 (brokers=%v, topics=%v)", cfg.KafkaConsumer.Brokers, topics)
+			}
+		}
+	} else {
+		log.Info("Kafka 消费者未启用（配置中设置 enabled=true 以启用）")
+	}
 
 	log.Info("中心服务已启动")
 

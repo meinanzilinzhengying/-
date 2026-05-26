@@ -100,8 +100,10 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # P2: 配置为支持多 broker 扩展（单节点时 replication=1，集群时通过 override 文件设置为 3）
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-1}
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-1}
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_MIN_ISR:-1}
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_COMPRESSION_TYPE: snappy
@@ -390,6 +392,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    networks:
+      - cloud-flow-net
+
+  # ---------------------------------------------------------------------------
+  # Kafka Exporter (Kafka 指标采集 - P1: Flow Ingest Pipeline 监控)
+  # ---------------------------------------------------------------------------
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    container_name: cloud-flow-kafka-exporter
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9308:9308"
+    command:
+      - '--kafka.server=kafka:9092'
+      - '--topic.filter=.*'
+      - '--group.filter=.*'
+      - '--log.enable-sarama'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9308/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - cloud-flow-net
 

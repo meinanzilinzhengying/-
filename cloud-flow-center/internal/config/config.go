@@ -81,6 +81,18 @@ type StorageConfig struct {
 	RetDays int
 }
 
+// KafkaConsumerConfig Kafka 消费者配置（P0: Flow Ingest Pipeline）
+type KafkaConsumerConfig struct {
+	Enabled         bool     // 启用 Kafka 消费
+	Brokers         []string // Kafka broker 地址列表
+	GroupID         string   // 消费者组 ID
+	Topics          []string // 订阅的 topic 列表
+	AutoOffsetReset string   // 初始偏移量: earliest/latest
+	MaxPollRecords  int      // 单次 poll 最大记录数
+	SessionTimeout  int      // 会话超时（秒）
+	HeartbeatInterval int    // 心跳间隔（秒）
+}
+
 type RateLimitConfig struct {
 	Enabled    bool // 是否启用限流
 	BucketSize int  // 令牌桶容量
@@ -101,6 +113,7 @@ type Config struct {
 	Log            LogConfig
 	Alerting       AlertingConfig
 	Storage        StorageConfig
+	KafkaConsumer  KafkaConsumerConfig // P0: Kafka 消费者配置
 }
 
 // envVarRegex 匹配 ${VAR:-default} 格式的正则表达式（包级别编译，避免每次调用时重复编译）

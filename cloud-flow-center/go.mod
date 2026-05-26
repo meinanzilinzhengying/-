@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	cloud-flow/pkg v0.0.0-00010101000000-000000000000
 	cloud-flow/proto v0.0.0-00010101000000-000000000000
+	github.com/IBM/sarama v1.43.3
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/prometheus/client_golang v1.19.0

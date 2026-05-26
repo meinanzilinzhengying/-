@@ -80,3 +80,14 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
     scrape_interval: 15s
+
+  # ---------------------------------------------------------------------------
+  # Kafka Exporter (Kafka 指标 - P1: Flow Ingest Pipeline 监控)
+  # ---------------------------------------------------------------------------
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: 'kafka'

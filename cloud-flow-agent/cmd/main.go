@@ -259,8 +259,12 @@ func main() {
 	}
 
 	// 连接边缘节点（带重试，Edge 未启动时自动等待）
+	// L1 修复: 使用配置的重连参数
 	var client *grpcclient.Client
-	connectDelay := 2 * time.Second
+	connectDelay := cfg.ReconnectBaseDelay
+	if connectDelay <= 0 {
+		connectDelay = 2 * time.Second // 默认值
+	}
 	maxRetries := cfg.MaxRetries
 
 	for attempt := 1; ; attempt++ {
@@ -281,7 +285,12 @@ func main() {
 		}
 		log.Warnf("连接边缘节点失败 (第 %d 次): %v，%s 后重试...", attempt, err, connectDelay)
 		time.Sleep(connectDelay)
-		if connectDelay < 30*time.Second {
+		// L1 修复: 使用配置的最大延迟
+		maxDelay := cfg.ReconnectMaxDelay
+		if maxDelay <= 0 {
+			maxDelay = 30 * time.Second
+		}
+		if connectDelay < maxDelay {
 			connectDelay *= 2
 		}
 	}
@@ -549,9 +558,16 @@ func main() {
 
 						// 重新连接 Edge 节点
 					// M3 修复: 添加最大重试次数，超过后降级为本地缓存模式
+					// L1 修复: 使用配置的重连参数
 					var newClient *grpcclient.Client
-					connectDelay := 2 * time.Second
-					maxReconnectAttempts := 10 // 最大重试次数
+					connectDelay := cfg.ReconnectBaseDelay
+					if connectDelay <= 0 {
+						connectDelay = 2 * time.Second
+					}
+					maxReconnectAttempts := cfg.MaxReconnectAttempts
+					if maxReconnectAttempts <= 0 {
+						maxReconnectAttempts = 10
+					}
 					reconnectSuccess := false
 					for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
 						newClient, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
@@ -571,7 +587,12 @@ func main() {
 							return
 						case <-time.After(connectDelay):
 						}
-						if connectDelay < 30*time.Second {
+						// L1 修复: 使用配置的最大延迟
+						maxDelay := cfg.ReconnectMaxDelay
+						if maxDelay <= 0 {
+							maxDelay = 30 * time.Second
+						}
+						if connectDelay < maxDelay {
 							connectDelay *= 2
 						}
 					}
@@ -643,7 +664,12 @@ func main() {
 		defer wg.Done()
 		ticker := time.NewTicker(time.Duration(cfg.CollectInterval) * time.Second)
 		defer ticker.Stop()
-		flushTicker := time.NewTicker(30 * time.Second) // 每30秒flush一次日志
+		// L1 修复: 使用配置的刷新间隔
+		flushInterval := cfg.FlushInterval
+		if flushInterval <= 0 {
+			flushInterval = 30 * time.Second // 默认值
+		}
+		flushTicker := time.NewTicker(flushInterval)
 		defer flushTicker.Stop()
 		var buf []*edge.MetricData
 

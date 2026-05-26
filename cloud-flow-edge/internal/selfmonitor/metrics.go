@@ -65,6 +65,9 @@ type MetricsCollector struct {
 	probeCount          int32   // 当前探针数
 	onlineProbeCount    int32   // 在线探针数
 
+	// L1 修复: 可配置的上报间隔
+	reportInterval      time.Duration
+
 	// 内部状态
 	mu                  sync.RWMutex
 	running             bool
@@ -155,13 +158,19 @@ type EdgeMetrics struct {
 }
 
 // NewMetricsCollector 创建新的监控指标采集器
+// L1 修复: 使用配置的上报间隔
 func NewMetricsCollector(cfg *config.Config, log *logger.Logger, client edge.CenterServiceClient) *MetricsCollector {
+	reportInterval := cfg.SelfMonitorInterval
+	if reportInterval <= 0 {
+		reportInterval = 30 * time.Second // 默认值
+	}
 	return &MetricsCollector{
 		config:         cfg,
 		logger:         log,
 		centerClient:   client,
 		startTime:      time.Now(),
 		stopCh:         make(chan struct{}),
+		reportInterval: reportInterval,
 	}
 }
 
@@ -201,7 +210,12 @@ func (c *MetricsCollector) Stop() {
 func (c *MetricsCollector) reportLoop(ctx context.Context) {
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(30 * time.Second)
+	// L1 修复: 使用可配置的上报间隔（通过 MetricsCollector 字段）
+	reportInterval := c.reportInterval
+	if reportInterval <= 0 {
+		reportInterval = 30 * time.Second // 默认值
+	}
+	ticker := time.NewTicker(reportInterval)
 	defer ticker.Stop()
 
 	// 立即上报一次

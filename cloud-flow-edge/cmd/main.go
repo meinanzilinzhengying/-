@@ -177,7 +177,8 @@ func main() {
 	}
 
 	// 6. 创建并启动数据转发器（注入 metrics）
-	fwd = forwarder.NewForwarder(client, localCfg.BatchSize, localCfg.FlushInterval, log)
+	// L1 修复: 使用配置的 MaxBufferLimit
+	fwd = forwarder.NewForwarder(client, localCfg.BatchSize, localCfg.FlushInterval, localCfg.MaxBufferLimit, log)
 	fwd.SetMetrics(metricCollector)
 	fwd.Start()
 
@@ -213,9 +214,12 @@ func main() {
 	stopCh := make(chan struct{})
 
 	// 9. 启动心跳上报协程（H3 修复: 使用 Center 返回的动态间隔）
+	// L1 修复: 初始值使用配置，后续根据 Center 响应动态调整
 	go func() {
-		// 默认 30 秒，后续根据 Center 响应动态调整
-		heartbeatInterval := 30 * time.Second
+		heartbeatInterval := localCfg.HeartbeatInterval
+		if heartbeatInterval <= 0 {
+			heartbeatInterval = 30 * time.Second // 默认值
+		}
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 		for {
@@ -249,9 +253,13 @@ func main() {
 		}
 	}()
 
-	// 10. 启动探针列表上报协程（每 60s）
+	// 10. 启动探针列表上报协程（L1 修复: 使用配置的间隔）
 	go func() {
-		ticker := time.NewTicker(60 * time.Second)
+		probeReportInterval := localCfg.ProbeReportInterval
+		if probeReportInterval <= 0 {
+			probeReportInterval = 60 * time.Second // 默认值
+		}
+		ticker := time.NewTicker(probeReportInterval)
 		defer ticker.Stop()
 		for {
 			select {

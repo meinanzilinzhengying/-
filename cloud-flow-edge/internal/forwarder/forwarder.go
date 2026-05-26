@@ -108,12 +108,17 @@ type Forwarder struct {
 }
 
 // NewForwarder 创建数据转发器
-func NewForwarder(client ForwardClient, batchSize, flushIntervalSec int, log *logger.Logger) *Forwarder {
+// L1 修复: 添加 maxBufferLimit 参数
+func NewForwarder(client ForwardClient, batchSize, flushIntervalSec, maxBufferLimit int, log *logger.Logger) *Forwarder {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
 	if flushIntervalSec <= 0 {
 		flushIntervalSec = 5
+	}
+	// L1 修复: 使用传入的 maxBufferLimit 或默认值
+	if maxBufferLimit <= 0 {
+		maxBufferLimit = defaultMaxBufferLimit
 	}
 
 	// 初始化持久化管理器
@@ -137,7 +142,7 @@ func NewForwarder(client ForwardClient, batchSize, flushIntervalSec int, log *lo
 		localCache:    localCache,
 		batchSize:     batchSize,
 		flushInterval: time.Duration(flushIntervalSec) * time.Second,
-		maxBufLimit:   defaultMaxBufferLimit,
+		maxBufLimit:   maxBufferLimit,
 		stopCh:        make(chan struct{}),
 		networkOnline: true,
 	}

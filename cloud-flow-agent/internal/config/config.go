@@ -421,6 +421,13 @@ type Config struct {
 	Metrics         MetricsConfig   // 指标模块配置
 	CMDB            CMDBConfig      // CMDB对接配置
 	Trace           TraceConfig     // 追踪和火焰图配置
+
+	// L1 修复: 可配置的定时任务间隔
+	FlushInterval         time.Duration // 日志刷新间隔（默认 30s）
+	ReconnectBaseDelay    time.Duration // 重连基础延迟（默认 2s）
+	ReconnectMaxDelay     time.Duration // 重连最大延迟（默认 30s）
+	MaxReconnectAttempts  int           // 最大重连次数（默认 10）
+	MaxBufferLimit        int           // 缓冲区上限（默认 1000）
 }
 
 func Load() (*Config, error) {
@@ -445,6 +452,13 @@ func Load() (*Config, error) {
 	viper.SetDefault("collect.cpu", true)
 	viper.SetDefault("collect.memory", true)
 	viper.SetDefault("collect.network", true)
+
+	// L1 修复: 可配置的定时任务间隔默认值
+	viper.SetDefault("flush_interval", "30s")
+	viper.SetDefault("reconnect_base_delay", "2s")
+	viper.SetDefault("reconnect_max_delay", "30s")
+	viper.SetDefault("max_reconnect_attempts", 10)
+	viper.SetDefault("max_buffer_limit", 1000)
 	viper.SetDefault("collect.disk", false)
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
@@ -984,6 +998,12 @@ func Load() (*Config, error) {
 		FlameOutputDir:    viper.GetString("trace.flame_output_dir"),
 		FlameMaxStored:    viper.GetInt("trace.flame_max_stored"),
 	},
+	// L1 修复: 可配置的定时任务间隔
+	FlushInterval:        viper.GetDuration("flush_interval"),
+	ReconnectBaseDelay:   viper.GetDuration("reconnect_base_delay"),
+	ReconnectMaxDelay:    viper.GetDuration("reconnect_max_delay"),
+	MaxReconnectAttempts: viper.GetInt("max_reconnect_attempts"),
+	MaxBufferLimit:       viper.GetInt("max_buffer_limit"),
 }
 
 	if cfg.ProbeID == "" {

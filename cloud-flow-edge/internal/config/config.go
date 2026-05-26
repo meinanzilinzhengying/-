@@ -140,6 +140,15 @@ type Config struct {
 	Cluster          ClusterConfig          // Edge集群配置
 	TLS              TLSConfig              // TLS 配置
 	Log              LogConfig              // 日志配置
+
+	// L1 修复: 可配置的定时任务间隔
+	HeartbeatInterval       time.Duration // 心跳上报间隔（默认 30s）
+	ProbeReportInterval     time.Duration // 探针列表上报间隔（默认 60s）
+	SelfMonitorInterval     time.Duration // 自监控上报间隔（默认 30s）
+	MaxBufferLimit          int           // 转发缓冲区上限（默认 1000）
+	ReconnectBaseDelay      time.Duration // 重连基础延迟（默认 2s）
+	ReconnectMaxDelay       time.Duration // 重连最大延迟（默认 30s）
+	MaxReconnectAttempts    int           // 最大重连次数（默认 10）
 }
 
 // loadAPIKey 从环境变量或配置文件加载 API Key
@@ -304,6 +313,15 @@ func Load() (*Config, error) {
 	viper.SetDefault("service_discovery.refresh_interval", 30)
 	viper.SetDefault("service_discovery.port", 9090)
 
+	// L1 修复: 可配置的定时任务间隔默认值
+	viper.SetDefault("heartbeat_interval", "30s")
+	viper.SetDefault("probe_report_interval", "60s")
+	viper.SetDefault("self_monitor_interval", "30s")
+	viper.SetDefault("max_buffer_limit", 1000)
+	viper.SetDefault("reconnect_base_delay", "2s")
+	viper.SetDefault("reconnect_max_delay", "30s")
+	viper.SetDefault("max_reconnect_attempts", 10)
+
 	// 尝试读取 config.yaml
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -417,6 +435,14 @@ func Load() (*Config, error) {
 			Level:  viper.GetString("log.level"),
 			Format: viper.GetString("log.format"),
 		},
+		// L1 修复: 可配置的定时任务间隔
+		HeartbeatInterval:    viper.GetDuration("heartbeat_interval"),
+		ProbeReportInterval:  viper.GetDuration("probe_report_interval"),
+		SelfMonitorInterval:  viper.GetDuration("self_monitor_interval"),
+		MaxBufferLimit:       viper.GetInt("max_buffer_limit"),
+		ReconnectBaseDelay:   viper.GetDuration("reconnect_base_delay"),
+		ReconnectMaxDelay:    viper.GetDuration("reconnect_max_delay"),
+		MaxReconnectAttempts: viper.GetInt("max_reconnect_attempts"),
 	}
 
 	// edge_node_id 未配置时，使用 hostname 自动生成

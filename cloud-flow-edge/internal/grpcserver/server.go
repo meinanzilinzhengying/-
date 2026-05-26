@@ -138,25 +138,27 @@ func TraceIDInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
 	}
 }
 
-// APIKeyAuthInterceptor API Key 认证拦截器
+// APIKeyAuthInterceptor API Key认证拦截器
+// M2 修复: 使用 gRPC status code 返回错误，与 Center 保持一致
 func APIKeyAuthInterceptor(apiKey string, log *logger.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// 如果未配置 API Key，跳过认证
 		if apiKey == "" {
 			return handler(ctx, req)
 		}
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			log.Warnf("API Key 认证失败: 无 metadata")
-			return nil, fmt.Errorf("API Key 认证失败")
+			return nil, status.Errorf(codes.Unauthenticated, "API Key 认证失败: 无 metadata")
 		}
 		vals := md.Get("x-api-key")
 		if len(vals) == 0 {
 			log.Warnf("API Key 认证失败: 无 x-api-key 头")
-			return nil, fmt.Errorf("API Key 认证失败")
+			return nil, status.Errorf(codes.Unauthenticated, "API Key 认证失败: 未提供 API Key")
 		}
 		if subtle.ConstantTimeCompare([]byte(vals[0]), []byte(apiKey)) != 1 {
 			log.Warnf("API Key 认证失败: 无效的 API Key")
-			return nil, fmt.Errorf("API Key 认证失败")
+			return nil, status.Errorf(codes.Unauthenticated, "API Key 认证失败: 无效的 API Key")
 		}
 		return handler(ctx, req)
 	}

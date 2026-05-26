@@ -548,29 +548,48 @@ func main() {
 						}
 
 						// 重新连接 Edge 节点
-						var newClient *grpcclient.Client
-						connectDelay := 2 * time.Second
-						for attempt := 1; ; attempt++ {
-							newClient, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
-								Enabled:    cfg.TLS.Enabled,
-								ServerName: cfg.TLS.ServerName,
-								CACert:     cfg.TLS.CACert,
-								ClientCert: cfg.TLS.ClientCert,
-								ClientKey:  cfg.TLS.ClientKey,
-							}, log)
-							if err == nil {
-								break
-							}
-							log.Warnf("重连 Edge 节点失败 (第 %d 次): %v，%s 后重试...", attempt, err, connectDelay)
-							select {
-							case <-stopCh:
-								return
-							case <-time.After(connectDelay):
-							}
-							if connectDelay < 30*time.Second {
-								connectDelay *= 2
-							}
+					// M3 修复: 添加最大重试次数，超过后降级为本地缓存模式
+					var newClient *grpcclient.Client
+					connectDelay := 2 * time.Second
+					maxReconnectAttempts := 10 // 最大重试次数
+					reconnectSuccess := false
+					for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
+						newClient, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
+							Enabled:    cfg.TLS.Enabled,
+							ServerName: cfg.TLS.ServerName,
+							CACert:     cfg.TLS.CACert,
+							ClientCert: cfg.TLS.ClientCert,
+							ClientKey:  cfg.TLS.ClientKey,
+						}, log)
+						if err == nil {
+							reconnectSuccess = true
+							break
 						}
+						log.Warnf("重连 Edge 节点失败 (第 %d/%d 次): %v，%s 后重试...", attempt, maxReconnectAttempts, err, connectDelay)
+						select {
+						case <-stopCh:
+							return
+						case <-time.After(connectDelay):
+						}
+						if connectDelay < 30*time.Second {
+							connectDelay *= 2
+						}
+					}
+
+					// M3: 重连失败，降级为本地缓存模式
+					if !reconnectSuccess {
+						log.Errorf("[M3] 重连 Edge 节点失败，已达到最大重试次数 %d，进入本地缓存模式", maxReconnectAttempts)
+						metricCollector.RecordDataDropped(0, "edge_unavailable")
+						// 等待一段时间后再次尝试重连
+						select {
+						case <-stopCh:
+							return
+						case <-time.After(5 * time.Minute):
+							log.Info("[M3] 本地缓存模式：尝试重新连接 Edge...")
+							failureCount = 0 // 重置失败计数，允许再次重连
+							continue
+						}
+					}
 
 						// 重新注册
 						hostname, _ = os.Hostname()

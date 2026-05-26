@@ -49,10 +49,16 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
-    # [安全] 设置 Redis 密码，防止未授权访问
-    command: redis-server --requirepass ${REDIS_PASSWORD:?请在 .env 文件中设置 REDIS_PASSWORD}
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    # L3 修复: 使用配置文件和环境变量设置密码，避免密码暴露在进程参数中
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 文件中设置 REDIS_PASSWORD}
+    command: >
+      sh -c "envsubst '$$REDIS_PASSWORD' < /usr/local/etc/redis/redis.conf > /tmp/redis.conf &&
+             redis-server /tmp/redis.conf"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      # L3 修复: 使用 REDISCLI_AUTH 环境变量传递密码，避免暴露在命令行
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=\"${REDIS_PASSWORD}\" redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5

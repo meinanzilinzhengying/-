@@ -453,6 +453,181 @@ type UpdateTenantQuotaResponse struct {
 }
 
 // ============================================================================
+// RBAC / Project / Policy / OIDC 类型定义
+// ============================================================================
+
+// Project 项目
+type Project struct {
+	Id          string   `json:"id"`
+	TenantId    string   `json:"tenant_id"`
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name"`
+	Description string   `json:"description"`
+	Status      string   `json:"status"` // active/archived
+	Namespaces  []string `json:"namespaces"` // K8s namespaces belonging to this project
+	CreatedAt   int64    `json:"created_at"`
+	UpdatedAt   int64    `json:"updated_at"`
+}
+
+// Role 角色
+type Role struct {
+	Id          string   `json:"id"`
+	TenantId    string   `json:"tenant_id"`
+	ProjectId   string   `json:"project_id"` // empty = tenant-level role
+	Name        string   `json:"name"`       // admin/editor/viewer/custom
+	DisplayName string   `json:"display_name"`
+	Description string   `json:"description"`
+	IsBuiltin   bool     `json:"is_builtin"`  // true for default roles
+	Permissions []string `json:"permissions"` // list of permission strings
+	CreatedAt   int64    `json:"created_at"`
+}
+
+// Policy 策略
+type Policy struct {
+	Id          string            `json:"id"`
+	TenantId    string            `json:"tenant_id"`
+	ProjectId   string            `json:"project_id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Effect      string            `json:"effect"`    // allow/deny
+	Actions     []string          `json:"actions"`   // e.g. ["flow:read", "alert:write"]
+	Resources   []string          `json:"resources"` // e.g. ["flow:*", "alert:rule:*"]
+	Conditions  map[string]string `json:"conditions"` // e.g. {"namespace": "production"}
+	Priority    int               `json:"priority"`   // higher = evaluated first
+	CreatedAt   int64             `json:"created_at"`
+	UpdatedAt   int64             `json:"updated_at"`
+}
+
+// UserBinding 用户-角色-项目绑定
+type UserBinding struct {
+	UserId    string `json:"user_id"`
+	TenantId  string `json:"tenant_id"`
+	ProjectId string `json:"project_id"` // empty = tenant-level
+	RoleId    string `json:"role_id"`
+	RoleName  string `json:"role_name"`
+}
+
+// OIDCConfig OIDC 配置
+type OIDCConfig struct {
+	Issuer       string `json:"issuer"`
+	ClientId     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	RedirectURL  string `json:"redirect_url"`
+	Scopes       string `json:"scopes"` // "openid profile email"
+}
+
+// TenantContext 租户上下文（用于 gRPC metadata 传播）
+type TenantContext struct {
+	TenantId   string   `json:"tenant_id"`
+	UserId     string   `json:"user_id"`
+	Username   string   `json:"username"`
+	Role       string   `json:"role"`
+	ProjectId  string   `json:"project_id,omitempty"`
+	Namespaces []string `json:"namespaces,omitempty"`
+}
+
+// OIDCCallbackRequest OIDC 回调请求
+type OIDCCallbackRequest struct {
+	Code  string `json:"code"`
+	State string `json:"state"`
+}
+
+// ============================================================================
+// Project CRUD 请求/响应类型
+// ============================================================================
+
+// CreateProjectRequest 创建项目请求
+type CreateProjectRequest struct {
+	TenantId    string   `json:"tenant_id"`
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name"`
+	Description string   `json:"description"`
+	Namespaces  []string `json:"namespaces"`
+}
+
+// CreateProjectResponse 创建项目响应
+type CreateProjectResponse struct {
+	Project *Project `json:"project"`
+}
+
+// ListProjectsRequest 列出项目请求
+type ListProjectsRequest struct {
+	TenantId string `json:"tenant_id"`
+	Status   string `json:"status"`
+}
+
+// ListProjectsResponse 列出项目响应
+type ListProjectsResponse struct {
+	Projects []*Project `json:"projects"`
+	Total    int        `json:"total"`
+}
+
+// ============================================================================
+// Role / Policy 管理请求/响应类型
+// ============================================================================
+
+// CreateRoleRequest 创建角色请求
+type CreateRoleRequest struct {
+	TenantId    string   `json:"tenant_id"`
+	ProjectId   string   `json:"project_id"`
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
+}
+
+// CreateRoleResponse 创建角色响应
+type CreateRoleResponse struct {
+	Role *Role `json:"role"`
+}
+
+// BindUserRoleRequest 绑定用户角色请求
+type BindUserRoleRequest struct {
+	TenantId  string `json:"tenant_id"`
+	UserId    string `json:"user_id"`
+	ProjectId string `json:"project_id"`
+	RoleId    string `json:"role_id"`
+}
+
+// BindUserRoleResponse 绑定用户角色响应
+type BindUserRoleResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// CreatePolicyRequest 创建策略请求
+type CreatePolicyRequest struct {
+	TenantId    string            `json:"tenant_id"`
+	ProjectId   string            `json:"project_id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Effect      string            `json:"effect"`
+	Actions     []string          `json:"actions"`
+	Resources   []string          `json:"resources"`
+	Conditions  map[string]string `json:"conditions"`
+	Priority    int               `json:"priority"`
+}
+
+// CreatePolicyResponse 创建策略响应
+type CreatePolicyResponse struct {
+	Policy *Policy `json:"policy"`
+}
+
+// CheckPermissionRequest 检查权限请求
+type CheckPermissionRequest struct {
+	TenantId string `json:"tenant_id"`
+	UserId   string `json:"user_id"`
+	Action   string `json:"action"`
+	Resource string `json:"resource"`
+}
+
+// CheckPermissionResponse 检查权限响应
+type CheckPermissionResponse struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason"`
+}
+
+// ============================================================================
 // gRPC 服务接口定义
 // ============================================================================
 
@@ -755,6 +930,12 @@ type AuthServiceServer interface {
 	Authenticate(ctx context.Context, req *AuthenticateRequest) (*AuthenticateResponse, error)
 	ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error)
 	Authorize(ctx context.Context, req *AuthorizeRequest) (*AuthorizeResponse, error)
+	// New RBAC methods:
+	CreateRole(ctx context.Context, req *CreateRoleRequest) (*CreateRoleResponse, error)
+	BindUserRole(ctx context.Context, req *BindUserRoleRequest) (*BindUserRoleResponse, error)
+	CreatePolicy(ctx context.Context, req *CreatePolicyRequest) (*CreatePolicyResponse, error)
+	CheckPermission(ctx context.Context, req *CheckPermissionRequest) (*CheckPermissionResponse, error)
+	OIDCCallback(ctx context.Context, req *OIDCCallbackRequest) (*AuthenticateResponse, error)
 }
 
 // TenantServiceServer tenant-service gRPC 服务
@@ -764,4 +945,77 @@ type TenantServiceServer interface {
 	GetTenant(ctx context.Context, req *GetTenantRequest) (*GetTenantResponse, error)
 	ListTenants(ctx context.Context, req *ListTenantsRequest) (*ListTenantsResponse, error)
 	UpdateQuota(ctx context.Context, req *UpdateTenantQuotaRequest) (*UpdateTenantQuotaResponse, error)
+	// New project methods:
+	CreateProject(ctx context.Context, req *CreateProjectRequest) (*CreateProjectResponse, error)
+	ListProjects(ctx context.Context, req *ListProjectsRequest) (*ListProjectsResponse, error)
+}
+
+// UnimplementedAuthServiceServer 可嵌入的默认实现，使现有代码无需实现新方法即可编译
+type UnimplementedAuthServiceServer struct{}
+
+func (UnimplementedAuthServiceServer) HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) Authenticate(ctx context.Context, req *AuthenticateRequest) (*AuthenticateResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) Authorize(ctx context.Context, req *AuthorizeRequest) (*AuthorizeResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) CreateRole(ctx context.Context, req *CreateRoleRequest) (*CreateRoleResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) BindUserRole(ctx context.Context, req *BindUserRoleRequest) (*BindUserRoleResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) CreatePolicy(ctx context.Context, req *CreatePolicyRequest) (*CreatePolicyResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) CheckPermission(ctx context.Context, req *CheckPermissionRequest) (*CheckPermissionResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) OIDCCallback(ctx context.Context, req *OIDCCallbackRequest) (*AuthenticateResponse, error) {
+	return nil, nil
+}
+
+// UnimplementedTenantServiceServer 可嵌入的默认实现，使现有代码无需实现新方法即可编译
+type UnimplementedTenantServiceServer struct{}
+
+func (UnimplementedTenantServiceServer) HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTenantServiceServer) CreateTenant(ctx context.Context, req *CreateTenantRequest) (*CreateTenantResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTenantServiceServer) GetTenant(ctx context.Context, req *GetTenantRequest) (*GetTenantResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTenantServiceServer) ListTenants(ctx context.Context, req *ListTenantsRequest) (*ListTenantsResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTenantServiceServer) UpdateQuota(ctx context.Context, req *UpdateTenantQuotaRequest) (*UpdateTenantQuotaResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTenantServiceServer) CreateProject(ctx context.Context, req *CreateProjectRequest) (*CreateProjectResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTenantServiceServer) ListProjects(ctx context.Context, req *ListProjectsRequest) (*ListProjectsResponse, error) {
+	return nil, nil
 }

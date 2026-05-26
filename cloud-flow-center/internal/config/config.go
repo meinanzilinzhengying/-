@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -218,41 +216,19 @@ func Load() (*Config, error) {
 	// 展开配置文件中的环境变量（如 ${VAR:-default}）
 	expandEnvVarsInConfig()
 
-	// 自动生成 API Key（如果未配置）
+	// C5 修复: 强制要求通过环境变量注入密钥，不再自动生成或写入配置文件
+	// 原因:
+	// 1. 多实例竞态: 多个 Center 实例同时启动时，各自生成不同密钥写入同一配置文件
+	// 2. 安全风险: 密钥明文写入 YAML 文件，可能被日志、备份、配置中心泄露
+	// 3. JWT 重启失效: 每次重启都生成新密钥，所有已登录用户被踢出
 	apiKey := viper.GetString("center.api_key")
 	if apiKey == "" {
-		b := make([]byte, 16)
-		if _, err := rand.Read(b); err == nil {
-			apiKey = hex.EncodeToString(b)
-			viper.Set("center.api_key", apiKey)
-		}
+		return nil, fmt.Errorf("API Key 未配置。请设置 CLOUD_FLOW_API_KEY 环境变量或 center.api_key 配置项")
 	}
 
-	// 自动生成 JWT 密钥（如果未配置）
 	jwtSecretKey := viper.GetString("center.jwt.secret_key")
 	if jwtSecretKey == "" {
-		b := make([]byte, 32)
-		if _, err := rand.Read(b); err == nil {
-			jwtSecretKey = hex.EncodeToString(b)
-			viper.Set("center.jwt.secret_key", jwtSecretKey)
-		}
-	}
-
-	// 持久化生成的密钥到配置文件
-	// NOTE: 在容器化部署（多实例）场景下，多个实例同时启动可能导致写配置文件竞争。
-	// 生产环境应通过环境变量（如 CLOUD_FLOW_JWT_SECRET、CLOUD_FLOW_API_KEY）注入密钥，
-	// 避免依赖配置文件持久化。此处仅在单实例或首次初始化场景下生效。
-	if apiKey != "" || jwtSecretKey != "" {
-		if err := viper.WriteConfig(); err != nil {
-			// 如果配置文件不存在，尝试创建
-			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				if err := viper.SafeWriteConfigAs("./configs/config.yaml"); err != nil {
-					log.Printf("警告: 持久化生成的密钥到配置文件失败: %v", err)
-				}
-			} else {
-				log.Printf("警告: 写入配置文件失败: %v", err)
-			}
-		}
+		return nil, fmt.Errorf("JWT Secret 未配置。请设置 CLOUD_FLOW_JWT_SECRET 环境变量或 center.jwt.secret_key 配置项")
 	}
 
 	return &Config{

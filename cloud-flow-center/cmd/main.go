@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -150,14 +148,12 @@ func main() {
 		defer auditLogger.Stop()
 	}
 
+	// C5 修复: JWT Secret 已在 config.go 中强制要求，此处直接使用
 	jwtSecret := cfg.JWT.SecretKey
+	// 额外的安全检查（理论上不会触发，因为 config.Load() 已验证）
 	if jwtSecret == "" {
-		// 未配置 JWT 密钥时，生成随机密钥（每次重启后已签发 token 失效）
-		b := make([]byte, 32)
-		if _, err := rand.Read(b); err == nil {
-			jwtSecret = hex.EncodeToString(b)
-		}
-		log.Warn("JWT 密钥未配置，已生成随机密钥（服务重启后所有已签发 token 将失效，生产环境请设置 CLOUD_FLOW_JWT_SECRET 环境变量）")
+		log.Error("JWT Secret 为空，这可能是配置加载逻辑错误。请检查 CLOUD_FLOW_JWT_SECRET 环境变量或配置文件")
+		os.Exit(1)
 	}
 
 	secureCookie := cfg.TLS.Enabled

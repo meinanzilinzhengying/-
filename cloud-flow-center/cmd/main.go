@@ -18,6 +18,7 @@ import (
 	"cloud-flow-center/internal/alerting"
 	"cloud-flow-center/internal/cluster"
 	"cloud-flow-center/internal/config"
+	"cloud-flow-center/internal/edgeregistry"
 	"cloud-flow-center/internal/grpcserver"
 	"cloud-flow-center/internal/portal"
 	"cloud-flow-center/internal/storage"
@@ -114,6 +115,13 @@ func main() {
 	log.Info("告警系统已启动")
 
 	srv := grpcserver.NewServer(store, log, cfg.APIKey)
+
+	// P1: 初始化 Edge 注册表，注入到 gRPC Server
+	edgeRegistry := edgeregistry.NewRegistry()
+	edgeRegistry.StartCleanup(30*time.Second, 90*time.Second) // 每30秒清理，90秒超时
+	srv.SetEdgeRegistry(edgeRegistry)
+	defer edgeRegistry.Close()
+	log.Info("Edge 节点注册表已启动")
 
 	// 构建 gRPC Server 选项（TLS + 限流 + 其他）
 	serverOpts, err := grpcserver.BuildServerOpts(cfg.TLS, cfg.RateLimit, cfg.APIKey, log)

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"cloud-flow-center/internal/config"
+	"cloud-flow-center/internal/edgeregistry"
 	"cloud-flow-center/internal/storage"
 	"cloud-flow-center/pkg/logger"
 	"cloud-flow/pkg/ratelimit"
@@ -27,14 +28,25 @@ import (
 // Server 中心服务 gRPC 服务端
 type Server struct {
 	edge.UnimplementedCenterServiceServer
-	storage storage.StorageEngine
-	logger  *logger.Logger
-	apiKey  string
+	storage  storage.StorageEngine
+	logger   *logger.Logger
+	apiKey   string
+	registry *edgeregistry.Registry // P1: Edge 节点注册表
 }
 
 // NewServer 创建服务端
 func NewServer(s storage.StorageEngine, log *logger.Logger, apiKey string) *Server {
 	return &Server{storage: s, logger: log, apiKey: apiKey}
+}
+
+// SetEdgeRegistry 设置 Edge 注册表（P1: Center Edge 注册表）
+func (s *Server) SetEdgeRegistry(registry *edgeregistry.Registry) {
+	s.registry = registry
+}
+
+// GetEdgeRegistry 获取 Edge 注册表
+func (s *Server) GetEdgeRegistry() *edgeregistry.Registry {
+	return s.registry
 }
 
 
@@ -295,9 +307,79 @@ func (s *Server) ForwardProfiling(ctx context.Context, batch *edge.ProfilingBatc
 func (s *Server) Heartbeat(ctx context.Context, req *edge.EdgeHeartbeatRequest) (*edge.EdgeHeartbeatResponse, error) {
 	s.logger.Debugf("收到边缘心跳: edgeNode=%s, probes=%d",
 		req.GetEdgeNodeId(), req.GetProbeCount())
+
+	// P1: 更新 Edge 注册表
+	if s.registry != nil && req.GetEdgeNodeId() != "" {
+		s.registry.RegisterOrUpdate(&edgeregistry.EdgeNode{
+			ID:            req.GetEdgeNodeId(),
+			Address:       req.GetEdgeAddress(),
+			Region:        req.GetRegion(),
+			CloudPlatform: req.GetCloudPlatform(),
+			ProbeCount:    req.GetProbeCount(),
+			Version:       req.GetVersion(),
+		})
+	}
+
 	// H3 修复: 返回心跳间隔，允许 Center 动态控制 Edge 心跳频率
 	return &edge.EdgeHeartbeatResponse{
 		Success:           true,
 		HeartbeatInterval: 30, // 默认 30 秒，可从配置读取
+	}, nil
+}
+
+// GetEdgeStatus 获取 Edge 节点状态（P1: 基于 Edge 注册表实现）
+func (s *Server) GetEdgeStatus(ctx context.Context, req *edge.GetEdgeStatusRequest) (*edge.GetEdgeStatusResponse, error) {
+	if s.registry == nil {
+		return &edge.GetEdgeStatusResponse{
+			Success: false,
+			Message: "Edge 注册表未启用",
+		}, nil
+	}
+
+	// 查询单个 Edge
+	if req.GetEdgeNodeId() != "" {
+		node, ok := s.registry.Get(req.GetEdgeNodeId())
+		if !ok {
+			return &edge.GetEdgeStatusResponse{
+				Success: false,
+				Message: fmt.Sprintf("Edge 节点不存在: %s", req.GetEdgeNodeId()),
+			}, nil
+		}
+		return &edge.GetEdgeStatusResponse{
+			Success: true,
+			Total:   1,
+			Statuses: []*edge.EdgeStatus{
+				{
+					EdgeNodeId:    node.ID,
+					EdgeAddress:   node.Address,
+					CloudPlatform: node.CloudPlatform,
+					Region:        node.Region,
+					Version:       node.Version,
+					Status:        "online",
+					ProbeCount:    node.ProbeCount,
+				},
+			},
+		}, nil
+	}
+
+	// 查询所有健康 Edge
+	nodes := s.registry.ListHealthy()
+	statuses := make([]*edge.EdgeStatus, 0, len(nodes))
+	for _, node := range nodes {
+		statuses = append(statuses, &edge.EdgeStatus{
+			EdgeNodeId:    node.ID,
+			EdgeAddress:   node.Address,
+			CloudPlatform: node.CloudPlatform,
+			Region:        node.Region,
+			Version:       node.Version,
+			Status:        "online",
+			ProbeCount:    node.ProbeCount,
+		})
+	}
+
+	return &edge.GetEdgeStatusResponse{
+		Success:  true,
+		Total:    int32(len(statuses)),
+		Statuses: statuses,
 	}, nil
 }

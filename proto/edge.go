@@ -31,6 +31,8 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ============================================================================
@@ -1317,6 +1319,67 @@ func (m *DiscoverEdgesResponse) GetInstances() []*EdgeInstance    { return m.Ins
 func (m *DiscoverEdgesResponse) GetStrategy() string              { return m.Strategy }
 
 // ============================================================================
+// P2: gRPC Streaming 消息类型
+// ============================================================================
+
+// StreamDataType 流式数据类型枚举
+const (
+	StreamDataType_UNKNOWN    = "unknown"
+	StreamDataType_METRICS    = "metrics"
+	StreamDataType_TRACES     = "traces"
+	StreamDataType_LOGS       = "logs"
+	StreamDataType_PROFILING  = "profiling"
+	StreamDataType_HEARTBEAT  = "heartbeat"
+	StreamDataType_CONFIG     = "config"
+	StreamDataType_COMMAND    = "command"
+	StreamDataType_ACK        = "ack"
+)
+
+// StreamDataRequest 流式数据请求（Agent -> Edge 双向流）
+type StreamDataRequest struct {
+	ProbeId  string          `json:"probe_id,omitempty"`  // 探针ID
+	Type     string          `json:"type,omitempty"`      // 数据类型
+	SeqId    int64           `json:"seq_id,omitempty"`    // 序列号（用于排序和去重）
+	Payload  []byte          `json:"payload,omitempty"`   // 序列化后的数据负载（MetricsBatch/TraceBatch/LogBatch 等）
+	Metadata map[string]string `json:"metadata,omitempty"` // 元数据
+}
+
+func (m *StreamDataRequest) Reset()         { *m = StreamDataRequest{} }
+func (m *StreamDataRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *StreamDataRequest) ProtoMessage()  {}
+
+func (m *StreamDataRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *StreamDataRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+func (m *StreamDataRequest) GetProbeId() string               { return m.ProbeId }
+func (m *StreamDataRequest) GetType() string                  { return m.Type }
+func (m *StreamDataRequest) GetSeqId() int64                  { return m.SeqId }
+func (m *StreamDataRequest) GetPayload() []byte               { return m.Payload }
+func (m *StreamDataRequest) GetMetadata() map[string]string   { return m.Metadata }
+
+// StreamDataResponse 流式数据响应（Edge -> Agent 双向流）
+type StreamDataResponse struct {
+	Success  bool   `json:"success,omitempty"`   // 是否成功
+	Code     string `json:"code,omitempty"`      // 错误码
+	Message  string `json:"message,omitempty"`   // 消息
+	SeqId    int64  `json:"seq_id,omitempty"`    // 对应请求的序列号
+	Type     string `json:"type,omitempty"`      // 响应类型
+	Payload  []byte `json:"payload,omitempty"`   // 响应负载（配置更新、命令等）
+}
+
+func (m *StreamDataResponse) Reset()         { *m = StreamDataResponse{} }
+func (m *StreamDataResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *StreamDataResponse) ProtoMessage()  {}
+
+func (m *StreamDataResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *StreamDataResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+func (m *StreamDataResponse) GetSuccess() bool                 { return m.Success }
+func (m *StreamDataResponse) GetCode() string                  { return m.Code }
+func (m *StreamDataResponse) GetMessage() string               { return m.Message }
+func (m *StreamDataResponse) GetSeqId() int64                  { return m.SeqId }
+func (m *StreamDataResponse) GetType() string                  { return m.Type }
+func (m *StreamDataResponse) GetPayload() []byte               { return m.Payload }
+
+// ============================================================================
 // Edge自监控消息类型
 // ============================================================================
 
@@ -1615,6 +1678,22 @@ type ProbeServiceServer interface {
 	SendLogs(context.Context, *LogBatch) (*SendResponse, error)
 	GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error)
 	DiscoverEdges(context.Context, *DiscoverEdgesRequest) (*DiscoverEdgesResponse, error)
+	// P2: 双向流式数据通道（Agent <-> Edge）
+	StreamData(ProbeService_StreamDataServer) error
+}
+
+// ProbeService_StreamDataServer is the server-side API for StreamData streaming RPC.
+type ProbeService_StreamDataServer interface {
+	Send(*StreamDataResponse) error
+	Recv() (*StreamDataRequest, error)
+	grpc.ServerStream
+}
+
+// ProbeService_StreamDataClient is the client-side API for StreamData streaming RPC.
+type ProbeService_StreamDataClient interface {
+	Send(*StreamDataRequest) error
+	Recv() (*StreamDataResponse, error)
+	grpc.ClientStream
 }
 
 // UnimplementedProbeServiceServer can be embedded to have forward compatible implementations.
@@ -1644,6 +1723,9 @@ func (UnimplementedProbeServiceServer) GetConfig(context.Context, *GetConfigRequ
 func (UnimplementedProbeServiceServer) DiscoverEdges(context.Context, *DiscoverEdgesRequest) (*DiscoverEdgesResponse, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+func (UnimplementedProbeServiceServer) StreamData(s ProbeService_StreamDataServer) error {
+	return status.Errorf(codes.Unimplemented, "method StreamData not implemented")
+}
 
 // UnsafeProbeServiceServer may be embedded to opt out of forward compatibility for this service.
 type UnsafeProbeServiceServer interface {
@@ -1660,6 +1742,8 @@ type ProbeServiceClient interface {
 	SendLogs(ctx context.Context, in *LogBatch, opts ...grpc.CallOption) (*SendResponse, error)
 	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error)
 	DiscoverEdges(ctx context.Context, in *DiscoverEdgesRequest, opts ...grpc.CallOption) (*DiscoverEdgesResponse, error)
+	// P2: 双向流式数据通道
+	StreamData(ctx context.Context, opts ...grpc.CallOption) (ProbeService_StreamDataClient, error)
 }
 
 type probeServiceClient struct {
@@ -1743,6 +1827,31 @@ func (c *probeServiceClient) DiscoverEdges(ctx context.Context, in *DiscoverEdge
 	return out, nil
 }
 
+func (c *probeServiceClient) StreamData(ctx context.Context, opts ...grpc.CallOption) (ProbeService_StreamDataClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_ProbeService_serviceDesc.Streams[0], "/edge.ProbeService/StreamData", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &probeServiceStreamDataClient{stream}
+	return x, nil
+}
+
+type probeServiceStreamDataClient struct {
+	grpc.ClientStream
+}
+
+func (x *probeServiceStreamDataClient) Send(m *StreamDataRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *probeServiceStreamDataClient) Recv() (*StreamDataResponse, error) {
+	m := new(StreamDataResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // RegisterProbeServiceServer registers the ProbeService server.
 func RegisterProbeServiceServer(s *grpc.Server, srv ProbeServiceServer) {
 	s.RegisterService(&_ProbeService_serviceDesc, srv)
@@ -1760,6 +1869,13 @@ var _ProbeService_serviceDesc = grpc.ServiceDesc{
 		{MethodName: "SendLogs", Handler: _ProbeService_SendLogs_Handler},
 		{MethodName: "GetConfig", Handler: _ProbeService_GetConfig_Handler},
 		{MethodName: "DiscoverEdges", Handler: _ProbeService_DiscoverEdges_Handler},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamData",
+			ServerStreams:  true,
+			ClientStreams:  true,
+		},
 	},
 	Metadata: "edge.proto",
 }
@@ -1906,6 +2022,27 @@ func _ProbeService_DiscoverEdges_Handler(srv interface{}, ctx context.Context, d
 		return srv.(ProbeServiceServer).DiscoverEdges(ctx, req.(*DiscoverEdgesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
+}
+
+// P2: StreamData 双向流 handler
+func _ProbeService_StreamData_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ProbeServiceServer).StreamData(&probeServiceStreamDataServer{stream})
+}
+
+type probeServiceStreamDataServer struct {
+	grpc.ServerStream
+}
+
+func (x *probeServiceStreamDataServer) Send(m *StreamDataResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *probeServiceStreamDataServer) Recv() (*StreamDataRequest, error) {
+	m := new(StreamDataRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // ============================================================================
@@ -2272,6 +2409,10 @@ var (
 	_ proto.Message = (*EdgeInstance)(nil)
 	_ proto.Message = (*DiscoverEdgesRequest)(nil)
 	_ proto.Message = (*DiscoverEdgesResponse)(nil)
+
+	// P2: Streaming 类型
+	_ proto.Message = (*StreamDataRequest)(nil)
+	_ proto.Message = (*StreamDataResponse)(nil)
 
 	// Edge自监控类型
 	_ proto.Message = (*ReportEdgeMetricsRequest)(nil)

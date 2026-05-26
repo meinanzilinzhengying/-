@@ -201,6 +201,8 @@ func main() {
 	srv.SetIPLimiter(ipLimiter)
 	srv.SetGoPool(goPool)
 	srv.SetBreaker(breakerMgr)
+	// P1: 注入 Center 客户端，用于 DiscoverEdges 查询 Edge 注册表
+	srv.SetCenterClient(client)
 	grpcServer := grpc.NewServer(serverOpts...)
 	edge.RegisterProbeServiceServer(grpcServer, srv)
 

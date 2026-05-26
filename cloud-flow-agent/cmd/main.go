@@ -317,12 +317,14 @@ func main() {
 	sessionID := resp.GetSessionId()
 	if assignedEdgeID != "" {
 		log.Infof("归属 Edge: %s, Session: %s", assignedEdgeID, sessionID)
-		// 持久化归属关系到本地文件
-		saveAssignedEdge(cfg.ProbeID, assignedEdgeID, sessionID)
+		// 持久化归属关系到本地文件（包含 Edge 地址，用于重连优先连接）
+		saveAssignedEdge(cfg.ProbeID, assignedEdgeID, sessionID, cfg.EdgeAddr)
 	} else {
 		// 尝试从本地文件恢复归属关系
-		assignedEdgeID, sessionID = loadAssignedEdge(cfg.ProbeID)
-		if assignedEdgeID != "" {
+		info := loadAssignedEdge(cfg.ProbeID)
+		if info != nil && info.EdgeID != "" {
+			assignedEdgeID = info.EdgeID
+			sessionID = info.SessionID
 			log.Infof("从本地恢复归属 Edge: %s, Session: %s", assignedEdgeID, sessionID)
 		}
 	}
@@ -573,6 +575,7 @@ func main() {
 						}
 
 						// 重新连接 Edge 节点
+					// P1 修复: 优先连接原归属 Edge，失败后回退到默认配置地址
 					// M3 修复: 添加最大重试次数，超过后降级为本地缓存模式
 					// L1 修复: 使用配置的重连参数
 					var newClient *grpcclient.Client
@@ -585,19 +588,37 @@ func main() {
 						maxReconnectAttempts = 10
 					}
 					reconnectSuccess := false
+
+					// 构建候选地址列表：优先使用已保存的归属 Edge 地址
+					candidateAddrs := []string{cfg.EdgeAddr}
+					savedInfo := loadAssignedEdge(cfg.ProbeID)
+					if savedInfo != nil && savedInfo.Addr != "" && savedInfo.Addr != cfg.EdgeAddr {
+						candidateAddrs = []string{savedInfo.Addr, cfg.EdgeAddr}
+						log.Infof("重连优先使用归属 Edge: %s (备选: %s)", savedInfo.Addr, cfg.EdgeAddr)
+					}
+
 					for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
-						newClient, err = grpcclient.NewClient(cfg.EdgeAddr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
-							Enabled:    cfg.TLS.Enabled,
-							ServerName: cfg.TLS.ServerName,
-							CACert:     cfg.TLS.CACert,
-							ClientCert: cfg.TLS.ClientCert,
-							ClientKey:  cfg.TLS.ClientKey,
-						}, log)
-						if err == nil {
-							reconnectSuccess = true
+						// 轮询候选地址（第一轮优先归属 Edge，后续轮次也优先）
+						for _, addr := range candidateAddrs {
+							newClient, err = grpcclient.NewClient(addr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
+								Enabled:    cfg.TLS.Enabled,
+								ServerName: cfg.TLS.ServerName,
+								CACert:     cfg.TLS.CACert,
+								ClientCert: cfg.TLS.ClientCert,
+								ClientKey:  cfg.TLS.ClientKey,
+							}, log)
+							if err == nil {
+								reconnectSuccess = true
+								if addr != cfg.EdgeAddr {
+									log.Infof("通过归属 Edge 地址重连成功: %s", addr)
+								}
+								break
+							}
+							log.Warnf("重连 Edge %s 失败 (第 %d/%d 次): %v", addr, attempt, maxReconnectAttempts, err)
+						}
+						if reconnectSuccess {
 							break
 						}
-						log.Warnf("重连 Edge 节点失败 (第 %d/%d 次): %v，%s 后重试...", attempt, maxReconnectAttempts, err, connectDelay)
 						select {
 						case <-stopCh:
 							return
@@ -656,6 +677,10 @@ func main() {
 						heartbeatInterval = time.Duration(newResp.GetHeartbeatInterval()) * time.Second
 						ticker.Reset(heartbeatInterval)
 						failureCount = 0
+						// 更新本地归属 Edge 信息
+						if newResp.GetAssignedEdgeId() != "" {
+							saveAssignedEdge(cfg.ProbeID, newResp.GetAssignedEdgeId(), newResp.GetSessionId(), candidateAddrs[0])
+						}
 						log.Infof("重连成功: %s, 心跳间隔=%ds", newResp.GetMessage(), newResp.GetHeartbeatInterval())
 					}
 				} else {
@@ -923,26 +948,44 @@ func main() {
 	log.Info("探针已安全退出")
 }
 
+// assignedEdgeInfo 归属 Edge 完整信息（分布式边缘自治）
+type assignedEdgeInfo struct {
+	EdgeID   string
+	Addr     string
+	SessionID string
+}
+
 // saveAssignedEdge 持久化归属 Edge 到本地文件（分布式边缘自治）
-func saveAssignedEdge(probeID, edgeID, sessionID string) {
+func saveAssignedEdge(probeID, edgeID, sessionID, addr string) {
 	dir := filepath.Join(os.TempDir(), "cloud-flow-edge")
 	os.MkdirAll(dir, 0755)
-	data := fmt.Sprintf("%s\t%s\t%s\t%d", probeID, edgeID, sessionID, time.Now().Unix())
+	data := fmt.Sprintf("%s\t%s\t%s\t%s\t%d", probeID, edgeID, sessionID, addr, time.Now().Unix())
 	os.WriteFile(filepath.Join(dir, probeID+".edge"), []byte(data), 0600)
 }
 
 // loadAssignedEdge 从本地文件恢复归属 Edge（分布式边缘自治）
-func loadAssignedEdge(probeID string) (edgeID, sessionID string) {
+func loadAssignedEdge(probeID string) *assignedEdgeInfo {
 	path := filepath.Join(os.TempDir(), "cloud-flow-edge", probeID+".edge")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", ""
+		return nil
 	}
 	parts := strings.Split(string(data), "\t")
-	if len(parts) >= 3 {
-		return parts[1], parts[2]
+	if len(parts) >= 5 {
+		return &assignedEdgeInfo{
+			EdgeID:   parts[1],
+			SessionID: parts[2],
+			Addr:     parts[3],
+		}
 	}
-	return "", ""
+	// 兼容旧格式（4个字段，无 addr）
+	if len(parts) >= 3 {
+		return &assignedEdgeInfo{
+			EdgeID:   parts[1],
+			SessionID: parts[2],
+		}
+	}
+	return nil
 }
 
 func getLocalIP() string {

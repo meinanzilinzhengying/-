@@ -371,12 +371,14 @@ func (c *Client) ForwardProfiling(batch *edge.ProfilingBatch) error {
 
 // SendHeartbeat 发送边缘节点心跳到中心服务
 // H3 修复: 返回 Center 下发的心跳间隔，允许动态调整
+// P1 修复: 携带 Edge 地址，供 Center 维护 Edge 注册表
 func (c *Client) SendHeartbeat(edgeNodeID, platform, region string, probeCount int32) (heartbeatInterval int32, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
 	req := &edge.EdgeHeartbeatRequest{
 		EdgeNodeId:    edgeNodeID,
+		EdgeAddress:   c.addr, // P1: 携带 Edge 自身地址，供 Center 注册
 		CloudPlatform: platform,
 		Region:        region,
 		Timestamp:     time.Now().Unix(),
@@ -395,4 +397,13 @@ func (c *Client) SendHeartbeat(edgeNodeID, platform, region string, probeCount i
 		return resp.HeartbeatInterval, nil
 	}
 	return 30, nil
+}
+
+// GetEdgeStatus 查询 Edge 节点状态列表（P1: Center Edge 注册表）
+func (c *Client) GetEdgeStatus(edgeNodeID string) (*edge.GetEdgeStatusResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	req := &edge.GetEdgeStatusRequest{EdgeNodeId: edgeNodeID}
+	return c.client.GetEdgeStatus(grpcutil.WithAuth(ctx, c.apiKey), req)
 }

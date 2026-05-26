@@ -7,6 +7,13 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	leaderKeyPrefix = "cloudflow:leader:"
+	leaderLockKey   = "cloudflow:leader:lock"
 )
 
 // State Leader 状态
@@ -113,49 +120,171 @@ func (n *NoopElection) notifyCallbacks(leaderID string) {
 	}
 }
 
-// RedisElection 基于 Redis 的 Leader 选举（预留实现）
+// RedisElection 基于 Redis SETNX + TTL 的 Leader 选举
 type RedisElection struct {
 	mu        sync.RWMutex
+	client    *redis.Client
 	nodeID    string
+	electionKey string
 	leaderID  string
 	state     State
 	ttl       time.Duration
+	renewalInterval time.Duration
 	callbacks []func(string)
 	stopCh    chan struct{}
 	stopped   bool
 }
 
 // NewRedisElection 创建基于 Redis 的选举
-// TODO: 实现基于 Redis SETNX + TTL 的 Leader 选举
-func NewRedisElection(nodeID string, ttl time.Duration) *RedisElection {
+func NewRedisElection(client *redis.Client, nodeID string, ttl time.Duration) *RedisElection {
+	if ttl <= 0 {
+		ttl = 10 * time.Second
+	}
 	return &RedisElection{
-		nodeID:   nodeID,
-		ttl:      ttl,
-		stopCh:   make(chan struct{}),
+		client:    client,
+		nodeID:    nodeID,
+		electionKey: leaderKeyPrefix + "default",
+		ttl:       ttl,
+		renewalInterval: ttl / 3,
+		stopCh:    make(chan struct{}),
 		callbacks: make([]func(string), 0),
 	}
 }
 
+// Campaign 发起选举
 func (r *RedisElection) Campaign(ctx context.Context) error {
 	r.mu.Lock()
 	r.state = StateCandidate
 	r.mu.Unlock()
 
-	// TODO: 实现 Redis SETNX 竞选
 	// 1. SET leader_key {nodeID} NX EX {ttl}
-	// 2. 如果成功，成为 Leader
-	// 3. 如果失败，获取当前 Leader ID
-	// 4. 启动续约协程
+	ok, err := r.client.SetNX(ctx, r.electionKey, r.nodeID, r.ttl).Result()
+	if err != nil {
+		r.mu.Lock()
+		r.state = StateFollower
+		r.mu.Unlock()
+		return fmt.Errorf("Redis SETNX 失败: %w", err)
+	}
 
-	return fmt.Errorf("RedisElection.Campaign 尚未实现")
+	if ok {
+		// 竞选成功，成为 Leader
+		r.mu.Lock()
+		r.state = StateLeader
+		r.leaderID = r.nodeID
+		r.mu.Unlock()
+		r.notifyCallbacks(r.nodeID)
+
+		// 启动续约协程
+		go r.renewLeadership(ctx)
+		return nil
+	}
+
+	// 竞选失败，获取当前 Leader
+	currentLeader, err := r.client.Get(ctx, r.electionKey).Result()
+	if err == nil && currentLeader != "" {
+		r.mu.Lock()
+		r.leaderID = currentLeader
+		r.state = StateFollower
+		r.mu.Unlock()
+		r.notifyCallbacks(currentLeader)
+	}
+
+	// 启动监听协程，等待 Leader 变更
+	go r.watchLeaderChange(ctx)
+	return nil
 }
 
+// renewLeadership 续约 Leader 身份
+func (r *RedisElection) renewLeadership(ctx context.Context) {
+	ticker := time.NewTicker(r.renewalInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			ok, err := r.client.SetNX(ctx, r.electionKey, r.nodeID, r.ttl).Result()
+			if err != nil || !ok {
+				// 续约失败，不再是 Leader
+				r.mu.Lock()
+				r.state = StateFollower
+				r.leaderID = ""
+				r.mu.Unlock()
+				r.notifyCallbacks("")
+				return
+			}
+		case <-r.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// watchLeaderChange 监听 Leader 变更（Follower 模式）
+func (r *RedisElection) watchLeaderChange(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			currentLeader, err := r.client.Get(ctx, r.electionKey).Result()
+			if err != nil {
+				continue // Redis 暂时不可用
+			}
+
+			r.mu.Lock()
+			oldLeader := r.leaderID
+			r.leaderID = currentLeader
+			r.mu.Unlock()
+
+			if currentLeader != oldLeader {
+				r.notifyCallbacks(currentLeader)
+			}
+
+			// 如果 Leader 已过期，尝试竞选
+			if currentLeader == "" {
+				r.mu.Lock()
+				r.state = StateCandidate
+				r.mu.Unlock()
+				_ = r.Campaign(ctx)
+				return
+			}
+		case <-r.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// Resign 辞去 Leader
 func (r *RedisElection) Resign(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	if r.state != StateLeader {
+		r.mu.Unlock()
+		return nil
+	}
+	r.mu.Unlock()
+
+	// 只有当前 Leader 才能删除 key
+	script := redis.NewScript(`
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("DEL", KEYS[1])
+		else
+			return 0
+		end
+	`)
+	_, err := script.Run(ctx, r.client, []string{r.electionKey}, r.nodeID).Result()
+	if err != nil {
+		return fmt.Errorf("辞去 Leader 失败: %w", err)
+	}
+
+	r.mu.Lock()
 	r.state = StateFollower
 	r.leaderID = ""
-	// TODO: DEL leader_key
+	r.mu.Unlock()
+	r.notifyCallbacks("")
 	return nil
 }
 
@@ -191,4 +320,10 @@ func (r *RedisElection) Close() error {
 		close(r.stopCh)
 	}
 	return nil
+}
+
+func (r *RedisElection) notifyCallbacks(leaderID string) {
+	for _, cb := range r.callbacks {
+		go cb(leaderID)
+	}
 }

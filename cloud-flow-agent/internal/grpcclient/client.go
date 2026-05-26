@@ -410,3 +410,12 @@ func (c *Client) GetState() connectivity.State {
 	}
 	return connectivity.TransientFailure
 }
+
+// StreamData P2: 建立双向流式数据通道
+// 复用单个 TCP 连接传输多种数据类型，减少连接开销
+func (c *Client) StreamData(ctx context.Context) (edge.ProbeService_StreamDataClient, error) {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+	return client.StreamData(grpcutil.WithAuth(ctx, c.apiKey))
+}

@@ -13,6 +13,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -71,6 +72,13 @@ type Server struct {
 	region       string              // 区域
 	zone         string              // 可用区
 	cluster      string              // 集群
+	// P1: Center 客户端引用，用于 DiscoverEdges 查询 Edge 注册表
+	centerClient CenterEdgeDiscoverer
+}
+
+// CenterEdgeDiscoverer Center Edge 发现接口（P1: 解耦 Edge Server 与 Center Client）
+type CenterEdgeDiscoverer interface {
+	GetEdgeStatus(edgeNodeID string) (*edge.GetEdgeStatusResponse, error)
 }
 
 // NewServer 创建 gRPC 服务端实例
@@ -96,6 +104,11 @@ func (s *Server) SetEdgeConfig(edgeID, region, zone, cluster string) {
 // SetSessionStore 设置会话存储
 func (s *Server) SetSessionStore(store session.Store) {
 	s.sessionStore = store
+}
+
+// SetCenterClient 设置 Center 客户端（P1: 用于 DiscoverEdges）
+func (s *Server) SetCenterClient(client CenterEdgeDiscoverer) {
+	s.centerClient = client
 }
 
 // GetSessionStore 获取会话存储
@@ -668,6 +681,197 @@ func (s *Server) SendProfiling(ctx context.Context, batch *edge.ProfilingBatch) 
 	}
 	s.forwarder.AddProfiling(batch)
 	return &edge.SendResponse{Success: true, Accepted: int32(len(batch.GetProfiles()))}, nil
+}
+
+// DiscoverEdges 发现可用 Edge 节点（P1: Center Edge 注册表）
+// Agent 通过此 RPC 发现同区域的其他 Edge 节点，用于故障转移
+func (s *Server) DiscoverEdges(ctx context.Context, req *edge.DiscoverEdgesRequest) (*edge.DiscoverEdgesResponse, error) {
+	if !grpcutil.CheckAPIKey(ctx, s.apiKey) {
+		s.logger.Warnf("DiscoverEdges 被拒绝: API Key 验证失败, probeID=%s", req.GetProbeId())
+		return &edge.DiscoverEdgesResponse{Success: false, Code: "auth_failed", Message: "API Key 验证失败"}, nil
+	}
+
+	// 如果没有 Center 客户端，返回仅包含自身的列表
+	if s.centerClient == nil {
+		s.logger.Warnf("DiscoverEdges: Center 客户端未配置，仅返回当前 Edge")
+		return &edge.DiscoverEdgesResponse{
+			Success: true,
+			Instances: []*edge.EdgeInstance{
+				{
+					Id:      s.edgeID,
+					Address: s.getEdgeAddr(),
+					Healthy: true,
+					Region:  s.region,
+					Zone:    s.zone,
+					Weight:  100,
+				},
+			},
+			Strategy: "single",
+		}, nil
+	}
+
+	// 从 Center 查询 Edge 列表
+	resp, err := s.centerClient.GetEdgeStatus("")
+	if err != nil {
+		s.logger.Warnf("DiscoverEdges: 查询 Center 失败: %v，返回仅包含自身的列表", err)
+		return &edge.DiscoverEdgesResponse{
+			Success: true,
+			Instances: []*edge.EdgeInstance{
+				{
+					Id:      s.edgeID,
+					Address: s.getEdgeAddr(),
+					Healthy: true,
+					Region:  s.region,
+					Zone:    s.zone,
+					Weight:  100,
+				},
+			},
+			Strategy: "fallback",
+		}, nil
+	}
+
+	// 转换 Center 返回的 EdgeStatus 为 EdgeInstance
+	instances := make([]*edge.EdgeInstance, 0, len(resp.GetStatuses()))
+	for _, status := range resp.GetStatuses() {
+		// 按区域过滤
+		if req.GetRegion() != "" && status.GetRegion() != "" && status.GetRegion() != req.GetRegion() {
+			continue
+		}
+		instances = append(instances, &edge.EdgeInstance{
+			Id:              status.GetEdgeNodeId(),
+			Address:         status.GetEdgeAddress(),
+			Healthy:         status.GetStatus() == "online",
+			Region:          status.GetRegion(),
+			ConnectionCount: int64(status.GetProbeCount()),
+			Version:         status.GetVersion(),
+			Weight:          100,
+		})
+	}
+
+	// 确保自身在列表中
+	found := false
+	for _, inst := range instances {
+		if inst.Id == s.edgeID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		instances = append(instances, &edge.EdgeInstance{
+			Id:      s.edgeID,
+			Address: s.getEdgeAddr(),
+			Healthy: true,
+			Region:  s.region,
+			Zone:    s.zone,
+			Weight:  100,
+		})
+	}
+
+	strategy := "round-robin"
+	if len(instances) <= 1 {
+		strategy = "single"
+	}
+
+	s.logger.Infof("DiscoverEdges: 返回 %d 个 Edge 实例 (probeID=%s, region=%s, strategy=%s)",
+		len(instances), req.GetProbeId(), req.GetRegion(), strategy)
+
+	return &edge.DiscoverEdgesResponse{
+		Success:   true,
+		Instances: instances,
+		Strategy:  strategy,
+	}, nil
+}
+
+// getEdgeAddr 获取当前 Edge 的外部地址
+func (s *Server) getEdgeAddr() string {
+	// 优先从配置获取，此处返回空字符串由调用方填充
+	return ""
+}
+
+// StreamData P2: 双向流式数据通道（Agent <-> Edge）
+// 复用单个 TCP 连接传输多种数据类型（metrics/traces/logs/heartbeat），减少连接开销
+func (s *Server) StreamData(stream edge.ProbeService_StreamDataServer) error {
+	// 从第一个消息中提取 probeID 进行认证
+	firstMsg, err := stream.Recv()
+	if err != nil {
+		return fmt.Errorf("接收首条消息失败: %w", err)
+	}
+
+	probeID := firstMsg.GetProbeId()
+	if probeID == "" {
+		return fmt.Errorf("首条消息缺少 probe_id")
+	}
+
+	s.logger.Infof("[StreamData] Agent 建立流式连接: probeID=%s", probeID)
+
+	// 处理第一条消息
+	s.handleStreamMessage(firstMsg, stream)
+
+	// 持续接收消息
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			s.logger.Infof("[StreamData] Agent 流式连接断开: probeID=%s, err=%v", probeID, err)
+			return nil // 流正常关闭
+		}
+		s.handleStreamMessage(msg, stream)
+	}
+}
+
+// handleStreamMessage 处理流式消息
+func (s *Server) handleStreamMessage(msg *edge.StreamDataRequest, stream edge.ProbeService_StreamDataServer) {
+	switch msg.GetType() {
+	case edge.StreamDataType_METRICS:
+		// 反序列化 MetricsBatch
+		var batch edge.MetricsBatch
+		if err := json.Unmarshal(msg.GetPayload(), &batch); err != nil {
+			s.logger.Warnf("[StreamData] 反序列化 MetricsBatch 失败: %v", err)
+			_ = stream.Send(&edge.StreamDataResponse{
+				Success: false, Code: "decode_error", Message: err.Error(),
+				SeqId: msg.GetSeqId(), Type: edge.StreamDataType_ACK,
+			})
+			return
+		}
+		batch.ProbeId = msg.GetProbeId()
+		s.forwarder.AddMetrics(&batch)
+		_ = stream.Send(&edge.StreamDataResponse{
+			Success: true, SeqId: msg.GetSeqId(), Type: edge.StreamDataType_ACK,
+			Message: fmt.Sprintf("accepted %d metrics", len(batch.GetMetrics())),
+		})
+
+	case edge.StreamDataType_TRACES:
+		var batch edge.TraceBatch
+		if err := json.Unmarshal(msg.GetPayload(), &batch); err != nil {
+			s.logger.Warnf("[StreamData] 反序列化 TraceBatch 失败: %v", err)
+			_ = stream.Send(&edge.StreamDataResponse{
+				Success: false, Code: "decode_error", Message: err.Error(),
+				SeqId: msg.GetSeqId(), Type: edge.StreamDataType_ACK,
+			})
+			return
+		}
+		batch.ProbeId = msg.GetProbeId()
+		s.forwarder.AddTraces(&batch)
+		_ = stream.Send(&edge.StreamDataResponse{
+			Success: true, SeqId: msg.GetSeqId(), Type: edge.StreamDataType_ACK,
+			Message: fmt.Sprintf("accepted %d traces", len(batch.GetSpans())),
+		})
+
+	case edge.StreamDataType_HEARTBEAT:
+		// 流式心跳：更新 ProbeManager
+		s.manager.Heartbeat(msg.GetProbeId())
+		_ = s.sessionStore.UpdateHeartbeat(msg.GetProbeId())
+		_ = stream.Send(&edge.StreamDataResponse{
+			Success: true, SeqId: msg.GetSeqId(), Type: edge.StreamDataType_ACK,
+		})
+
+	default:
+		s.logger.Warnf("[StreamData] 未知消息类型: %s, probeID=%s", msg.GetType(), msg.GetProbeId())
+		_ = stream.Send(&edge.StreamDataResponse{
+			Success: false, Code: "unknown_type",
+			Message: fmt.Sprintf("unknown message type: %s", msg.GetType()),
+			SeqId: msg.GetSeqId(), Type: edge.StreamDataType_ACK,
+		})
+	}
 }
 
 // GetResourceStats 获取服务资源统计（用于监控）

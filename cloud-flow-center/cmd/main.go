@@ -222,12 +222,14 @@ func main() {
 }
 
 // getDB 从存储引擎中提取 *sql.DB，用于告警历史持久化
+// L2 修复: 使用接口方法而非类型断言，支持多种存储引擎
 func getDB(store storage.StorageEngine) *sql.DB {
 	if store == nil {
 		return nil
 	}
-	if tidbStore, ok := store.(*storage.TiDBStorage); ok {
-		return tidbStore.GetDB()
+	// 使用接口方法获取底层 DB，支持 TiDB 和其他未来可能的数据库实现
+	if db, ok := store.DB().(*sql.DB); ok {
+		return db
 	}
 	return nil
 }

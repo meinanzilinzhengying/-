@@ -313,7 +313,14 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
-    privileged: true
+    # L4 修复: 使用精确的 cap_add 替代 privileged: true
+    cap_add:
+      - SYS_ADMIN    # cAdvisor 需要访问 /proc 和 /sys 下的容器指标
+      - SYS_PTRACE   # 读取进程信息
+      - SYS_RESOURCE # 访问资源限制信息
+      - NET_ADMIN    # 网络统计信息
+    security_opt:
+      - no-new-privileges:true  # 防止容器内提权
     devices:
       - /dev/kmsg
     healthcheck:

@@ -368,20 +368,16 @@ func BuildServerOpts(
 	goPoolInterceptor := GoPoolInterceptor(goPool, log)
 	breakerInterceptor := CircuitBreakerInterceptor(breakerMgr, log)
 
-	combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// C4 修复: 使用闭包变量捕获 panic 错误，确保 recover 后返回错误
-		var panicErr error
+	combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		// C4 修复: 使用命名返回值，让 defer 能修改返回值
+		// 原修复错误: if panicErr != nil 检查在 defer 注册后立即执行，此时 panicErr 必然为 nil（死代码）
+		// 正确方式: 使用命名返回值 (resp, err)，defer 中直接修改 err
 		defer func() {
 			if r := recover(); r != nil {
 				log.Errorf("gRPC 处理 panic: %v, method=%s", r, info.FullMethod)
-				panicErr = status.Errorf(codes.Internal, "internal server error")
+				err = status.Errorf(codes.Internal, "internal server error")
 			}
 		}()
-
-		// C4 修复: panic 发生后立即返回错误
-		if panicErr != nil {
-			return nil, panicErr
-		}
 
 		// 1. 全局限流
 		if rateLimit.Enabled && !rateLimiter.Allow() {
@@ -389,7 +385,7 @@ func BuildServerOpts(
 		}
 
 		// 2. 连接池检查
-		ctx, resp, err := func() (context.Context, interface{}, error) {
+		ctx, resp, err = func() (context.Context, interface{}, error) {
 			return connPoolInterceptor(ctx, req, info, handler)
 		}()
 		if err != nil {

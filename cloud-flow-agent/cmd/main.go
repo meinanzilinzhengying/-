@@ -696,12 +696,28 @@ func main() {
 							if err != nil {
 								log.Errorf("发送指标数据失败: %v", err)
 								metricCollector.SendFinished(sendStart, 0, err)
+								// C3 修复: 优先写入本地缓存
 								if tsStore != nil {
 									if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
 										log.Warnf("写入本地缓存失败: %v", cacheErr)
+										// 缓存失败，记录数据丢失
+										metricCollector.RecordDataDropped(len(buf), "cache_failed")
+										log.Errorf("[数据丢失] 本地缓存写入失败，丢弃 %d 条指标数据", len(buf))
+									} else {
+										log.Infof("[数据保护] 已将 %d 条指标数据写入本地缓存", len(buf))
 									}
+								} else {
+									// 无本地缓存，记录数据丢失
+									metricCollector.RecordDataDropped(len(buf), "no_cache")
+									log.Errorf("[数据丢失] 无本地缓存，丢弃 %d 条指标数据", len(buf))
 								}
+								// C3 修复: 缓冲区溢出时记录日志和 metrics
 								if len(buf) > cfg.BatchSize*2 {
+									droppedCount := len(buf) - cfg.BatchSize
+									metricCollector.RecordBufOverflow()
+									metricCollector.RecordDataDropped(droppedCount, "buffer_overflow")
+									log.Warnf("[缓冲区溢出] buf 大小 %d 超过阈值 %d，丢弃最旧的 %d 条数据",
+										len(buf), cfg.BatchSize*2, droppedCount)
 									buf = buf[len(buf)-cfg.BatchSize:]
 								}
 							} else {
@@ -709,12 +725,18 @@ func main() {
 								buf = nil
 							}
 						} else {
+							// C3 修复: 网卡不可用时优先写入本地缓存
 							if tsStore != nil {
 								if cacheErr := cacheMetrics(tsStore, buf); cacheErr != nil {
 									log.Warnf("写入本地缓存失败: %v", cacheErr)
+									metricCollector.RecordDataDropped(len(buf), "cache_failed")
+									log.Errorf("[数据丢失] 网卡不可用且本地缓存写入失败，丢弃 %d 条指标数据", len(buf))
+								} else {
+									log.Infof("[数据保护] 网卡不可用，已将 %d 条指标数据写入本地缓存", len(buf))
 								}
 							} else {
-								log.Warn("网卡不可用且本地缓存未启用，指标数据将被丢弃")
+								metricCollector.RecordDataDropped(len(buf), "network_unavailable")
+								log.Errorf("[数据丢失] 网卡不可用且本地缓存未启用，丢弃 %d 条指标数据", len(buf))
 							}
 							buf = nil
 						}

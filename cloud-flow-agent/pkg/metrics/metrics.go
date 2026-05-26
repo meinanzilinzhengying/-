@@ -30,6 +30,10 @@ type Metrics struct {
 	ebpfCollectCount    prometheus.Counter
 	ebpfCollectErrors   prometheus.Counter
 
+	// 数据丢弃指标 (C3 修复)
+	dataDroppedCount    prometheus.Counter
+	bufOverflowCount    prometheus.Counter
+
 	// 注册中心
 	registry            *prometheus.Registry
 }
@@ -93,6 +97,16 @@ func New() *Metrics {
 			Help: "Total number of EBPF collection errors",
 		}),
 
+		// 数据丢弃指标 (C3 修复)
+		dataDroppedCount: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "cloud_flow_agent_data_dropped_total",
+			Help: "Total number of data points dropped due to buffer overflow or send failure",
+		}),
+		bufOverflowCount: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "cloud_flow_agent_buf_overflow_total",
+			Help: "Total number of buffer overflow events",
+		}),
+
 		registry: registry,
 	}
 
@@ -109,6 +123,8 @@ func New() *Metrics {
 		m.heartbeatErrors,
 		m.ebpfCollectCount,
 		m.ebpfCollectErrors,
+		m.dataDroppedCount,
+		m.bufOverflowCount,
 	)
 
 	// 注册标准指标
@@ -187,6 +203,18 @@ func (m *Metrics) GetSendCount() prometheus.Counter {
 // GetSendErrors 获取发送错误计数器（用于自监控）
 func (m *Metrics) GetSendErrors() prometheus.Counter {
 	return m.sendErrors
+}
+
+// RecordDataDropped 记录数据丢弃 (C3 修复)
+// count: 丢弃的数据点数量
+// reason: 丢弃原因 (buffer_overflow, cache_failed, network_unavailable)
+func (m *Metrics) RecordDataDropped(count int, reason string) {
+	m.dataDroppedCount.Add(float64(count))
+}
+
+// RecordBufOverflow 记录缓冲区溢出事件 (C3 修复)
+func (m *Metrics) RecordBufOverflow() {
+	m.bufOverflowCount.Inc()
 }
 
 // StartServer 启动 Prometheus 指标服务器

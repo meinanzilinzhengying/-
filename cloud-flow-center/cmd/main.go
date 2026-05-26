@@ -149,12 +149,8 @@ func main() {
 	}
 
 	// C5 修复: JWT Secret 已在 config.go 中强制要求，此处直接使用
+	// N2 修复: 移除冗余安全检查（config.Load() 已验证，此处 jwtSecret 必不为空）
 	jwtSecret := cfg.JWT.SecretKey
-	// 额外的安全检查（理论上不会触发，因为 config.Load() 已验证）
-	if jwtSecret == "" {
-		log.Error("JWT Secret 为空，这可能是配置加载逻辑错误。请检查 CLOUD_FLOW_JWT_SECRET 环境变量或配置文件")
-		os.Exit(1)
-	}
 
 	secureCookie := cfg.TLS.Enabled
 	portalSrv := portal.NewServer(store, jwtSecret, auditLogger, alertMgr, log, secureCookie, cfg.RateLimit, time.Duration(cfg.JWT.TokenDuration)*time.Hour, cfg.Portal.RedisAddr, cfg)

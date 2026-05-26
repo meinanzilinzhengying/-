@@ -48,16 +48,10 @@ const (
 )
 
 // NewJWTManager 创建JWT管理器
+// N2 修复: 移除死代码（config.Load() 已强制要求 JWT Secret，此处 secretKey 必不为空）
 func NewJWTManager(secretKey string) *JWTManager {
 	if secretKey == "" {
-		// 未配置固定密钥时自动生成随机密钥
-		generatedKey, err := GenerateRandomString(32)
-		if err != nil {
-			log.Fatalf("生成随机 JWT 密钥失败: %v", err)
-		}
-		secretKey = generatedKey
-		log.Printf("[WARNING] JWT secret_key 未配置，已自动生成随机密钥。服务重启后所有已签发的 token 将失效，" +
-			"所有用户需要重新登录。建议通过环境变量 CLOUD_FLOW_JWT_SECRET 或配置文件 center.jwt.secret_key 设置固定密钥。")
+		log.Fatalf("JWT Secret 为空，这不应发生。请检查 CLOUD_FLOW_JWT_SECRET 环境变量或配置文件 center.jwt.secret_key")
 	}
 	return &JWTManager{
 		secretKey: secretKey,

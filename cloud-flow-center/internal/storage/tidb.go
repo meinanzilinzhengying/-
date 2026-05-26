@@ -43,8 +43,22 @@ type TiDBStorage struct {
 	cacheInvalidationTime map[string]time.Time
 	stopped       sync.Once
 
+	// H6 修复: 缓存大小限制和统计
+	maxNodesCacheSize   int           // nodesCache 最大条目数
+	cacheStats          CacheStats    // 缓存统计信息
+
 	// 批量写入引擎
 	batchEngine *BatchWriteEngine
+}
+
+// CacheStats 缓存统计信息
+type CacheStats struct {
+	NodesCacheSize    int           // 当前 nodes 缓存条目数
+	NodesCacheBytes   int64         // 当前 nodes 缓存占用字节数（估算）
+	OverviewCacheSize int           // 当前 overview 缓存条目数
+	CacheHits         uint64        // 缓存命中次数
+	CacheMisses       uint64        // 缓存未命中次数
+	LastUpdated       time.Time     // 最后更新时间
 }
 
 // NewTiDB 创建TiDB存储引擎实例
@@ -110,6 +124,9 @@ func NewTiDB(dsn string, retDays int, log *logger.Logger) (*TiDBStorage, error) 
 		overviewCacheExpiry: time.Now().Add(1 * time.Minute),
 		nodesCacheExpiry:    time.Now().Add(1 * time.Minute),
 		cacheInvalidationTime: make(map[string]time.Time),
+		// H6 修复: 初始化缓存大小限制（默认 10000 条，约 10-50MB）
+		maxNodesCacheSize:   10000,
+		cacheStats:          CacheStats{LastUpdated: time.Now()},
 		batchEngine:          batchEngine,
 	}, nil
 }
@@ -1527,6 +1544,7 @@ func (s *TiDBStorage) GetOverview() (map[string]interface{}, error) {
 }
 
 // GetNodes 获取探针列表
+// H6 修复: 添加缓存大小限制和统计
 func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 	s.muCache.RLock()
 	// 检查缓存是否过期（TTL）或被按 key 粒度标记失效
@@ -1539,9 +1557,13 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 				result[i][k] = v
 			}
 		}
+		// H6: 更新缓存命中统计
+		s.cacheStats.CacheHits++
 		s.muCache.RUnlock()
 		return result, nil
 	}
+	// H6: 更新缓存未命中统计
+	s.cacheStats.CacheMisses++
 	s.muCache.RUnlock()
 
 	rows, err := s.db.Query("SELECT edge_node_id, payload, updated_at FROM probes ORDER BY updated_at DESC")
@@ -1551,6 +1573,7 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 	defer rows.Close()
 
 	var nodes []map[string]interface{}
+	var totalBytes int64
 	for rows.Next() {
 		var nodeID, payloadStr string
 		var updatedAt int64
@@ -1565,6 +1588,13 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 		payload["edge_node_id"] = nodeID
 		payload["updated_at"] = updatedAt
 		nodes = append(nodes, payload)
+		totalBytes += int64(len(payloadStr))
+
+		// H6: 限制缓存条目数，防止内存无限增长
+		if len(nodes) >= s.maxNodesCacheSize {
+			s.logger.Warnf("探针数量超过缓存上限 %d，仅缓存前 %d 条", s.maxNodesCacheSize, s.maxNodesCacheSize)
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("查询结果处理失败: %w", err)
@@ -1573,8 +1603,17 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 	s.muCache.Lock()
 	s.nodesCache = nodes
 	s.nodesCacheExpiry = time.Now().Add(1 * time.Minute)
+	// H6: 更新缓存统计
+	s.cacheStats.NodesCacheSize = len(nodes)
+	s.cacheStats.NodesCacheBytes = totalBytes
+	s.cacheStats.LastUpdated = time.Now()
 	delete(s.cacheInvalidationTime, "nodes") // 清除失效标记，新缓存已生效
 	s.muCache.Unlock()
+
+	// H6: 内存使用监控告警
+	if totalBytes > 50*1024*1024 { // 超过 50MB
+		s.logger.Warnf("[H6] nodesCache 内存占用过高: %d MB，建议降低 maxNodesCacheSize 或优化探针 payload", totalBytes/1024/1024)
+	}
 
 	return nodes, nil
 }
@@ -1713,6 +1752,34 @@ func (s *TiDBStorage) invalidateCacheKey(key string) {
 	case "nodes":
 		s.nodesCache = []map[string]interface{}{}
 		s.nodesCacheExpiry = time.Now()
+	}
+}
+
+// GetCacheStats 获取缓存统计信息（H6 修复）
+func (s *TiDBStorage) GetCacheStats() CacheStats {
+	s.muCache.RLock()
+	defer s.muCache.RUnlock()
+
+	// 计算 overview cache 大小
+	overviewSize := len(s.overviewCache)
+
+	return CacheStats{
+		NodesCacheSize:    s.cacheStats.NodesCacheSize,
+		NodesCacheBytes:   s.cacheStats.NodesCacheBytes,
+		OverviewCacheSize: overviewSize,
+		CacheHits:         s.cacheStats.CacheHits,
+		CacheMisses:       s.cacheStats.CacheMisses,
+		LastUpdated:       s.cacheStats.LastUpdated,
+	}
+}
+
+// SetMaxNodesCacheSize 设置 nodesCache 最大条目数（H6 修复）
+func (s *TiDBStorage) SetMaxNodesCacheSize(size int) {
+	if size > 0 {
+		s.muCache.Lock()
+		s.maxNodesCacheSize = size
+		s.muCache.Unlock()
+		s.logger.Infof("设置 nodesCache 最大条目数为 %d", size)
 	}
 }
 

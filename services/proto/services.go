@@ -21,6 +21,8 @@ package proto
 
 import (
 	"context"
+
+	"google.golang.org/grpc"
 )
 
 // ============================================================================
@@ -205,6 +207,86 @@ type TopologyEdge struct {
 type TopologyQueryResponse struct {
 	Nodes []*TopologyNode `json:"nodes"`
 	Edges []*TopologyEdge `json:"edges"`
+}
+
+// HeatmapPoint 热力图单元格
+type HeatmapPoint struct {
+	Source    string  `json:"source"`
+	Target    string  `json:"target"`
+	Timestamp int64   `json:"timestamp"`
+	Value     float64 `json:"value"`
+	Count     uint64  `json:"count"`
+}
+
+// HeatmapResponse 热力图查询响应
+type HeatmapResponse struct {
+	Points    []*HeatmapPoint `json:"points"`
+	MinValue  float64         `json:"min_value"`
+	MaxValue  float64         `json:"max_value"`
+	AvgValue  float64         `json:"avg_value"`
+	StartTime int64           `json:"start_time"`
+	EndTime   int64           `json:"end_time"`
+	Interval  int64           `json:"interval"` // seconds
+}
+
+// TopologyDiffRequest 拓扑差异请求
+type TopologyDiffRequest struct {
+	TenantId     string `json:"tenant_id"`
+	BaseTime     int64  `json:"base_time"`
+	CompareTime  int64  `json:"compare_time"`
+	Type         string `json:"type"` // service/pod/namespace/process
+}
+
+// TopologyDiff 单个差异项
+type TopologyDiff struct {
+	DiffType string `json:"diff_type"` // added_node, removed_node, added_edge, removed_edge, weight_change
+	NodeId   string `json:"node_id,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Field    string `json:"field,omitempty"`     // for weight_change: "bytes"/"latency"/"errors"
+	OldValue uint64 `json:"old_value,omitempty"`
+	NewValue uint64 `json:"new_value,omitempty"`
+}
+
+// TopologyDiffResponse 拓扑差异响应
+type TopologyDiffResponse struct {
+	Diffs       []*TopologyDiff `json:"diffs"`
+	BaseTime    int64           `json:"base_time"`
+	CompareTime int64           `json:"compare_time"`
+	Summary     *DiffSummary    `json:"summary"`
+}
+
+// DiffSummary 差异摘要
+type DiffSummary struct {
+	AddedNodes   int `json:"added_nodes"`
+	RemovedNodes int `json:"removed_nodes"`
+	AddedEdges   int `json:"added_edges"`
+	RemovedEdges int `json:"removed_edges"`
+	ChangedEdges int `json:"changed_edges"`
+}
+
+// TopologySnapshot 版本化拓扑快照（用于缓存）
+type TopologySnapshot struct {
+	Version   uint64             `json:"version"`
+	Timestamp int64              `json:"timestamp"`
+	TenantId  string             `json:"tenant_id"`
+	Type      string             `json:"type"`
+	Nodes     []*TopologyNode    `json:"nodes"`
+	Edges     []*TopologyEdge    `json:"edges"`
+}
+
+// FlowIngestRequest 实时流量摄入请求（来自数据面）
+type FlowIngestRequest struct {
+	TenantId string `json:"tenant_id"`
+	Flows    []byte `json:"flows"` // serialized UnifiedFlow batch
+	Count    int    `json:"count"`
+}
+
+// FlowIngestResponse 流量摄入响应
+type FlowIngestResponse struct {
+	Accepted int     `json:"accepted"`
+	Rejected int     `json:"rejected"`
+	Version  uint64  `json:"version"` // new topology version after processing
 }
 
 // ============================================================================
@@ -422,6 +504,236 @@ type TopologyServiceServer interface {
 	QueryTopology(ctx context.Context, req *TopologyQueryRequest) (*TopologyQueryResponse, error)
 	GetServiceGraph(ctx context.Context, req *TopologyQueryRequest) (*TopologyQueryResponse, error)
 	GetDependencyGraph(ctx context.Context, req *TopologyQueryRequest) (*TopologyQueryResponse, error)
+	// New methods:
+	GetLatencyHeatmap(ctx context.Context, req *TopologyQueryRequest) (*HeatmapResponse, error)
+	GetErrorHeatmap(ctx context.Context, req *TopologyQueryRequest) (*HeatmapResponse, error)
+	GetTopologyDiff(ctx context.Context, req *TopologyDiffRequest) (*TopologyDiffResponse, error)
+	IngestFlows(ctx context.Context, req *FlowIngestRequest) (*FlowIngestResponse, error)
+	GetSnapshot(ctx context.Context, req *TopologyQueryRequest) (*TopologySnapshot, error)
+}
+
+// UnimplementedTopologyServiceServer 可嵌入的默认实现，使现有代码无需实现新方法即可编译
+type UnimplementedTopologyServiceServer struct{}
+
+func (UnimplementedTopologyServiceServer) HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) QueryTopology(ctx context.Context, req *TopologyQueryRequest) (*TopologyQueryResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) GetServiceGraph(ctx context.Context, req *TopologyQueryRequest) (*TopologyQueryResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) GetDependencyGraph(ctx context.Context, req *TopologyQueryRequest) (*TopologyQueryResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) GetLatencyHeatmap(ctx context.Context, req *TopologyQueryRequest) (*HeatmapResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) GetErrorHeatmap(ctx context.Context, req *TopologyQueryRequest) (*HeatmapResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) GetTopologyDiff(ctx context.Context, req *TopologyDiffRequest) (*TopologyDiffResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) IngestFlows(ctx context.Context, req *FlowIngestRequest) (*FlowIngestResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedTopologyServiceServer) GetSnapshot(ctx context.Context, req *TopologyQueryRequest) (*TopologySnapshot, error) {
+	return nil, nil
+}
+
+// RegisterTopologyServiceServer 注册 TopologyServiceServer 到 gRPC server
+func RegisterTopologyServiceServer(s *grpc.Server, srv TopologyServiceServer) {
+	s.RegisterService(&_TopologyService_serviceDesc, srv)
+}
+
+var _TopologyService_serviceDesc = grpc.ServiceDesc{
+	ServiceName: "proto.TopologyService",
+	HandlerType: (*TopologyServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "HealthCheck",
+			Handler:     topologyServiceHealthCheckHandler,
+		},
+		{
+			MethodName: "QueryTopology",
+			Handler:     topologyServiceQueryTopologyHandler,
+		},
+		{
+			MethodName: "GetServiceGraph",
+			Handler:     topologyServiceGetServiceGraphHandler,
+		},
+		{
+			MethodName: "GetDependencyGraph",
+			Handler:     topologyServiceGetDependencyGraphHandler,
+		},
+		{
+			MethodName: "GetLatencyHeatmap",
+			Handler:     topologyServiceGetLatencyHeatmapHandler,
+		},
+		{
+			MethodName: "GetErrorHeatmap",
+			Handler:     topologyServiceGetErrorHeatmapHandler,
+		},
+		{
+			MethodName: "GetTopologyDiff",
+			Handler:     topologyServiceGetTopologyDiffHandler,
+		},
+		{
+			MethodName: "IngestFlows",
+			Handler:     topologyServiceIngestFlowsHandler,
+		},
+		{
+			MethodName: "GetSnapshot",
+			Handler:     topologyServiceGetSnapshotHandler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "proto/services.proto",
+}
+
+func topologyServiceHealthCheckHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HealthCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).HealthCheck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/HealthCheck"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).HealthCheck(ctx, req.(*HealthCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceQueryTopologyHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).QueryTopology(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/QueryTopology"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).QueryTopology(ctx, req.(*TopologyQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceGetServiceGraphHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).GetServiceGraph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/GetServiceGraph"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).GetServiceGraph(ctx, req.(*TopologyQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceGetDependencyGraphHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).GetDependencyGraph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/GetDependencyGraph"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).GetDependencyGraph(ctx, req.(*TopologyQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceGetLatencyHeatmapHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).GetLatencyHeatmap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/GetLatencyHeatmap"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).GetLatencyHeatmap(ctx, req.(*TopologyQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceGetErrorHeatmapHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).GetErrorHeatmap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/GetErrorHeatmap"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).GetErrorHeatmap(ctx, req.(*TopologyQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceGetTopologyDiffHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyDiffRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).GetTopologyDiff(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/GetTopologyDiff"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).GetTopologyDiff(ctx, req.(*TopologyDiffRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceIngestFlowsHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FlowIngestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).IngestFlows(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/IngestFlows"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).IngestFlows(ctx, req.(*FlowIngestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func topologyServiceGetSnapshotHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopologyQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TopologyServiceServer).GetSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/proto.TopologyService/GetSnapshot"}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TopologyServiceServer).GetSnapshot(ctx, req.(*TopologyQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 // AlertServiceServer alert-engine gRPC 服务

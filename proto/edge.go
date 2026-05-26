@@ -1027,12 +1027,13 @@ func (m *EdgeHeartbeatRequest) GetVersion() string               { return m.Vers
 
 // EdgeHeartbeatResponse 边缘节点心跳响应
 type EdgeHeartbeatResponse struct {
-	Success       bool     `json:"success,omitempty"`        // 是否成功
-	Code          string   `json:"code,omitempty"`           // 错误码
-	Message       string   `json:"message,omitempty"`        // 消息
-	ServerTime    int64    `json:"server_time,omitempty"`    // 服务器时间
-	ConfigUpdated bool     `json:"config_updated,omitempty"` // 配置是否有更新
-	Actions       []string `json:"actions,omitempty"`        // 建议动作
+	Success           bool     `json:"success,omitempty"`             // 是否成功
+	Code              string   `json:"code,omitempty"`                // 错误码
+	Message           string   `json:"message,omitempty"`             // 消息
+	ServerTime        int64    `json:"server_time,omitempty"`         // 服务器时间
+	ConfigUpdated     bool     `json:"config_updated,omitempty"`      // 配置是否有更新
+	Actions           []string `json:"actions,omitempty"`             // 建议动作
+	HeartbeatInterval int32    `json:"heartbeat_interval,omitempty"`  // H3: 心跳间隔（秒），由 Center 下发
 }
 
 func (m *EdgeHeartbeatResponse) Reset()         { *m = EdgeHeartbeatResponse{} }
@@ -1047,6 +1048,7 @@ func (m *EdgeHeartbeatResponse) GetMessage() string               { return m.Mes
 func (m *EdgeHeartbeatResponse) GetServerTime() int64             { return m.ServerTime }
 func (m *EdgeHeartbeatResponse) GetConfigUpdated() bool           { return m.ConfigUpdated }
 func (m *EdgeHeartbeatResponse) GetActions() []string             { return m.Actions }
+func (m *EdgeHeartbeatResponse) GetHeartbeatInterval() int32      { return m.HeartbeatInterval }
 
 // ============================================================================
 // 配置管理消息类型

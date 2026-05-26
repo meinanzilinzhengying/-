@@ -212,9 +212,11 @@ func main() {
 	// 用于通知所有后台协程退出
 	stopCh := make(chan struct{})
 
-	// 9. 启动心跳上报协程（每 30s）
+	// 9. 启动心跳上报协程（H3 修复: 使用 Center 返回的动态间隔）
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		// 默认 30 秒，后续根据 Center 响应动态调整
+		heartbeatInterval := 30 * time.Second
+		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -226,9 +228,19 @@ func main() {
 				clientMu.RLock()
 				currentClient := client
 				clientMu.RUnlock()
-				if err := currentClient.SendHeartbeat(loadCfg().EdgeNodeID, loadCfg().CloudPlatform, loadCfg().Region, int32(len(probes))); err != nil {
+				// H3 修复: 获取 Center 下发的心跳间隔
+				newInterval, err := currentClient.SendHeartbeat(loadCfg().EdgeNodeID, loadCfg().CloudPlatform, loadCfg().Region, int32(len(probes)))
+				if err != nil {
 					metricCollector.HeartbeatErrorsTotal.Inc()
 					log.Warnf("发送边缘心跳失败: %v", err)
+				} else if newInterval > 0 {
+					// 如果间隔变化，重置 ticker
+					newDuration := time.Duration(newInterval) * time.Second
+					if newDuration != heartbeatInterval {
+						log.Infof("心跳间隔从 %v 调整为 %v", heartbeatInterval, newDuration)
+						ticker.Reset(newDuration)
+						heartbeatInterval = newDuration
+					}
 				}
 			case <-stopCh:
 				log.Info("心跳上报协程已停止")

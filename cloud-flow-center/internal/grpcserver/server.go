@@ -294,5 +294,9 @@ func (s *Server) ForwardProfiling(ctx context.Context, batch *edge.ProfilingBatc
 func (s *Server) Heartbeat(ctx context.Context, req *edge.EdgeHeartbeatRequest) (*edge.EdgeHeartbeatResponse, error) {
 	s.logger.Debugf("收到边缘心跳: edgeNode=%s, probes=%d",
 		req.GetEdgeNodeId(), req.GetProbeCount())
-	return &edge.EdgeHeartbeatResponse{Success: true}, nil
+	// H3 修复: 返回心跳间隔，允许 Center 动态控制 Edge 心跳频率
+	return &edge.EdgeHeartbeatResponse{
+		Success:           true,
+		HeartbeatInterval: 30, // 默认 30 秒，可从配置读取
+	}, nil
 }

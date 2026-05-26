@@ -828,12 +828,13 @@ func (m *EdgeHeartbeatRequest) GetProbeCount() int32     { return m.ProbeCount }
 
 // EdgeHeartbeatResponse 边缘节点心跳响应
 type EdgeHeartbeatResponse struct {
-	Success         bool              `json:"success,omitempty"`          // 是否成功
-	Code            string            `json:"code,omitempty"`             // 错误码
-	Message         string            `json:"message,omitempty"`          // 消息
-	ServerTime      int64             `json:"server_time,omitempty"`      // 服务器时间
-	ConfigUpdated   bool              `json:"config_updated,omitempty"`   // 配置是否有更新
-	Actions         []string          `json:"actions,omitempty"`          // 建议动作
+	Success           bool              `json:"success,omitempty"`             // 是否成功
+	Code              string            `json:"code,omitempty"`                // 错误码
+	Message           string            `json:"message,omitempty"`             // 消息
+	ServerTime        int64             `json:"server_time,omitempty"`         // 服务器时间
+	ConfigUpdated     bool              `json:"config_updated,omitempty"`      // 配置是否有更新
+	Actions           []string          `json:"actions,omitempty"`             // 建议动作
+	HeartbeatInterval int32             `json:"heartbeat_interval,omitempty"`  // H3: 心跳间隔（秒），由 Center 下发
 }
 
 func (m *EdgeHeartbeatResponse) Reset()        { *m = EdgeHeartbeatResponse{} }
@@ -844,6 +845,7 @@ func (m *EdgeHeartbeatResponse) Marshal() ([]byte, error)   { return json.Marsha
 func (m *EdgeHeartbeatResponse) Unmarshal(data []byte) error { return json.Unmarshal(data, m) }
 
 func (m *EdgeHeartbeatResponse) GetSuccess() bool { return m.Success }
+func (m *EdgeHeartbeatResponse) GetHeartbeatInterval() int32 { return m.HeartbeatInterval }
 
 // ============================================================================
 // 配置管理消息类型

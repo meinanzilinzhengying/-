@@ -370,7 +370,8 @@ func (c *Client) ForwardProfiling(batch *edge.ProfilingBatch) error {
 }
 
 // SendHeartbeat 发送边缘节点心跳到中心服务
-func (c *Client) SendHeartbeat(edgeNodeID, platform, region string, probeCount int32) error {
+// H3 修复: 返回 Center 下发的心跳间隔，允许动态调整
+func (c *Client) SendHeartbeat(edgeNodeID, platform, region string, probeCount int32) (heartbeatInterval int32, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
@@ -384,10 +385,14 @@ func (c *Client) SendHeartbeat(edgeNodeID, platform, region string, probeCount i
 
 	resp, err := c.client.Heartbeat(grpcutil.WithAuth(ctx, c.apiKey), req)
 	if err != nil {
-		return fmt.Errorf("发送心跳失败: %w", err)
+		return 0, fmt.Errorf("发送心跳失败: %w", err)
 	}
 	if !resp.Success {
-		return fmt.Errorf("中心服务拒绝心跳")
+		return 0, fmt.Errorf("中心服务拒绝心跳")
 	}
-	return nil
+	// H3: 使用 Center 返回的心跳间隔，默认 30 秒
+	if resp.HeartbeatInterval > 0 {
+		return resp.HeartbeatInterval, nil
+	}
+	return 30, nil
 }

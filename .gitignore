@@ -45,3 +45,15 @@ coverage.out
 /tmp/
 *.tmp
 *.bak
+
+# H5 修复: 构建产物和分发包（应使用 GitHub Releases 或制品仓库）
+*.tar.gz
+*.tar
+*.zip
+*.rar
+*.7z
+*.gz
+# 特定构建产物
+cloud-flow-*.tar.gz
+cloud-flow-*.zip
+云内流量监测系统*.zip

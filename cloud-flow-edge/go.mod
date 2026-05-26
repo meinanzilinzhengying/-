@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	cloud-flow/pkg v0.0.0
 	cloud-flow/proto v0.0.0
+	github.com/IBM/sarama v1.43.3
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/hashicorp/consul/api v1.25.1
 	github.com/joho/godotenv v1.5.1
@@ -13,6 +14,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.13
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.80.0
+	google.golang.org/protobuf v1.36.11
 )
 
 replace cloud-flow/pkg => ../pkg

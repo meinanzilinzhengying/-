@@ -33,3 +33,15 @@ func (g *queryGRPC) QueryTraces(ctx context.Context, req *svcproto.QueryFlowRequ
 func (g *queryGRPC) QueryDashboard(ctx context.Context, req *svcproto.QueryFlowRequest) (*svcproto.QueryFlowResponse, error) {
 	return g.svc.QueryDashboard(ctx, req)
 }
+func (g *queryGRPC) QueryOTLPTraces(ctx context.Context, req *svcproto.TraceQueryRequest) (*svcproto.TraceQueryResponse, error) {
+	return g.svc.QueryOTLPTraces(ctx, req)
+}
+func (g *queryGRPC) GetRootCauseAnalysis(ctx context.Context, req *svcproto.RootCauseRequest) (*svcproto.RootCauseResponse, error) {
+	return g.svc.GetRootCauseAnalysis(ctx, req)
+}
+func (g *queryGRPC) QueryCorrelation(ctx context.Context, req *svcproto.CorrelationQueryRequest) (*svcproto.CorrelationQueryResponse, error) {
+	return g.svc.QueryCorrelation(ctx, req)
+}
+func (g *queryGRPC) GetOTLPStats(ctx context.Context, req *svcproto.HealthCheckRequest) (*svcproto.OTLPIngestStats, error) {
+	return g.svc.GetOTLPStats(ctx, req)
+}

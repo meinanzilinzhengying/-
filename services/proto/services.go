@@ -290,6 +290,117 @@ type FlowIngestResponse struct {
 }
 
 // ============================================================================
+// OTEL Integration (Unified Observability)
+// ============================================================================
+
+// OTLPIngestStats OTLP 接收统计
+type OTLPIngestStats struct {
+	TracesReceived     uint64 `json:"traces_received"`
+	SpansReceived      uint64 `json:"spans_received"`
+	MetricsReceived    uint64 `json:"metrics_received"`
+	DataPointsReceived uint64 `json:"data_points_received"`
+	LogsReceived       uint64 `json:"logs_received"`
+	LogRecordsReceived uint64 `json:"log_records_received"`
+	Errors             uint64 `json:"errors"`
+}
+
+// SpanInfo Span 信息（用于查询结果）
+type SpanInfo struct {
+	TraceId      string            `json:"trace_id"`
+	SpanId       string            `json:"span_id"`
+	ParentSpanId string            `json:"parent_span_id"`
+	Name         string            `json:"name"`
+	ServiceName  string            `json:"service_name"`
+	Kind         string            `json:"kind"`
+	StartTime    int64             `json:"start_time"`
+	EndTime      int64             `json:"end_time"`
+	DurationNs   int64             `json:"duration_ns"`
+	Status       string            `json:"status"`
+	StatusCode   int               `json:"status_code"`
+	Attributes   map[string]string `json:"attributes"`
+}
+
+// TraceInfo Trace 信息
+type TraceInfo struct {
+	TraceId     string     `json:"trace_id"`
+	ServiceName string     `json:"service_name"`
+	SpanCount   int        `json:"span_count"`
+	ErrorCount  int        `json:"error_count"`
+	DurationNs  int64      `json:"duration_ns"`
+	StartTime   int64      `json:"start_time"`
+	Spans       []*SpanInfo `json:"spans"`
+}
+
+// TraceQueryRequest Trace 查询请求
+type TraceQueryRequest struct {
+	TenantId    string `json:"tenant_id"`
+	TraceId     string `json:"trace_id"`
+	ServiceName string `json:"service_name"`
+	MinDuration int64  `json:"min_duration_ns"`
+	HasError    bool   `json:"has_error"`
+	StartTime   int64  `json:"start_time"`
+	EndTime     int64  `json:"end_time"`
+	Limit       int    `json:"limit"`
+}
+
+// TraceQueryResponse Trace 查询响应
+type TraceQueryResponse struct {
+	Traces []*TraceInfo `json:"traces"`
+	Total  int          `json:"total"`
+	TookMs int64        `json:"took_ms"`
+}
+
+// FlowTraceLink Flow-Trace 关联链路
+type FlowTraceLink struct {
+	TraceId     string `json:"trace_id"`
+	SpanId      string `json:"span_id"`
+	ServiceName string `json:"service_name"`
+	SrcIp       string `json:"src_ip"`
+	DstIp       string `json:"dst_ip"`
+	SrcPort     uint16 `json:"src_port"`
+	DstPort     uint16 `json:"dst_port"`
+	Protocol    string `json:"protocol"`
+	LatencyNs   uint64 `json:"latency_ns"`
+	Bytes       uint64 `json:"bytes"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
+// RootCauseRequest 根因分析请求
+type RootCauseRequest struct {
+	TenantId    string `json:"tenant_id"`
+	TraceId     string `json:"trace_id"`
+	ServiceName string `json:"service_name"`
+}
+
+// RootCauseResponse 根因分析响应
+type RootCauseResponse struct {
+	TraceId          string           `json:"trace_id"`
+	ErrorSpans       []*SpanInfo      `json:"error_spans"`
+	SlowSpans        []*SpanInfo      `json:"slow_spans"`
+	RelatedFlows     []*FlowTraceLink `json:"related_flows"`
+	AffectedServices []string         `json:"affected_services"`
+	SuggestedCauses  []string         `json:"suggested_causes"`
+}
+
+// CorrelationQueryRequest 关联查询请求
+type CorrelationQueryRequest struct {
+	TenantId    string `json:"tenant_id"`
+	TraceId     string `json:"trace_id"`
+	ServiceName string `json:"service_name"`
+	ProcessName string `json:"process_name"`
+	Pid         uint32 `json:"pid"`
+	QueryType   string `json:"query_type"` // trace_to_flow, service_to_trace, process_to_trace
+}
+
+// CorrelationQueryResponse 关联查询响应
+type CorrelationQueryResponse struct {
+	Traces      []*TraceInfo     `json:"traces"`
+	Flows       []*FlowTraceLink `json:"flows"`
+	ServiceName string           `json:"service_name"`
+	Total       int              `json:"total"`
+}
+
+// ============================================================================
 // alert-engine
 // ============================================================================
 
@@ -671,6 +782,50 @@ type QueryServiceServer interface {
 	QueryTraces(ctx context.Context, req *QueryFlowRequest) (*QueryFlowResponse, error)
 	// Dashboard 聚合
 	QueryDashboard(ctx context.Context, req *QueryFlowRequest) (*QueryFlowResponse, error)
+	// OTEL 统一可观测性
+	QueryOTLPTraces(ctx context.Context, req *TraceQueryRequest) (*TraceQueryResponse, error)
+	GetRootCauseAnalysis(ctx context.Context, req *RootCauseRequest) (*RootCauseResponse, error)
+	QueryCorrelation(ctx context.Context, req *CorrelationQueryRequest) (*CorrelationQueryResponse, error)
+	GetOTLPStats(ctx context.Context, req *HealthCheckRequest) (*OTLPIngestStats, error)
+}
+
+// UnimplementedQueryServiceServer 可嵌入的默认实现，使现有代码无需实现新方法即可编译
+type UnimplementedQueryServiceServer struct{}
+
+func (UnimplementedQueryServiceServer) HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) QueryFlows(ctx context.Context, req *QueryFlowRequest) (*QueryFlowResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) QueryMetrics(ctx context.Context, req *QueryFlowRequest) (*QueryFlowResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) QueryTraces(ctx context.Context, req *QueryFlowRequest) (*QueryFlowResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) QueryDashboard(ctx context.Context, req *QueryFlowRequest) (*QueryFlowResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) QueryOTLPTraces(ctx context.Context, req *TraceQueryRequest) (*TraceQueryResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) GetRootCauseAnalysis(ctx context.Context, req *RootCauseRequest) (*RootCauseResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) QueryCorrelation(ctx context.Context, req *CorrelationQueryRequest) (*CorrelationQueryResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedQueryServiceServer) GetOTLPStats(ctx context.Context, req *HealthCheckRequest) (*OTLPIngestStats, error) {
+	return nil, nil
 }
 
 // TopologyServiceServer topology-engine gRPC 服务

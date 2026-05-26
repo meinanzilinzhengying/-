@@ -225,6 +225,25 @@ func (m *Metrics) AddProfilingBatch() {
 	m.profilingForwardCount.Inc()
 }
 
+// RecordMetricsDropped 记录指标数据丢弃（M5 修复）
+func (m *Metrics) RecordMetricsDropped(count int, reason string) {
+	m.dataDroppedCount.Add(float64(count))
+	m.logger.Warnf("[M5] 指标数据丢弃 %d 条，原因: %s", count, reason)
+}
+
+// RecordTracesDropped 记录链路追踪数据丢弃（M5 修复）
+func (m *Metrics) RecordTracesDropped(count int, reason string) {
+	// 复用 dataDroppedCount 或添加专门的计数器
+	m.dataDroppedCount.Add(float64(count))
+	m.logger.Warnf("[M5] 链路追踪数据丢弃 %d 条，原因: %s", count, reason)
+}
+
+// RecordProfilingDropped 记录性能分析数据丢弃（M5 修复）
+func (m *Metrics) RecordProfilingDropped(count int, reason string) {
+	m.dataDroppedCount.Add(float64(count))
+	m.logger.Warnf("[M5] 性能分析数据丢弃 %d 条，原因: %s", count, reason)
+}
+
 // StartServer 启动 Prometheus 指标服务器
 // 返回 *http.Server 用于优雅关闭，error channel 用于传递服务器运行中的错误
 func (m *Metrics) StartServer(port int) (*http.Server, <-chan error) {

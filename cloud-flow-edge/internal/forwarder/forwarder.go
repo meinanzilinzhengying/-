@@ -36,18 +36,25 @@ type MetricsSink interface {
 	UpdateMetricsBufSize(n int)
 	UpdateTracesBufSize(n int)
 	UpdateProfilingBufSize(n int)
+	// M5 修复: 添加缓冲区丢弃计数
+	RecordMetricsDropped(count int, reason string)
+	RecordTracesDropped(count int, reason string)
+	RecordProfilingDropped(count int, reason string)
 }
 
 // noopMetrics 空实现，不产生依赖
 type noopMetrics struct{}
 
-func (noopMetrics) AddMetricsBatch()            {}
-func (noopMetrics) AddTracesBatch()             {}
-func (noopMetrics) AddProfilingBatch()          {}
-func (noopMetrics) AddForwardError()            {}
-func (noopMetrics) UpdateMetricsBufSize(int)    {}
-func (noopMetrics) UpdateTracesBufSize(int)     {}
-func (noopMetrics) UpdateProfilingBufSize(int)  {}
+func (noopMetrics) AddMetricsBatch()                   {}
+func (noopMetrics) AddTracesBatch()                    {}
+func (noopMetrics) AddProfilingBatch()                 {}
+func (noopMetrics) AddForwardError()                   {}
+func (noopMetrics) UpdateMetricsBufSize(int)           {}
+func (noopMetrics) UpdateTracesBufSize(int)            {}
+func (noopMetrics) UpdateProfilingBufSize(int)         {}
+func (noopMetrics) RecordMetricsDropped(int, string)   {} // M5
+func (noopMetrics) RecordTracesDropped(int, string)    {} // M5
+func (noopMetrics) RecordProfilingDropped(int, string) {} // M5
 
 const (
 	// 默认缓冲区上限（条目数），超过时丢弃最旧数据以防止 OOM
@@ -183,11 +190,17 @@ func (f *Forwarder) AddMetrics(batch *edge.MetricsBatch) {
 
 	f.muMetrics.Lock()
 	f.metricsBuf = append(f.metricsBuf, batch)
-	// 缓冲区超过上限，丢弃最旧的 25%
+	// M5 修复: 统一丢弃策略，与 Agent 一致（保留最新 batchSize 条）
+	// 缓冲区超过上限，丢弃最旧的数据，只保留 batchSize 条
 	if len(f.metricsBuf) > f.maxBufLimit {
-		drop := len(f.metricsBuf) / 4
-		f.logger.Warnf("[forwarder][metrics] 指标缓冲区超限 (%d > %d)，丢弃最旧 %d 条", len(f.metricsBuf), f.maxBufLimit, drop)
-		f.metricsBuf = f.metricsBuf[drop:]
+		droppedCount := len(f.metricsBuf) - f.batchSize
+		if droppedCount < 0 {
+			droppedCount = len(f.metricsBuf) / 4 // 保底策略：至少丢弃 25%
+		}
+		f.logger.Warnf("[M5][forwarder][metrics] 缓冲区超限 (%d > %d)，丢弃最旧 %d 条，保留最新 %d 条",
+			len(f.metricsBuf), f.maxBufLimit, droppedCount, f.batchSize)
+		f.metrics.RecordMetricsDropped(droppedCount, "buffer_overflow")
+		f.metricsBuf = f.metricsBuf[droppedCount:]
 	}
 	shouldFlush := len(f.metricsBuf) >= f.batchSize
 	size := len(f.metricsBuf)
@@ -219,10 +232,16 @@ func (f *Forwarder) AddTraces(batch *edge.TraceBatch) {
 
 	f.muTraces.Lock()
 	f.tracesBuf = append(f.tracesBuf, batch)
+	// M5 修复: 统一丢弃策略，与 Agent 一致（保留最新 batchSize 条）
 	if len(f.tracesBuf) > f.maxBufLimit {
-		drop := len(f.tracesBuf) / 4
-		f.logger.Warnf("[forwarder][traces] 链路追踪缓冲区超限 (%d > %d)，丢弃最旧 %d 条", len(f.tracesBuf), f.maxBufLimit, drop)
-		f.tracesBuf = f.tracesBuf[drop:]
+		droppedCount := len(f.tracesBuf) - f.batchSize
+		if droppedCount < 0 {
+			droppedCount = len(f.tracesBuf) / 4
+		}
+		f.logger.Warnf("[M5][forwarder][traces] 缓冲区超限 (%d > %d)，丢弃最旧 %d 条，保留最新 %d 条",
+			len(f.tracesBuf), f.maxBufLimit, droppedCount, f.batchSize)
+		f.metrics.RecordTracesDropped(droppedCount, "buffer_overflow")
+		f.tracesBuf = f.tracesBuf[droppedCount:]
 	}
 	shouldFlush := len(f.tracesBuf) >= f.batchSize
 	size := len(f.tracesBuf)
@@ -254,10 +273,16 @@ func (f *Forwarder) AddProfiling(batch *edge.ProfilingBatch) {
 
 	f.muProfiling.Lock()
 	f.profilingBuf = append(f.profilingBuf, batch)
+	// M5 修复: 统一丢弃策略，与 Agent 一致（保留最新 batchSize 条）
 	if len(f.profilingBuf) > f.maxBufLimit {
-		drop := len(f.profilingBuf) / 4
-		f.logger.Warnf("[forwarder][profiling] 性能分析缓冲区超限 (%d > %d)，丢弃最旧 %d 条", len(f.profilingBuf), f.maxBufLimit, drop)
-		f.profilingBuf = f.profilingBuf[drop:]
+		droppedCount := len(f.profilingBuf) - f.batchSize
+		if droppedCount < 0 {
+			droppedCount = len(f.profilingBuf) / 4
+		}
+		f.logger.Warnf("[M5][forwarder][profiling] 缓冲区超限 (%d > %d)，丢弃最旧 %d 条，保留最新 %d 条",
+			len(f.profilingBuf), f.maxBufLimit, droppedCount, f.batchSize)
+		f.metrics.RecordProfilingDropped(droppedCount, "buffer_overflow")
+		f.profilingBuf = f.profilingBuf[droppedCount:]
 	}
 	shouldFlush := len(f.profilingBuf) >= f.batchSize
 	size := len(f.profilingBuf)

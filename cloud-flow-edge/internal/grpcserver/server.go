@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync/atomic"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -57,7 +58,10 @@ type Server struct {
 	goPool       *gopool.Pool
 	breaker      *circuitbreaker.Manager
 	whitelistMgr *whitelist.Manager
-	authInterceptor *auth.AuthInterceptor
+	// H1 修复: 使用 atomic.Value 管理 authInterceptor，避免数据竞争
+	// BuildServerOpts 中的 combinedInterceptor 闭包会读取此值，
+	// 而 SetAuthInterceptor 在 BuildServerOpts 之后设置，需要同步机制保护
+	authInterceptor atomic.Value // 存储 *auth.AuthInterceptor
 }
 
 // NewServer 创建 gRPC 服务端实例
@@ -97,8 +101,18 @@ func (s *Server) SetWhitelistManager(mgr *whitelist.Manager) {
 }
 
 // SetAuthInterceptor 设置鉴权拦截器
+// H1 修复: 使用 atomic.Value 存储，确保线程安全
 func (s *Server) SetAuthInterceptor(ai *auth.AuthInterceptor) {
-	s.authInterceptor = ai
+	s.authInterceptor.Store(ai)
+}
+
+// GetAuthInterceptor 获取鉴权拦截器
+// H1 修复: 使用 atomic.Value 读取，确保线程安全
+func (s *Server) GetAuthInterceptor() *auth.AuthInterceptor {
+	if v := s.authInterceptor.Load(); v != nil {
+		return v.(*auth.AuthInterceptor)
+	}
+	return nil
 }
 
 // ============================================================================
@@ -392,28 +406,30 @@ func BuildServerOpts(
 		// 7. TraceID
 		// 8. API Key
 		return breakerInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-			return goPoolInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-				// Agent鉴权拦截器（如果启用）
-				if s.authInterceptor != nil {
-					return s.authInterceptor.UnaryServerInterceptor()(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-						return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-							if apiKey != "" {
-								apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
-								return apiInterceptor(ctx, req, info, handler)
-							}
-							return handler(ctx, req)
-						})
+		return goPoolInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+			// H1 修复: 使用 GetAuthInterceptor() 方法读取，确保线程安全
+			// Agent鉴权拦截器（如果启用）
+			authInterceptor := s.GetAuthInterceptor()
+			if authInterceptor != nil {
+				return authInterceptor.UnaryServerInterceptor()(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+					return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+						if apiKey != "" {
+							apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
+							return apiInterceptor(ctx, req, info, handler)
+						}
+						return handler(ctx, req)
 					})
-				}
-				return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-					if apiKey != "" {
-						apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
-						return apiInterceptor(ctx, req, info, handler)
-					}
-					return handler(ctx, req)
 				})
+			}
+			return traceInterceptor(ctx, req, info, func(ctx context.Context, req interface{}) (interface{}, error) {
+				if apiKey != "" {
+					apiInterceptor := APIKeyAuthInterceptor(apiKey, log)
+					return apiInterceptor(ctx, req, info, handler)
+				}
+				return handler(ctx, req)
 			})
 		})
+	})
 	}
 
 	opts = append(opts, grpc.UnaryInterceptor(combinedInterceptor))

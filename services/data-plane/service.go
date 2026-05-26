@@ -3,17 +3,19 @@
 // 职责:
 //   - Flow/Metric/Trace/Log 数据接收 (Ingest)
 //   - L7 协议解析
+//   - 自适应采样 (Adaptive Sampling)
 //   - 数据聚合 (实时/窗口)
 //   - 写入存储后端 (ClickHouse/VictoriaMetrics/Loki)
 //
 // 端口:
-//   - gRPC: 9002
-//   - HTTP: 8002
-//   - Metrics: 9102
+//   - gRPC: 9001
+//   - HTTP: 8001
+//   - Metrics: 9101
 package dataplane
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -25,7 +27,9 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
+	"cloud-flow/pkg/flow"
 	svcproto "cloud-flow/services/proto"
+	"cloud-flow/services/data-plane/sampling"
 )
 
 // ============================================================================
@@ -37,8 +41,8 @@ type Config struct {
 	ServiceName string
 	Version     string
 
-	GrpcAddr string // :9002
-	HttpAddr string // :8002
+	GrpcAddr string // :9001
+	HttpAddr string // :8001
 
 	// 批量写入
 	BatchSize     int
@@ -54,6 +58,9 @@ type Config struct {
 	// 其他服务
 	ControlPlaneAddr string
 	TopologyAddr     string
+
+	// 采样配置
+	Sampling *sampling.SamplingConfig
 }
 
 // DefaultConfig 默认配置
@@ -61,8 +68,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		ServiceName:         "data-plane",
 		Version:             "1.0.0",
-		GrpcAddr:            ":9002",
-		HttpAddr:            ":8002",
+		GrpcAddr:            ":9001",
+		HttpAddr:            ":8001",
 		BatchSize:           10000,
 		FlushInterval:       time.Second,
 		QueueSize:           100000,
@@ -70,6 +77,7 @@ func DefaultConfig() *Config {
 		ClickHouseAddr:      "clickhouse:9000",
 		VictoriaMetricsAddr: "http://victoriametrics:8428",
 		LokiAddr:            "http://loki:3100",
+		Sampling:            sampling.NewSamplingConfig(),
 	}
 }
 
@@ -84,6 +92,7 @@ type Stats struct {
 	TracesIngested  uint64
 	LogsIngested    uint64
 	FlowsDropped    uint64
+	FlowsSampled    uint64 // 被采样保留的 flow
 	WriteErrors     uint64
 	AvgLatencyMs    uint64
 }
@@ -96,11 +105,14 @@ type Stats struct {
 type Service struct {
 	config *Config
 
+	// 采样引擎
+	samplingEngine *sampling.SamplingEngine
+
 	// 队列
-	flowQueue    chan interface{}
-	metricQueue  chan interface{}
-	traceQueue   chan interface{}
-	logQueue     chan interface{}
+	flowQueue   chan *flow.UnifiedFlow
+	metricQueue chan interface{}
+	traceQueue  chan interface{}
+	logQueue    chan interface{}
 
 	// 统计
 	stats Stats
@@ -123,15 +135,22 @@ func New(config *Config) (*Service, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	if config.Sampling == nil {
+		config.Sampling = sampling.NewSamplingConfig()
+	}
+
+	// 初始化采样引擎
+	samplingEngine := sampling.NewSamplingEngine(config.Sampling)
 
 	s := &Service{
-		config:     config,
-		flowQueue:  make(chan interface{}, config.QueueSize),
-		metricQueue: make(chan interface{}, config.QueueSize),
-		traceQueue: make(chan interface{}, config.QueueSize),
-		logQueue:   make(chan interface{}, config.QueueSize),
-		startTime:  time.Now(),
-		health:     health.NewServer(),
+		config:         config,
+		samplingEngine: samplingEngine,
+		flowQueue:      make(chan *flow.UnifiedFlow, config.QueueSize),
+		metricQueue:    make(chan interface{}, config.QueueSize),
+		traceQueue:     make(chan interface{}, config.QueueSize),
+		logQueue:       make(chan interface{}, config.QueueSize),
+		startTime:      time.Now(),
+		health:         health.NewServer(),
 	}
 
 	s.grpcServer = grpc.NewServer(
@@ -147,6 +166,9 @@ func New(config *Config) (*Service, error) {
 
 // Start 启动服务
 func (s *Service) Start() error {
+	// 启动采样引擎后台任务
+	s.samplingEngine.Start(context.Background())
+
 	// 启动 gRPC
 	lis, err := net.Listen("tcp", s.config.GrpcAddr)
 	if err != nil {
@@ -163,6 +185,8 @@ func (s *Service) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthzHandler)
 	mux.HandleFunc("/api/stats", s.statsHandler)
+	mux.HandleFunc("/api/sampling/config", s.samplingConfigHandler)
+	mux.HandleFunc("/api/sampling/stats", s.samplingStatsHandler)
 
 	s.httpServer = &http.Server{Addr: s.config.HttpAddr, Handler: mux}
 	go func() {
@@ -179,7 +203,8 @@ func (s *Service) Start() error {
 	s.running.Store(true)
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
 
-	fmt.Printf("Data Plane started: gRPC=%s, HTTP=%s\n", s.config.GrpcAddr, s.config.HttpAddr)
+	fmt.Printf("Data Plane started: gRPC=%s, HTTP=%s (sampling enabled, rate=1/%d)\n",
+		s.config.GrpcAddr, s.config.HttpAddr, s.config.Sampling.DefaultRate)
 	return nil
 }
 
@@ -196,15 +221,35 @@ func (s *Service) Stop() {
 	}
 }
 
-// IngestFlow 接收 Flow
+// IngestFlow 接收 Flow（含采样决策）
 func (s *Service) IngestFlow(ctx context.Context, batch *svcproto.FlowBatch) (*svcproto.IngestResponse, error) {
 	accepted := 0
-	for _, flow := range batch.Flows {
+	sampled := 0
+
+	for _, flowMap := range batch.Flows {
+		// 反序列化 UnifiedFlow
+		f := mapToUnifiedFlow(flowMap)
+		if f == nil {
+			continue
+		}
+
+		// 采样决策
+		sCtx := sampling.FlowToContext(f)
+		if !s.samplingEngine.ShouldKeep(&sCtx) {
+			// 被采样丢弃
+			s.statsMu.Lock()
+			s.stats.FlowsSampled++
+			s.statsMu.Unlock()
+			continue
+		}
+
 		select {
-		case s.flowQueue <- flow:
+		case s.flowQueue <- f:
 			accepted++
 		default:
+			s.statsMu.Lock()
 			s.stats.FlowsDropped++
+			s.statsMu.Unlock()
 		}
 	}
 
@@ -226,9 +271,19 @@ func (s *Service) GetStats() Stats {
 	return s.stats
 }
 
+// GetSamplingStats 获取采样统计
+func (s *Service) GetSamplingStats() sampling.SamplingStats {
+	return s.samplingEngine.GetStats()
+}
+
+// UpdateSamplingConfig 运行时更新采样配置
+func (s *Service) UpdateSamplingConfig(cfg *sampling.SamplingConfig) {
+	s.samplingEngine.UpdateConfig(cfg)
+}
+
 // flowWorker Flow 处理 worker
 func (s *Service) flowWorker() {
-	batch := make([]interface{}, 0, s.config.BatchSize)
+	batch := make([]*flow.UnifiedFlow, 0, s.config.BatchSize)
 	ticker := time.NewTicker(s.config.FlushInterval)
 	defer ticker.Stop()
 
@@ -250,8 +305,9 @@ func (s *Service) flowWorker() {
 }
 
 // flushFlows 刷新 Flow 到存储
-func (s *Service) flushFlows(batch []interface{}) {
+func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
 	// TODO: 写入 ClickHouse
+	_ = batch
 	s.statsMu.Lock()
 	s.stats.WriteErrors++
 	s.statsMu.Unlock()
@@ -269,6 +325,114 @@ func (s *Service) healthzHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) statsHandler(w http.ResponseWriter, r *http.Request) {
 	stats := s.GetStats()
-	fmt.Fprintf(w, `{"flows_ingested":%d,"flows_dropped":%d,"write_errors":%d}`,
-		stats.FlowsIngested, stats.FlowsDropped, stats.WriteErrors)
+	fmt.Fprintf(w, `{"flows_ingested":%d,"flows_dropped":%d,"flows_sampled":%d,"write_errors":%d}`,
+		stats.FlowsIngested, stats.FlowsDropped, stats.FlowsSampled, stats.WriteErrors)
+}
+
+func (s *Service) samplingConfigHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, s.config.Sampling)
+	case http.MethodPut, http.MethodPost:
+		var cfg sampling.SamplingConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.UpdateSamplingConfig(&cfg)
+		writeJSON(w, map[string]string{"status": "updated"})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Service) samplingStatsHandler(w http.ResponseWriter, r *http.Request) {
+	stats := s.GetSamplingStats()
+	writeJSON(w, stats)
+}
+
+// ============================================================================
+// 辅助函数
+// ============================================================================
+
+// mapToUnifiedFlow 将 map[string]interface{} 转换为 UnifiedFlow
+func mapToUnifiedFlow(m map[string]interface{}) *flow.UnifiedFlow {
+	f := flow.New()
+
+	if v, ok := m["src_ip"].(string); ok {
+		f.SrcIP = flow.ParseIP(v)
+	}
+	if v, ok := m["dst_ip"].(string); ok {
+		f.DstIP = flow.ParseIP(v)
+	}
+	if v, ok := m["src_port"].(float64); ok {
+		f.SrcPort = uint16(v)
+	}
+	if v, ok := m["dst_port"].(float64); ok {
+		f.DstPort = uint16(v)
+	}
+	if v, ok := m["protocol"].(string); ok {
+		f.Protocol = flow.ParseProtocol(v)
+	}
+	if v, ok := m["bytes"].(float64); ok {
+		f.Bytes = uint64(v)
+	}
+	if v, ok := m["packets"].(float64); ok {
+		f.Packets = uint64(v)
+	}
+	if v, ok := m["latency_ns"].(float64); ok {
+		f.LatencyNs = uint64(v)
+	}
+	if v, ok := m["status_code"].(float64); ok {
+		f.StatusCode = uint16(v)
+	}
+	if v, ok := m["tcp_flags"].(float64); ok {
+		f.TCPFlags = uint8(v)
+	}
+	if v, ok := m["l7_protocol"].(string); ok {
+		f.L7Protocol = flow.ParseProtocol(v)
+	}
+	if v, ok := m["tenant_id"].(string); ok {
+		f.TenantID.Set(v)
+	}
+	if v, ok := m["namespace"].(string); ok {
+		f.Namespace.Set(v)
+	}
+	if v, ok := m["service"].(string); ok {
+		f.Service.Set(v)
+	}
+	if v, ok := m["pod"].(string); ok {
+		f.Pod.Set(v)
+	}
+	if v, ok := m["deployment"].(string); ok {
+		f.Deployment.Set(v)
+	}
+	if v, ok := m["node"].(string); ok {
+		f.Node.Set(v)
+	}
+	if v, ok := m["process_name"].(string); ok {
+		f.ProcessName.Set(v)
+	}
+	if v, ok := m["comm"].(string); ok {
+		f.Comm.Set(v)
+	}
+	if v, ok := m["container_id"].(string); ok {
+		f.ContainerID.Set(v)
+	}
+	if v, ok := m["container_name"].(string); ok {
+		f.ContainerName.Set(v)
+	}
+	if v, ok := m["hostname"].(string); ok {
+		f.Hostname.Set(v)
+	}
+	if v, ok := m["timestamp"].(float64); ok {
+		f.Timestamp = int64(v)
+	}
+
+	return f
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }

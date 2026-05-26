@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -298,7 +299,7 @@ func main() {
 	// 创建线程安全的客户端包装器
 	safeClient := &safeClient{client: client}
 
-	// 注册探针
+	// 注册探针（携带 region/zone/cluster 元数据）
 	hostname, _ := os.Hostname()
 	hostIP := getLocalIP()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -310,6 +311,21 @@ func main() {
 		os.Exit(1)
 	}
 	log.Infof("注册成功: %s, 心跳间隔=%ds", resp.GetMessage(), resp.GetHeartbeatInterval())
+
+	// 分布式边缘自治: 记录归属 Edge ID，重连时优先连接
+	assignedEdgeID := resp.GetAssignedEdgeId()
+	sessionID := resp.GetSessionId()
+	if assignedEdgeID != "" {
+		log.Infof("归属 Edge: %s, Session: %s", assignedEdgeID, sessionID)
+		// 持久化归属关系到本地文件
+		saveAssignedEdge(cfg.ProbeID, assignedEdgeID, sessionID)
+	} else {
+		// 尝试从本地文件恢复归属关系
+		assignedEdgeID, sessionID = loadAssignedEdge(cfg.ProbeID)
+		if assignedEdgeID != "" {
+			log.Infof("从本地恢复归属 Edge: %s, Session: %s", assignedEdgeID, sessionID)
+		}
+	}
 
 	// 初始化自监控上报器（注册成功后才能上报）
 	if selfMonitorCollector != nil && cfg.EBPF.SelfMonitor.Enabled {
@@ -905,6 +921,28 @@ func main() {
 	// 关闭客户端连接
 	safeClient.Get().Close()
 	log.Info("探针已安全退出")
+}
+
+// saveAssignedEdge 持久化归属 Edge 到本地文件（分布式边缘自治）
+func saveAssignedEdge(probeID, edgeID, sessionID string) {
+	dir := filepath.Join(os.TempDir(), "cloud-flow-edge")
+	os.MkdirAll(dir, 0755)
+	data := fmt.Sprintf("%s\t%s\t%s\t%d", probeID, edgeID, sessionID, time.Now().Unix())
+	os.WriteFile(filepath.Join(dir, probeID+".edge"), []byte(data), 0600)
+}
+
+// loadAssignedEdge 从本地文件恢复归属 Edge（分布式边缘自治）
+func loadAssignedEdge(probeID string) (edgeID, sessionID string) {
+	path := filepath.Join(os.TempDir(), "cloud-flow-edge", probeID+".edge")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	parts := strings.Split(string(data), "\t")
+	if len(parts) >= 3 {
+		return parts[1], parts[2]
+	}
+	return "", ""
 }
 
 func getLocalIP() string {

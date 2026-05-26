@@ -184,6 +184,8 @@ func main() {
 
 	// 7. 创建 gRPC 服务端并注册探针服务
 	srv := grpcserver.NewServer(manager, fwd, log, metricCollector, localCfg.APIKey)
+	// 分布式边缘自治: 设置 Edge 节点元数据
+	srv.SetEdgeConfig(localCfg.EdgeNodeID, localCfg.CloudPlatform, localCfg.Region, localCfg.Cluster.NodeID)
 	log.Infof("Edge 探针认证 API Key 已启用 (key: %s...)", utils.MaskSecret(localCfg.APIKey))
 	serverOpts, connPool, ipLimiter, goPool, breakerMgr, err := grpcserver.BuildServerOpts(
 		localCfg.TLS, localCfg.RateLimit, localCfg.APIKey,

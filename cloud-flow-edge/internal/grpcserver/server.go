@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,6 +34,7 @@ import (
 	"cloud-flow-edge/internal/gopool"
 	"cloud-flow-edge/internal/iplimiter"
 	"cloud-flow-edge/internal/probemgr"
+	"cloud-flow-edge/internal/session"
 	"cloud-flow-edge/internal/whitelist"
 	"cloud-flow-edge/pkg/logger"
 	"cloud-flow-edge/pkg/metrics"
@@ -62,17 +64,43 @@ type Server struct {
 	// BuildServerOpts 中的 combinedInterceptor 闭包会读取此值，
 	// 而 SetAuthInterceptor 在 BuildServerOpts 之后设置，需要同步机制保护
 	authInterceptor atomic.Value // 存储 *auth.AuthInterceptor
+
+	// 分布式边缘自治增强
+	edgeID       string              // 当前 Edge 节点唯一标识
+	sessionStore session.Store       // Agent 会话存储
+	region       string              // 区域
+	zone         string              // 可用区
+	cluster      string              // 集群
 }
 
 // NewServer 创建 gRPC 服务端实例
 func NewServer(manager *probemgr.Manager, fwd *forwarder.Forwarder, log *logger.Logger, m *metrics.Metrics, apiKey string) *Server {
 	return &Server{
-		manager:   manager,
-		forwarder: fwd,
-		logger:    log,
-		metrics:   m,
-		apiKey:    apiKey,
+		manager:      manager,
+		forwarder:    fwd,
+		logger:       log,
+		metrics:      m,
+		apiKey:       apiKey,
+		sessionStore: session.NewMemoryStore(),
 	}
+}
+
+// SetEdgeConfig 设置 Edge 节点元数据（分布式边缘自治）
+func (s *Server) SetEdgeConfig(edgeID, region, zone, cluster string) {
+	s.edgeID = edgeID
+	s.region = region
+	s.zone = zone
+	s.cluster = cluster
+}
+
+// SetSessionStore 设置会话存储
+func (s *Server) SetSessionStore(store session.Store) {
+	s.sessionStore = store
+}
+
+// GetSessionStore 获取会话存储
+func (s *Server) GetSessionStore() session.Store {
+	return s.sessionStore
 }
 
 // SetConnPool 设置连接池
@@ -510,8 +538,39 @@ func (s *Server) RegisterProbe(ctx context.Context, req *edge.RegisterProbeReque
 		s.logger.Warnf("探针注册被拒绝: 参数校验失败: %v", err)
 		return &edge.RegisterProbeResponse{Success: false, Message: err.Error()}, nil
 	}
-	s.manager.Register(req.GetProbeId(), req.GetHostIp(), req.GetHostname(), req.GetVersion())
-	return &edge.RegisterProbeResponse{Success: true, Message: "注册成功", HeartbeatInterval: 30}, nil
+
+	// 注册探针到 ProbeManager
+	probe := s.manager.Register(req.GetProbeId(), req.GetHostIp(), req.GetHostname(), req.GetVersion())
+
+	// 创建/更新 Agent 会话（分布式边缘自治增强）
+	probeSession := &session.Session{
+		ProbeID:      req.GetProbeId(),
+		AssignedEdge: s.edgeID,
+		ClientIP:     req.GetHostIp(),
+		Hostname:     req.GetHostname(),
+		Version:      req.GetVersion(),
+		Region:       req.GetRegion(),
+		Zone:         req.GetZone(),
+		Cluster:      req.GetCluster(),
+		Metadata:     req.GetLabels(),
+	}
+	if err := s.sessionStore.CreateSession(probeSession); err != nil {
+		s.logger.Warnf("创建会话失败: %v", err)
+	}
+
+	// 检查是否是重连（会话已存在）
+	_, existingSession := s.sessionStore.GetSession(req.GetProbeId())
+	if existingSession && probe.RegisteredAt.Before(time.Now().Add(-1*time.Minute)) {
+		s.logger.Infof("Agent 重连: probe_id=%s, session_id=%s", req.GetProbeId(), probeSession.SessionID)
+	}
+
+	return &edge.RegisterProbeResponse{
+		Success:           true,
+		Message:           "注册成功",
+		HeartbeatInterval: 30,
+		SessionId:         probeSession.SessionID,
+		AssignedEdgeId:    s.edgeID,
+	}, nil
 }
 
 // Heartbeat 处理探针心跳请求
@@ -522,7 +581,23 @@ func (s *Server) Heartbeat(ctx context.Context, req *edge.HeartbeatRequest) (*ed
 	if err := validate.HeartbeatRequest(req); err != nil {
 		return &edge.HeartbeatResponse{Success: false}, nil
 	}
+
+	// 更新 ProbeManager 心跳
 	ok := s.manager.Heartbeat(req.GetProbeId())
+
+	// 更新会话心跳（分布式边缘自治增强）
+	if req.GetSessionId() != "" {
+		if sess, exists := s.sessionStore.GetSession(req.GetProbeId()); exists {
+			if sess.SessionID != req.GetSessionId() {
+				// Session 不匹配，可能是旧会话
+				s.logger.Warnf("心跳 Session 不匹配: probe_id=%s, expected=%s, got=%s",
+					req.GetProbeId(), sess.SessionID, req.GetSessionId())
+				return &edge.HeartbeatResponse{Success: false, Message: "session mismatch"}, nil
+			}
+		}
+	}
+	_ = s.sessionStore.UpdateHeartbeat(req.GetProbeId())
+
 	return &edge.HeartbeatResponse{Success: ok}, nil
 }
 

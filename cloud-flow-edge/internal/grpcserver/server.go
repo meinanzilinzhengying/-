@@ -18,9 +18,11 @@ import (
 	"os"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"cloud-flow-edge/internal/auth"
 	"cloud-flow-edge/internal/circuitbreaker"
@@ -351,11 +353,19 @@ func BuildServerOpts(
 	breakerInterceptor := CircuitBreakerInterceptor(breakerMgr, log)
 
 	combinedInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// C4 修复: 使用闭包变量捕获 panic 错误，确保 recover 后返回错误
+		var panicErr error
 		defer func() {
 			if r := recover(); r != nil {
 				log.Errorf("gRPC 处理 panic: %v, method=%s", r, info.FullMethod)
+				panicErr = status.Errorf(codes.Internal, "internal server error")
 			}
 		}()
+
+		// C4 修复: panic 发生后立即返回错误
+		if panicErr != nil {
+			return nil, panicErr
+		}
 
 		// 1. 全局限流
 		if rateLimit.Enabled && !rateLimiter.Allow() {

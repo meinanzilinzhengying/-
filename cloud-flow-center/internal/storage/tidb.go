@@ -27,6 +27,211 @@ import (
 // 	rand.Seed(time.Now().UnixNano())
 // }
 
+// ============================================================================
+// M1 修复: 类型安全结构体定义
+// ============================================================================
+
+// Business 业务实体
+type Business struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"`
+	Owner       string    `json:"owner"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// BusinessCreateRequest 创建业务请求
+type BusinessCreateRequest struct {
+	Name        string `json:"name" validate:"required"`
+	Description string `json:"description"`
+	Owner       string `json:"owner"`
+}
+
+// BusinessUpdateRequest 更新业务请求
+type BusinessUpdateRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+}
+
+// Service 服务实体
+type Service struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	BusinessID  string    `json:"business_id"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"`
+	Owner       string    `json:"owner"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Collector 采集器实体
+type Collector struct {
+	ID       string                 `json:"id"`
+	Name     string                 `json:"name"`
+	Type     string                 `json:"type"`
+	Config   map[string]interface{} `json:"config,omitempty"`
+	Status   string                 `json:"status"`
+	CreatedAt time.Time             `json:"created_at"`
+	UpdatedAt time.Time             `json:"updated_at"`
+}
+
+// DataNode 数据节点实体
+type DataNode struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Type       string    `json:"type"`
+	Endpoint   string    `json:"endpoint"`
+	Status     string    `json:"status"`
+	Tags       []string  `json:"tags,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// ProbeNode 探针节点实体（M1 修复: 为 GetNodes 定义结构体）
+type ProbeNode struct {
+	EdgeNodeID   string                 `json:"edge_node_id"`
+	Hostname     string                 `json:"hostname,omitempty"`
+	HostIP       string                 `json:"host_ip,omitempty"`
+	Status       string                 `json:"status,omitempty"`
+	Version      string                 `json:"version,omitempty"`
+	Tags         []string               `json:"tags,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Payload      map[string]interface{} `json:"payload,omitempty"`
+	UpdatedAt    time.Time              `json:"updated_at"`
+}
+
+// SystemOverview 系统概览（M1 修复: 为 GetOverview 定义结构体）
+type SystemOverview struct {
+	TotalNodes    int `json:"total_nodes"`
+	OnlineNodes   int `json:"online_nodes"`
+	OfflineNodes  int `json:"offline_nodes"`
+	TotalServices int `json:"total_services"`
+	Storage       string `json:"storage"`
+	Nodes         int `json:"nodes"`
+	Days          int `json:"days"`
+	TodayMetrics  int `json:"today_metrics"`
+	TodayTraces   int `json:"today_traces"`
+	TodayProfs    int `json:"today_profs"`
+}
+
+// UserPreferences 用户偏好设置
+type UserPreferences struct {
+	Username       string `json:"username"`
+	Theme         string `json:"theme"`
+	Language      string `json:"language"`
+	PageSize      int    `json:"page_size"`
+	RefreshInterval int   `json:"refresh_interval"`
+}
+
+// PaginationResult 分页结果
+type PaginationResult[T any] struct {
+	Items    []T `json:"items"`
+	Total    int `json:"total"`
+	Page     int `json:"page"`
+	PageSize int `json:"page_size"`
+}
+
+// ToMap 将 Business 转换为 map（向后兼容）
+func (b *Business) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"id":          b.ID,
+		"name":        b.Name,
+		"description": b.Description,
+		"status":      b.Status,
+		"owner":       b.Owner,
+		"created_at":   b.CreatedAt.Unix(),
+		"updated_at":   b.UpdatedAt.Unix(),
+	}
+}
+
+// ToMap 将 Service 转换为 map（向后兼容）
+func (s *Service) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"id":           s.ID,
+		"name":         s.Name,
+		"business_id":  s.BusinessID,
+		"description":  s.Description,
+		"status":       s.Status,
+		"owner":        s.Owner,
+		"created_at":   s.CreatedAt.Unix(),
+		"updated_at":   s.UpdatedAt.Unix(),
+	}
+}
+
+// ToMap 将 Collector 转换为 map（向后兼容）
+func (c *Collector) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"id":         c.ID,
+		"name":       c.Name,
+		"type":       c.Type,
+		"config":     c.Config,
+		"status":     c.Status,
+		"created_at": c.CreatedAt.Unix(),
+		"updated_at": c.UpdatedAt.Unix(),
+	}
+}
+
+// ToMap 将 DataNode 转换为 map（向后兼容）
+func (d *DataNode) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"id":         d.ID,
+		"name":       d.Name,
+		"type":       d.Type,
+		"endpoint":   d.Endpoint,
+		"status":     d.Status,
+		"tags":       d.Tags,
+		"created_at": d.CreatedAt.Unix(),
+		"updated_at": d.UpdatedAt.Unix(),
+	}
+}
+
+// ToMap 将 ProbeNode 转换为 map（向后兼容）
+func (p *ProbeNode) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"edge_node_id": p.EdgeNodeID,
+		"hostname":     p.Hostname,
+		"host_ip":      p.HostIP,
+		"status":       p.Status,
+		"version":      p.Version,
+		"tags":         p.Tags,
+		"metadata":     p.Metadata,
+		"payload":      p.Payload,
+		"updated_at":   p.UpdatedAt.Unix(),
+	}
+}
+
+// ToMap 将 SystemOverview 转换为 map（向后兼容）
+func (o *SystemOverview) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"status":        "running",
+		"total_nodes":   o.TotalNodes,
+		"online_nodes":  o.OnlineNodes,
+		"offline_nodes": o.OfflineNodes,
+		"total_services": o.TotalServices,
+		"storage":       o.Storage,
+		"nodes":         o.Nodes,
+		"days":          o.Days,
+		"today_metrics": o.TodayMetrics,
+		"today_traces":  o.TodayTraces,
+		"today_profs":   o.TodayProfs,
+	}
+}
+
+// ToMap 将 UserPreferences 转换为 map（向后兼容）
+func (u *UserPreferences) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"username":        u.Username,
+		"theme":          u.Theme,
+		"language":       u.Language,
+		"page_size":      u.PageSize,
+		"refresh_interval": u.RefreshInterval,
+	}
+}
+
 // TiDBStorage TiDB存储引擎实现
 type TiDBStorage struct {
 	db            *sql.DB
@@ -1488,21 +1693,28 @@ func (s *TiDBStorage) QueryTraces(day string, probeID string, limit int) ([]map[
 }
 
 // GetOverview 获取系统概览
+// M1 修复: 使用 SystemOverview 结构体，确保类型安全
 func (s *TiDBStorage) GetOverview() (map[string]interface{}, error) {
+	// M1: 使用结构化版本
+	overview, err := s.GetOverviewTyped()
+	if err != nil {
+		return nil, err
+	}
+	return overview.ToMap(), nil
+}
+
+// GetOverviewTyped 获取系统概览（类型安全版本，M1 修复）
+func (s *TiDBStorage) GetOverviewTyped() (*SystemOverview, error) {
 	s.muCache.RLock()
-	// 检查缓存是否过期（TTL）或被按 key 粒度标记失效
-	cachedAt := s.overviewCacheExpiry.Add(-1 * time.Minute) // 推算缓存写入时间
+	cachedAt := s.overviewCacheExpiry.Add(-1 * time.Minute)
 	if time.Now().Before(s.overviewCacheExpiry) && len(s.overviewCache) > 0 && !s.isCacheKeyInvalidatedLocked("overview", cachedAt) {
-		result := make(map[string]interface{})
-		for k, v := range s.overviewCache {
-			result[k] = v
-		}
+		result := mapToSystemOverview(s.overviewCache)
 		s.muCache.RUnlock()
 		return result, nil
 	}
 	s.muCache.RUnlock()
 
-	// 缓存过期，重新查询
+	// M1: 缓存过期，重新查询，使用结构体
 	var metricsToday, tracesToday, profsToday int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM metrics WHERE ts >= DATE(NOW())").Scan(&metricsToday); err != nil {
 		s.logger.Warnf("查询今日指标数失败: %v", err)
@@ -1524,45 +1736,119 @@ func (s *TiDBStorage) GetOverview() (map[string]interface{}, error) {
 		s.logger.Warnf("查询天数失败: %v", err)
 	}
 
-	result := map[string]interface{}{
-		"status":         "running",
-		"storage":        "tidb",
-		"nodes":          nodeCount,
-		"days":           dayCount,
-		"today_metrics":  metricsToday,
-		"today_traces":   tracesToday,
-		"today_profs":    profsToday,
+	// M1: 构建结构体（类型安全）
+	result := &SystemOverview{
+		TotalNodes:   nodeCount,
+		OnlineNodes:  0, // 需要从 probes 表获取在线状态
+		OfflineNodes: 0,
+		Storage:      "tidb",
+		Nodes:        nodeCount,
+		Days:         dayCount,
+		TodayMetrics: metricsToday,
+		TodayTraces:  tracesToday,
+		TodayProfs:   profsToday,
 	}
 
 	s.muCache.Lock()
-	s.overviewCache = result
+	s.overviewCache = result.ToMap()
 	s.overviewCacheExpiry = time.Now().Add(1 * time.Minute)
-	delete(s.cacheInvalidationTime, "overview") // 清除失效标记，新缓存已生效
+	delete(s.cacheInvalidationTime, "overview")
 	s.muCache.Unlock()
 
 	return result, nil
 }
 
+// mapToSystemOverview 将 map 转换为 SystemOverview（M1 修复）
+func mapToSystemOverview(m map[string]interface{}) *SystemOverview {
+	overview := &SystemOverview{Storage: "tidb"}
+
+	if v, ok := m["total_nodes"].(int); ok {
+		overview.TotalNodes = v
+	}
+	if v, ok := m["total_nodes"].(int64); ok {
+		overview.TotalNodes = int(v)
+	}
+	if v, ok := m["online_nodes"].(int); ok {
+		overview.OnlineNodes = v
+	}
+	if v, ok := m["online_nodes"].(int64); ok {
+		overview.OnlineNodes = int(v)
+	}
+	if v, ok := m["offline_nodes"].(int); ok {
+		overview.OfflineNodes = v
+	}
+	if v, ok := m["offline_nodes"].(int64); ok {
+		overview.OfflineNodes = int(v)
+	}
+	if v, ok := m["total_services"].(int); ok {
+		overview.TotalServices = v
+	}
+	if v, ok := m["nodes"].(int); ok {
+		overview.Nodes = v
+	}
+	if v, ok := m["nodes"].(int64); ok {
+		overview.Nodes = int(v)
+	}
+	if v, ok := m["days"].(int); ok {
+		overview.Days = v
+	}
+	if v, ok := m["days"].(int64); ok {
+		overview.Days = int(v)
+	}
+	if v, ok := m["today_metrics"].(int); ok {
+		overview.TodayMetrics = v
+	}
+	if v, ok := m["today_metrics"].(int64); ok {
+		overview.TodayMetrics = int(v)
+	}
+	if v, ok := m["today_traces"].(int); ok {
+		overview.TodayTraces = v
+	}
+	if v, ok := m["today_traces"].(int64); ok {
+		overview.TodayTraces = int(v)
+	}
+	if v, ok := m["today_profs"].(int); ok {
+		overview.TodayProfs = v
+	}
+	if v, ok := m["today_profs"].(int64); ok {
+		overview.TodayProfs = int(v)
+	}
+
+	return overview
+}
+
 // GetNodes 获取探针列表
 // H6 修复: 添加缓存大小限制和统计
+// M1 修复: 内部使用 ProbeNode 结构体，确保类型安全
 func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
+	// M1: 使用结构化版本获取数据
+	nodes, err := s.GetNodesTyped()
+	if err != nil {
+		return nil, err
+	}
+	// M1: 转换为 map 以保持向后兼容
+	result := make([]map[string]interface{}, len(nodes))
+	for i, node := range nodes {
+		result[i] = node.ToMap()
+	}
+	return result, nil
+}
+
+// GetNodesTyped 获取探针列表（类型安全版本，M1 修复）
+func (s *TiDBStorage) GetNodesTyped() ([]ProbeNode, error) {
 	s.muCache.RLock()
 	// 检查缓存是否过期（TTL）或被按 key 粒度标记失效
-	cachedAt := s.nodesCacheExpiry.Add(-1 * time.Minute) // 推算缓存写入时间
+	cachedAt := s.nodesCacheExpiry.Add(-1 * time.Minute)
 	if time.Now().Before(s.nodesCacheExpiry) && len(s.nodesCache) > 0 && !s.isCacheKeyInvalidatedLocked("nodes", cachedAt) {
-		result := make([]map[string]interface{}, len(s.nodesCache))
+		// M1: 将缓存的 map 转换为结构体
+		result := make([]ProbeNode, len(s.nodesCache))
 		for i, node := range s.nodesCache {
-			result[i] = make(map[string]interface{})
-			for k, v := range node {
-				result[i][k] = v
-			}
+			result[i] = mapToProbeNode(node)
 		}
-		// H6: 更新缓存命中统计
 		s.cacheStats.CacheHits++
 		s.muCache.RUnlock()
 		return result, nil
 	}
-	// H6: 更新缓存未命中统计
 	s.cacheStats.CacheMisses++
 	s.muCache.RUnlock()
 
@@ -1572,7 +1858,8 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 	}
 	defer rows.Close()
 
-	var nodes []map[string]interface{}
+	// M1: 使用结构体替代 map
+	var nodes []ProbeNode
 	var totalBytes int64
 	for rows.Next() {
 		var nodeID, payloadStr string
@@ -1585,9 +1872,29 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 			s.logger.Warnf("反序列化 probes payload 失败 (node_id=%s): %v", nodeID, err)
 			payload = make(map[string]interface{})
 		}
-		payload["edge_node_id"] = nodeID
-		payload["updated_at"] = updatedAt
-		nodes = append(nodes, payload)
+
+		// M1: 构建结构体（类型安全）
+		node := ProbeNode{
+			EdgeNodeID: nodeID,
+			UpdatedAt:  time.Unix(updatedAt, 0),
+			Payload:    payload,
+		}
+
+		// M1: 提取常见字段到独立属性（IDE 自动补全）
+		if hostname, ok := payload["hostname"].(string); ok {
+			node.Hostname = hostname
+		}
+		if hostIP, ok := payload["host_ip"].(string); ok {
+			node.HostIP = hostIP
+		}
+		if status, ok := payload["status"].(string); ok {
+			node.Status = status
+		}
+		if version, ok := payload["version"].(string); ok {
+			node.Version = version
+		}
+
+		nodes = append(nodes, node)
 		totalBytes += int64(len(payloadStr))
 
 		// H6: 限制缓存条目数，防止内存无限增长
@@ -1600,22 +1907,66 @@ func (s *TiDBStorage) GetNodes() ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("查询结果处理失败: %w", err)
 	}
 
+	// M1: 将结构体转换回 map 用于缓存（保持现有缓存逻辑）
+	cacheData := make([]map[string]interface{}, len(nodes))
+	for i, node := range nodes {
+		cacheData[i] = node.ToMap()
+	}
+
 	s.muCache.Lock()
-	s.nodesCache = nodes
+	s.nodesCache = cacheData
 	s.nodesCacheExpiry = time.Now().Add(1 * time.Minute)
-	// H6: 更新缓存统计
 	s.cacheStats.NodesCacheSize = len(nodes)
 	s.cacheStats.NodesCacheBytes = totalBytes
 	s.cacheStats.LastUpdated = time.Now()
-	delete(s.cacheInvalidationTime, "nodes") // 清除失效标记，新缓存已生效
+	delete(s.cacheInvalidationTime, "nodes")
 	s.muCache.Unlock()
 
-	// H6: 内存使用监控告警
-	if totalBytes > 50*1024*1024 { // 超过 50MB
+	if totalBytes > 50*1024*1024 {
 		s.logger.Warnf("[H6] nodesCache 内存占用过高: %d MB，建议降低 maxNodesCacheSize 或优化探针 payload", totalBytes/1024/1024)
 	}
 
 	return nodes, nil
+}
+
+// mapToProbeNode 将 map 转换为 ProbeNode（M1 修复）
+func mapToProbeNode(m map[string]interface{}) ProbeNode {
+	node := ProbeNode{}
+
+	if edgeNodeID, ok := m["edge_node_id"].(string); ok {
+		node.EdgeNodeID = edgeNodeID
+	}
+	if hostname, ok := m["hostname"].(string); ok {
+		node.Hostname = hostname
+	}
+	if hostIP, ok := m["host_ip"].(string); ok {
+		node.HostIP = hostIP
+	}
+	if status, ok := m["status"].(string); ok {
+		node.Status = status
+	}
+	if version, ok := m["version"].(string); ok {
+		node.Version = version
+	}
+	if tags, ok := m["tags"].([]interface{}); ok {
+		node.Tags = make([]string, len(tags))
+		for i, t := range tags {
+			if s, ok := t.(string); ok {
+				node.Tags[i] = s
+			}
+		}
+	}
+	if metadata, ok := m["metadata"].(map[string]interface{}); ok {
+		node.Metadata = metadata
+	}
+	if payload, ok := m["payload"].(map[string]interface{}); ok {
+		node.Payload = payload
+	}
+	if updatedAt, ok := m["updated_at"].(int64); ok {
+		node.UpdatedAt = time.Unix(updatedAt, 0)
+	}
+
+	return node
 }
 
 // StartCleanup 启动清理协程

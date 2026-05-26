@@ -114,7 +114,7 @@ services:
     ports:
       - "10001:50051"  # gRPC Agent (探针连接)
       - "10002:9092"   # gRPC Center (中心连接) / Metrics
-      - "9091:8081"   # Health
+      - "9095:8081"   # Health
     environment:
       TZ: Asia/Shanghai
       EDGE_NODE_ID: "${EDGE_NODE_ID:-edge-node-01}"

@@ -120,7 +120,7 @@ install_dependencies() {
                 apt-get update -qq
                 ;;
             yum)
-                yum makecache fast
+                yum makecache
                 ;;
             dnf)
                 dnf makecache

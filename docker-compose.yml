@@ -27,6 +27,8 @@ services:
       - "127.0.0.1:10080:10080"  # Status 端口 - 仅本地访问
     environment:
       TZ: Asia/Shanghai
+      # DEP-P0-01 修复: 强制要求设置数据库密码
+      MYSQL_ROOT_PASSWORD: "${CLOUD_FLOW_DB_PASSWORD:?请在 .env 文件中设置 CLOUD_FLOW_DB_PASSWORD}"
     volumes:
       - tidb-data:/var/lib/tidb
     healthcheck:
@@ -141,11 +143,11 @@ services:
         condition: service_healthy
     ports:
       - "9090:8080"  # Portal HTTP
-      - "9999:9090"  # gRPC
+      # DEP-P0-03 修复: gRPC 端口不暴露到外网，仅容器内部访问
     environment:
       TZ: Asia/Shanghai
       # [安全] 生产环境必须设置 CLOUD_FLOW_DB_PASSWORD 环境变量
-      CLOUD_FLOW_DSN: "root:${CLOUD_FLOW_DB_PASSWORD:-}@tcp(tidb:4000)/cloud_flow?parseTime=true&charset=utf8mb4&collation=utf8mb4_bin"
+      CLOUD_FLOW_DSN: "root:${CLOUD_FLOW_DB_PASSWORD:?请在 .env 文件中设置 CLOUD_FLOW_DB_PASSWORD}@tcp(tidb:4000)/cloud_flow?parseTime=true&charset=utf8mb4&collation=utf8mb4_bin"
       # [安全] 生产环境必须设置强密钥，否则容器无法启动
       CLOUD_FLOW_JWT_SECRET: "${CLOUD_FLOW_JWT_SECRET:?请在 .env 文件中设置 CLOUD_FLOW_JWT_SECRET}"
       # [安全] 生产环境必须设置强密码，否则容器无法启动
@@ -177,9 +179,9 @@ services:
       center:
         condition: service_healthy
     ports:
-      - "10001:50051"  # gRPC Agent (探针连接)
-      - "10002:9092"   # gRPC Center (中心连接) / Metrics
-      - "9095:8081"   # Health
+      # DEP-P0-03 修复: gRPC 端口仅容器内部访问，不暴露到外网
+      - "127.0.0.1:10001:50051"  # gRPC Agent (探针连接) - 仅本地访问
+      - "127.0.0.1:9095:8081"   # Health - 仅本地访问
     environment:
       TZ: Asia/Shanghai
       EDGE_NODE_ID: "${EDGE_NODE_ID:-edge-node-01}"
@@ -187,11 +189,8 @@ services:
       GRPC_LISTEN_PORT: "50051"
       METRICS_PORT: "9092"
       HEALTH_PORT: "8081"
-      # N1 修复: API Key 配置说明
-      # CLOUD_FLOW_API_KEY: 用于 Agent 连接 Edge 的认证
-      # 生产环境必须设置，否则 Edge 会发出安全警告
-      CLOUD_FLOW_API_KEY: "${CLOUD_FLOW_API_KEY:-}"
-      # CLOUD_FLOW_CENTER_API_KEY: 用于 Edge 连接 Center 的认证
+      # DEP-P0-02 修复: 强制要求设置 API Key，否则容器无法启动
+      CLOUD_FLOW_API_KEY: "${CLOUD_FLOW_API_KEY:?请在 .env 文件中设置 CLOUD_FLOW_API_KEY}"
       CLOUD_FLOW_CENTER_API_KEY: "${CLOUD_FLOW_CENTER_API_KEY:-}"
     networks:
       - cloud-flow-net
@@ -221,7 +220,8 @@ services:
       HEALTH_PORT: "8080"
       COLLECT_INTERVAL: "10"
       BATCH_SIZE: "10"
-      CLOUD_FLOW_API_KEY: "${CLOUD_FLOW_API_KEY:-}"
+      # DEP-P0-02 修复: 强制要求设置 API Key
+      CLOUD_FLOW_API_KEY: "${CLOUD_FLOW_API_KEY:?请在 .env 文件中设置 CLOUD_FLOW_API_KEY}"
     networks:
       - cloud-flow-net
 

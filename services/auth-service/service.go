@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -220,8 +221,8 @@ func (s *Service) Authenticate(ctx context.Context, req *svcproto.AuthenticateRe
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// TODO: bcrypt.VerifyHash
-	if user.Password != req.Password {
+	// 使用 bcrypt 验证密码哈希
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 

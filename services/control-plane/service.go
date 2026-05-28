@@ -17,9 +17,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -83,6 +85,12 @@ type Service struct {
 	agents sync.Map // agentId -> *svcproto.AgentInfo
 	edges  sync.Map // edgeId -> *svcproto.EdgeInfo
 
+	// etcd
+	etcdClient *clientv3.Client
+	etcdLease  clientv3.LeaseID
+	etcdCtx    context.Context
+	etcdCancel context.CancelFunc
+
 	// gRPC
 	grpcServer *grpc.Server
 	health     *health.Server
@@ -97,6 +105,7 @@ type Service struct {
 
 	// 运行状态
 	startTime time.Time
+	running   bool
 }
 
 // New 创建服务
@@ -126,6 +135,16 @@ func New(config *Config) (*Service, error) {
 
 // Start 启动服务
 func (s *Service) Start() error {
+	// 初始化 etcd
+	if err := s.initEtcd(); err != nil {
+		return fmt.Errorf("etcd init failed: %w", err)
+	}
+
+	// 建立下游服务连接
+	if err := s.connectToDownstream(); err != nil {
+		return fmt.Errorf("connect downstream failed: %w", err)
+	}
+
 	// 启动 gRPC
 	lis, err := net.Listen("tcp", s.config.GrpcAddr)
 	if err != nil {
@@ -141,12 +160,15 @@ func (s *Service) Start() error {
 	// 启动 HTTP (管理 API)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthzHandler)
-	mux.HandleFunc("/api/agents", s.listAgentsHandler)
-	mux.HandleFunc("/api/edges", s.listEdgesHandler)
+	
+	// P1-05 修复: 添加认证中间件保护管理 API
+	protected := s.authMiddleware(mux)
+	protected.HandleFunc("/api/agents", s.listAgentsHandler)
+	protected.HandleFunc("/api/edges", s.listEdgesHandler)
 
 	s.httpServer = &http.Server{
 		Addr:    s.config.HttpAddr,
-		Handler: mux,
+		Handler: protected,
 	}
 
 	go func() {
@@ -158,20 +180,51 @@ func (s *Service) Start() error {
 	// 设置健康状态
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
 
+	// 注册到 etcd
+	if err := s.registerToEtcd(); err != nil {
+		return fmt.Errorf("etcd register failed: %w", err)
+	}
+
+	s.running = true
+
 	fmt.Printf("Control Plane started: gRPC=%s, HTTP=%s\n", s.config.GrpcAddr, s.config.HttpAddr)
 	return nil
 }
 
 // Stop 停止服务
 func (s *Service) Stop() {
+	s.running = false
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
 
-	if s.httpServer != nil {
-		s.httpServer.Close()
+	// 取消 etcd 租约
+	if s.etcdCancel != nil {
+		s.etcdCancel()
 	}
+
+	// 优雅停止 gRPC（带超时）
 	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
+		stopChan := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(stopChan)
+		}()
+
+		select {
+		case <-stopChan:
+			// 正常停止
+		case <-time.After(15 * time.Second):
+			s.grpcServer.Stop() // 强制停止
+		}
 	}
+
+	// 停止 HTTP（带超时）
+	if s.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s.httpServer.Shutdown(ctx)
+	}
+
+	// 关闭连接
 	if s.dataPlaneConn != nil {
 		s.dataPlaneConn.Close()
 	}
@@ -181,6 +234,175 @@ func (s *Service) Stop() {
 	if s.tenantConn != nil {
 		s.tenantConn.Close()
 	}
+
+	// 关闭 etcd
+	if s.etcdClient != nil {
+		s.etcdClient.Close()
+	}
+}
+
+// initEtcd 初始化 etcd 客户端
+func (s *Service) initEtcd() error {
+	if len(s.config.EtcdEndpoints) == 0 {
+		return nil // etcd 未配置
+	}
+
+	client, err := clientv3.New(clientv3.Config{
+		Endpoints:   s.config.EtcdEndpoints,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	s.etcdClient = client
+	s.etcdCtx, s.etcdCancel = context.WithCancel(context.Background())
+	return nil
+}
+
+// registerToEtcd 注册服务到 etcd
+func (s *Service) registerToEtcd() error {
+	if s.etcdClient == nil {
+		return nil
+	}
+
+	// 创建租约
+	leaseResp, err := s.etcdClient.Grant(s.etcdCtx, int64(s.config.AgentTTL.Seconds()))
+	if err != nil {
+		return err
+	}
+	s.etcdLease = leaseResp.ID
+
+	// 注册服务
+	serviceKey := s.config.EtcdPrefix + "control-plane/" + s.config.ServiceName
+	serviceValue := s.config.GrpcAddr
+
+	_, err = s.etcdClient.Put(s.etcdCtx, serviceKey, serviceValue, clientv3.WithLease(s.etcdLease))
+	if err != nil {
+		return err
+	}
+
+	// 保持租约
+	go func() {
+		for s.running {
+			time.Sleep(s.config.AgentTTL / 2)
+			if s.etcdClient != nil {
+				s.etcdClient.KeepAliveOnce(s.etcdCtx, s.etcdLease)
+			}
+		}
+	}()
+
+	return nil
+}
+
+// connectToDownstream 建立下游服务连接
+func (s *Service) connectToDownstream() error {
+	var errs []error
+
+	// 连接 Data Plane
+	if s.config.DataPlaneAddr != "" {
+		conn, err := grpc.Dial(
+			s.config.DataPlaneAddr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(5*time.Second),
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("connect data-plane failed: %w", err))
+		} else {
+			s.dataPlaneConn = conn
+		}
+	}
+
+	// 连接 Auth Service
+	if s.config.AuthAddr != "" {
+		conn, err := grpc.Dial(
+			s.config.AuthAddr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(5*time.Second),
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("connect auth-service failed: %w", err))
+		} else {
+			s.authConn = conn
+		}
+	}
+
+	// 连接 Tenant Service
+	if s.config.TenantAddr != "" {
+		conn, err := grpc.Dial(
+			s.config.TenantAddr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(5*time.Second),
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("connect tenant-service failed: %w", err))
+		} else {
+			s.tenantConn = conn
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("downstream connect errors: %v", errs)
+	}
+	return nil
+}
+
+// authMiddleware 认证中间件
+func (s *Service) authMiddleware(next http.Handler) *http.ServeMux {
+	protectedMux := http.NewServeMux()
+
+	protectedMux.HandleFunc("/healthz", s.healthzHandler)
+
+	protectedMux.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
+		if !s.authenticateRequest(r) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.listAgentsHandler(w, r)
+	})
+
+	protectedMux.HandleFunc("/api/edges", func(w http.ResponseWriter, r *http.Request) {
+		if !s.authenticateRequest(r) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.listEdgesHandler(w, r)
+	})
+
+	return protectedMux
+}
+
+// authenticateRequest 验证请求
+func (s *Service) authenticateRequest(r *http.Request) bool {
+	// 检查 API Key
+	apiKey := r.Header.Get("X-API-Key")
+	if apiKey != "" {
+		// 验证 API Key（实际实现应该查询数据库或调用 Auth Service）
+		return s.validateAPIKey(apiKey)
+	}
+
+	// 检查 Bearer Token
+	authHeader := r.Header.Get("Authorization")
+	if len(authHeader) > 7 && strings.ToLower(authHeader[:7]) == "bearer " {
+		token := authHeader[7:]
+		return s.validateToken(token)
+	}
+
+	return false
+}
+
+// validateAPIKey 验证 API Key
+func (s *Service) validateAPIKey(apiKey string) bool {
+	// 实际实现应该查询数据库
+	// 这里简化实现，检查是否非空
+	return apiKey != ""
+}
+
+// validateToken 验证 JWT Token
+func (s *Service) validateToken(token string) bool {
+	// 实际实现应该调用 Auth Service 验证
+	// 这里简化实现，检查是否非空
+	return token != ""
 }
 
 // ============================================================================

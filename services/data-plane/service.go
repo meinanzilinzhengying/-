@@ -15,6 +15,7 @@ package dataplane
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -93,6 +95,7 @@ type Stats struct {
 	LogsIngested    uint64
 	FlowsDropped    uint64
 	FlowsSampled    uint64 // 被采样保留的 flow
+	FlowsWritten    uint64 // 成功写入存储的 flow
 	WriteErrors     uint64
 	AvgLatencyMs    uint64
 }
@@ -113,6 +116,9 @@ type Service struct {
 	metricQueue chan interface{}
 	traceQueue  chan interface{}
 	logQueue    chan interface{}
+
+	// 存储
+	clickHouseDB *sql.DB
 
 	// 统计
 	stats Stats
@@ -169,6 +175,11 @@ func (s *Service) Start() error {
 	// 启动采样引擎后台任务
 	s.samplingEngine.Start(context.Background())
 
+	// 初始化 ClickHouse 连接
+	if err := s.initClickHouse(); err != nil {
+		return fmt.Errorf("ClickHouse init failed: %w", err)
+	}
+
 	// 启动 gRPC
 	lis, err := net.Listen("tcp", s.config.GrpcAddr)
 	if err != nil {
@@ -219,6 +230,90 @@ func (s *Service) Stop() {
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()
 	}
+
+	// 关闭 ClickHouse 连接
+	if s.clickHouseDB != nil {
+		s.clickHouseDB.Close()
+	}
+}
+
+// initClickHouse 初始化 ClickHouse 连接
+func (s *Service) initClickHouse() error {
+	if s.config.ClickHouseAddr == "" {
+		return nil // ClickHouse 未配置，跳过
+	}
+
+	dsn := fmt.Sprintf("clickhouse://%s/cloudflow", s.config.ClickHouseAddr)
+	db, err := sql.Open("clickhouse", dsn)
+	if err != nil {
+		return err
+	}
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+
+	// 测试连接
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+
+	s.clickHouseDB = db
+	return nil
+}
+
+// writeToClickHouse 写入 Flow 到 ClickHouse
+func (s *Service) writeToClickHouse(flows []*flow.UnifiedFlow) error {
+	if s.clickHouseDB == nil {
+		return fmt.Errorf("ClickHouse not configured")
+	}
+
+	tx, err := s.clickHouseDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO flows (
+			timestamp, flow_id, schema_version,
+			src_ip, dst_ip, src_port, dst_port, protocol, tcp_flags,
+			l7_protocol, method, path, status_code, req_size, resp_size,
+			grpc_service, grpc_method, grpc_status,
+			pid, process_name, comm,
+			container_id, container_name, image,
+			pod, namespace, deployment, service, node,
+			trace_id, span_id, parent_id,
+			host_id, hostname, tenant_id,
+			bytes, packets, latency_ns, direction, exception, tags
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, f := range flows {
+		_, err := stmt.Exec(
+			f.Timestamp, f.FlowID, f.SchemaVersion,
+			f.SrcIP.String(), f.DstIP.String(), f.SrcPort, f.DstPort, f.Protocol, f.TCPFlags,
+			f.L7Protocol, f.Method, f.Path.String(), f.StatusCode, f.ReqSize, f.RespSize,
+			f.GetGRPCService(), f.GetGRPCMethod(), 0,
+			f.PID, f.ProcessName.String(), f.Comm.String(),
+			f.ContainerID.String(), f.ContainerName.String(), f.Image.String(),
+			f.Pod.String(), f.Namespace.String(), f.Deployment.String(), f.Service.String(), f.Node.String(),
+			f.TraceID.String(), f.SpanID.String(), f.ParentID.String(),
+			f.HostID.String(), f.Hostname.String(), f.TenantID.String(),
+			f.Bytes, f.Packets, f.LatencyNs, f.Direction, f.GetL7Exception(), "",
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // IngestFlow 接收 Flow（含采样决策）
@@ -302,15 +397,29 @@ func (s *Service) flowWorker() {
 			}
 		}
 	}
+
+	// 优雅退出：刷新剩余数据
+	if len(batch) > 0 {
+		s.flushFlows(batch)
+	}
 }
 
 // flushFlows 刷新 Flow 到存储
 func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
-	// TODO: 写入 ClickHouse
-	_ = batch
-	s.statsMu.Lock()
-	s.stats.WriteErrors++
-	s.statsMu.Unlock()
+	if len(batch) == 0 {
+		return
+	}
+
+	// 写入 ClickHouse
+	if err := s.writeToClickHouse(batch); err != nil {
+		s.statsMu.Lock()
+		s.stats.WriteErrors += uint64(len(batch))
+		s.statsMu.Unlock()
+	} else {
+		s.statsMu.Lock()
+		s.stats.FlowsWritten += uint64(len(batch))
+		s.statsMu.Unlock()
+	}
 }
 
 // ============================================================================

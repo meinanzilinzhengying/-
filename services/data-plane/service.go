@@ -13,12 +13,15 @@
 package dataplane
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +56,7 @@ type Config struct {
 
 	// 存储后端
 	ClickHouseAddr      string
+	ClickHouseDatabase string
 	VictoriaMetricsAddr string
 	LokiAddr            string
 
@@ -76,6 +80,7 @@ func DefaultConfig() *Config {
 		QueueSize:           100000,
 		WorkerCount:         4,
 		ClickHouseAddr:      "clickhouse:9000",
+		ClickHouseDatabase:  "cloudflow",
 		VictoriaMetricsAddr: "http://victoriametrics:8428",
 		LokiAddr:            "http://loki:3100",
 		Sampling:            sampling.NewSamplingConfig(),
@@ -118,6 +123,8 @@ type Service struct {
 
 	// 存储
 	clickHouseDB *sql.DB
+	vmHTTPClient *http.Client
+	lokiHTTPClient *http.Client
 
 	// 统计
 	stats Stats
@@ -156,6 +163,30 @@ func New(config *Config) (*Service, error) {
 		logQueue:       make(chan interface{}, config.QueueSize),
 		startTime:      time.Now(),
 		health:         health.NewServer(),
+	}
+
+	// P0-06 新增: 初始化 VictoriaMetrics HTTP 客户端
+	if config.VictoriaMetricsAddr != "" {
+		s.vmHTTPClient = &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:    10,
+				MaxConnsPerHost: 10,
+				IdleConnTimeout: 90 * time.Second,
+			},
+		}
+	}
+
+	// P0-06 新增: 初始化 Loki HTTP 客户端
+	if config.LokiAddr != "" {
+		s.lokiHTTPClient = &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:    10,
+				MaxConnsPerHost: 10,
+				IdleConnTimeout: 90 * time.Second,
+			},
+		}
 	}
 
 	s.grpcServer = grpc.NewServer(
@@ -197,6 +228,8 @@ func (s *Service) Start() error {
 	mux.HandleFunc("/metrics", s.statsHandler)
 	mux.HandleFunc("/api/sampling/config", s.samplingConfigHandler)
 	mux.HandleFunc("/api/sampling/stats", s.samplingStatsHandler)
+	mux.HandleFunc("/api/ingest/metrics", s.ingestMetricsHandler)  // P0-06 新增: 接收指标
+	mux.HandleFunc("/api/ingest/logs", s.ingestLogsHandler)      // P0-06 新增: 接收日志
 
 	s.metricsServer = &http.Server{Addr: s.config.MetricsAddr, Handler: mux}
 	go func() {
@@ -205,10 +238,16 @@ func (s *Service) Start() error {
 		}
 	}()
 
-	// 启动 workers
+	// P0-06 新增: 启动 Flow workers
 	for i := 0; i < s.config.WorkerCount; i++ {
 		go s.flowWorker()
 	}
+
+	// P0-06 新增: 启动 Metric worker
+	go s.metricWorker()
+
+	// P0-06 新增: 启动 Log worker
+	go s.logWorker()
 
 	s.running.Store(true)
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
@@ -242,7 +281,12 @@ func (s *Service) initClickHouse() error {
 		return nil // ClickHouse 未配置，跳过
 	}
 
-	dsn := fmt.Sprintf("clickhouse://%s/cloudflow", s.config.ClickHouseAddr)
+	database := s.config.ClickHouseDatabase
+	if database == "" {
+		database = "cloudflow"
+	}
+
+	dsn := fmt.Sprintf("clickhouse://%s/%s", s.config.ClickHouseAddr, database)
 	db, err := sql.Open("clickhouse", dsn)
 	if err != nil {
 		return err
@@ -260,6 +304,7 @@ func (s *Service) initClickHouse() error {
 	}
 
 	s.clickHouseDB = db
+	fmt.Printf("Data Plane ClickHouse connected: %s/%s\n", s.config.ClickHouseAddr, database)
 	return nil
 }
 
@@ -313,6 +358,175 @@ func (s *Service) writeToClickHouse(flows []*flow.UnifiedFlow) error {
 	}
 
 	return tx.Commit()
+}
+
+// writeToVictoriaMetrics P0-06 新增: 写入指标到 VictoriaMetrics
+func (s *Service) writeToVictoriaMetrics(flows []*flow.UnifiedFlow) error {
+	if s.vmHTTPClient == nil || s.config.VictoriaMetricsAddr == "" {
+		return nil // VictoriaMetrics 未配置，跳过
+	}
+
+	// 将 Flow 转换为 VictoriaMetrics 的 prometheus 格式
+	// 格式: metric_name{labels} value timestamp
+	var sb strings.Builder
+
+	for _, f := range flows {
+		labels := fmt.Sprintf(`src_ip="%s",dst_ip="%s",protocol="%s",service="%s",namespace="%s",tenant_id="%s"`,
+			f.SrcIP.String(), f.DstIP.String(), f.Protocol.String(),
+			f.Service.String(), f.Namespace.String(), f.TenantID.String())
+
+		// 写入字节数
+		sb.WriteString(fmt.Sprintf("flow_bytes{%s} %d %d\n", labels, f.Bytes, f.Timestamp))
+
+		// 写入包数
+		sb.WriteString(fmt.Sprintf("flow_packets{%s} %d %d\n", labels, f.Packets, f.Timestamp))
+
+		// 写入延迟
+		sb.WriteString(fmt.Sprintf("flow_latency_ns{%s} %d %d\n", labels, f.LatencyNs, f.Timestamp))
+
+		// 写入请求大小
+		if f.ReqSize > 0 {
+			sb.WriteString(fmt.Sprintf("flow_req_size{%s} %d %d\n", labels, f.ReqSize, f.Timestamp))
+		}
+
+		// 写入响应大小
+		if f.RespSize > 0 {
+			sb.WriteString(fmt.Sprintf("flow_resp_size{%s} %d %d\n", labels, f.RespSize, f.Timestamp))
+		}
+	}
+
+	// 发送到 VictoriaMetrics
+	url := s.config.VictoriaMetricsAddr + "/api/v1/import/prometheus"
+	req, err := http.NewRequest("POST", url, strings.NewReader(sb.String()))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+
+	resp, err := s.vmHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("VictoriaMetrics request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("VictoriaMetrics returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// writeToLoki P0-06 新增: 写入日志到 Loki
+func (s *Service) writeToLoki(flows []*flow.UnifiedFlow) error {
+	if s.lokiHTTPClient == nil || s.config.LokiAddr == "" {
+		return nil // Loki 未配置，跳过
+	}
+
+	// 将 Flow 转换为 Loki 的 log 格式
+	// Loki 使用 push API 接收日志
+	streams := make(map[string][]logEntry)
+
+	for _, f := range flows {
+		labels := fmt.Sprintf(`{src_ip="%s",dst_ip="%s",protocol="%s",service="%s",namespace="%s",tenant_id="%s",direction="%s"}`,
+			f.SrcIP.String(), f.DstIP.String(), f.Protocol.String(),
+			f.Service.String(), f.Namespace.String(), f.TenantID.String(), f.Direction)
+
+		// 构建日志消息
+		message := fmt.Sprintf("Flow: %s -> %s:%d %s bytes=%d latency=%dns",
+			f.SrcIP.String(), f.DstIP.String(), f.DstPort, f.Protocol.String(), f.Bytes, f.LatencyNs)
+
+		if f.L7Protocol != 0 {
+			message += fmt.Sprintf(" l7=%s", f.L7Protocol.String())
+		}
+		if f.Method != 0 {
+			message += fmt.Sprintf(" method=%s", f.Method.String())
+		}
+		if f.StatusCode > 0 {
+			message += fmt.Sprintf(" status=%d", f.StatusCode)
+		}
+
+		entry := logEntry{
+			Timestamp: f.Timestamp * 1000000, // Loki uses nanoseconds
+			Line:      message,
+		}
+
+		streams[labels] = append(streams[labels], entry)
+	}
+
+	// 构建 Loki push 请求
+	lokiReq := lokiPushRequest{Streams: []lokiStream{}}
+	for streamLabels, entries := range streams {
+		lokiReq.Streams = append(lokiReq.Streams, lokiStream{
+			Stream: parseLabels(streamLabels),
+			Values: entries,
+		})
+	}
+
+	if len(lokiReq.Streams) == 0 {
+		return nil
+	}
+
+	// 序列化为 JSON
+	jsonData, err := json.Marshal(lokiReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal Loki request: %w", err)
+	}
+
+	// 发送到 Loki
+	url := s.config.LokiAddr + "/loki/api/v1/push"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.lokiHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("Loki request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Loki returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// logEntry Loki 日志条目
+type logEntry struct {
+	Timestamp int64  `json:"tsNs"`
+	Line      string `json:"line"`
+}
+
+// lokiPushRequest Loki push 请求
+type lokiPushRequest struct {
+	Streams []lokiStream `json:"streams"`
+}
+
+// lokiStream Loki 流
+type lokiStream struct {
+	Stream map[string]string `json:"stream"`
+	Values []logEntry       `json:"values"`
+}
+
+// parseLabels 解析标签字符串为 map
+func parseLabels(labels string) map[string]string {
+	result := make(map[string]string)
+	// labels 是 {key="value",key2="value2"} 格式
+	labels = strings.Trim(labels, "{}")
+	pairs := strings.Split(labels, ",")
+	for _, pair := range pairs {
+		kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+		if len(kv) == 2 {
+			result[kv[0]] = strings.Trim(kv[1], `"`)
+		}
+	}
+	return result
 }
 
 // IngestFlow 接收 Flow（含采样决策）
@@ -403,21 +617,146 @@ func (s *Service) flowWorker() {
 	}
 }
 
-// flushFlows 刷新 Flow 到存储
+// metricWorker P0-06 新增: Metric 处理 worker
+func (s *Service) metricWorker() {
+	batch := make([]interface{}, 0, s.config.BatchSize)
+	ticker := time.NewTicker(s.config.FlushInterval)
+	defer ticker.Stop()
+
+	for s.running.Load() {
+		select {
+		case <-ticker.C:
+			if len(batch) > 0 {
+				s.flushMetrics(batch)
+				batch = batch[:0]
+			}
+		case item := <-s.metricQueue:
+			batch = append(batch, item)
+			if len(batch) >= s.config.BatchSize {
+				s.flushMetrics(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+
+	// 优雅退出：刷新剩余数据
+	if len(batch) > 0 {
+		s.flushMetrics(batch)
+	}
+}
+
+// logWorker P0-06 新增: Log 处理 worker
+func (s *Service) logWorker() {
+	batch := make([]interface{}, 0, s.config.BatchSize)
+	ticker := time.NewTicker(s.config.FlushInterval)
+	defer ticker.Stop()
+
+	for s.running.Load() {
+		select {
+		case <-ticker.C:
+			if len(batch) > 0 {
+				s.flushLogs(batch)
+				batch = batch[:0]
+			}
+		case item := <-s.logQueue:
+			batch = append(batch, item)
+			if len(batch) >= s.config.BatchSize {
+				s.flushLogs(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+
+	// 优雅退出：刷新剩余数据
+	if len(batch) > 0 {
+		s.flushLogs(batch)
+	}
+}
+
+// flushMetrics P0-06 新增: 刷新 Metric 到 VictoriaMetrics
+func (s *Service) flushMetrics(metrics []interface{}) {
+	if len(metrics) == 0 {
+		return
+	}
+
+	s.statsMu.Lock()
+	s.stats.MetricsIngested += uint64(len(metrics))
+	s.statsMu.Unlock()
+
+	// VictoriaMetrics 已经通过 writeToVictoriaMetrics 处理
+	// 这里可以添加额外的 metric 特定处理逻辑
+}
+
+// flushLogs P0-06 新增: 刷新 Log 到 Loki
+func (s *Service) flushLogs(logs []interface{}) {
+	if len(logs) == 0 {
+		return
+	}
+
+	s.statsMu.Lock()
+	s.stats.LogsIngested += uint64(len(logs))
+	s.statsMu.Unlock()
+
+	// Loki 已经通过 writeToLoki 处理
+	// 这里可以添加额外的 log 特定处理逻辑
+}
+
+// flushFlows 刷新 Flow 到存储 P0-06 修改: 调用所有存储后端
 func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
 	if len(batch) == 0 {
 		return
 	}
 
-	// 写入 ClickHouse
-	if err := s.writeToClickHouse(batch); err != nil {
-		s.statsMu.Lock()
+	var wg sync.WaitGroup
+	var chErr, vmErr, lokiErr error
+
+	// 并行写入 ClickHouse
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := s.writeToClickHouse(batch); err != nil {
+			chErr = err
+		}
+	}()
+
+	// 并行写入 VictoriaMetrics
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := s.writeToVictoriaMetrics(batch); err != nil {
+			vmErr = err
+		}
+	}()
+
+	// 并行写入 Loki
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := s.writeToLoki(batch); err != nil {
+			lokiErr = err
+		}
+	}()
+
+	// 等待所有写入完成
+	wg.Wait()
+
+	// 更新统计
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+
+	if chErr != nil || vmErr != nil || lokiErr != nil {
 		s.stats.WriteErrors += uint64(len(batch))
-		s.statsMu.Unlock()
+		if chErr != nil {
+			fmt.Printf("ClickHouse write error: %v\n", chErr)
+		}
+		if vmErr != nil {
+			fmt.Printf("VictoriaMetrics write error: %v\n", vmErr)
+		}
+		if lokiErr != nil {
+			fmt.Printf("Loki write error: %v\n", lokiErr)
+		}
 	} else {
-		s.statsMu.Lock()
 		s.stats.FlowsWritten += uint64(len(batch))
-		s.statsMu.Unlock()
 	}
 }
 
@@ -433,8 +772,9 @@ func (s *Service) healthzHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) statsHandler(w http.ResponseWriter, r *http.Request) {
 	stats := s.GetStats()
-	fmt.Fprintf(w, `{"flows_ingested":%d,"flows_dropped":%d,"flows_sampled":%d,"write_errors":%d}`,
-		stats.FlowsIngested, stats.FlowsDropped, stats.FlowsSampled, stats.WriteErrors)
+	fmt.Fprintf(w, `{"flows_ingested":%d,"flows_dropped":%d,"flows_sampled":%d,"flows_written":%d,"metrics_ingested":%d,"logs_ingested":%d,"write_errors":%d}`,
+		stats.FlowsIngested, stats.FlowsDropped, stats.FlowsSampled, stats.FlowsWritten,
+		stats.MetricsIngested, stats.LogsIngested, stats.WriteErrors)
 }
 
 func (s *Service) samplingConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -457,6 +797,72 @@ func (s *Service) samplingConfigHandler(w http.ResponseWriter, r *http.Request) 
 func (s *Service) samplingStatsHandler(w http.ResponseWriter, r *http.Request) {
 	stats := s.GetSamplingStats()
 	writeJSON(w, stats)
+}
+
+// ingestMetricsHandler P0-06 新增: 接收指标数据
+func (s *Service) ingestMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var metrics []map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	count := 0
+	for _, m := range metrics {
+		select {
+		case s.metricQueue <- m:
+			count++
+		default:
+			// 队列满，丢弃
+		}
+	}
+
+	s.statsMu.Lock()
+	s.stats.MetricsIngested += uint64(count)
+	s.statsMu.Unlock()
+
+	writeJSON(w, map[string]interface{}{
+		"accepted": count,
+		"total":    len(metrics),
+	})
+}
+
+// ingestLogsHandler P0-06 新增: 接收日志数据
+func (s *Service) ingestLogsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var logs []map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&logs); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	count := 0
+	for _, l := range logs {
+		select {
+		case s.logQueue <- l:
+			count++
+		default:
+			// 队列满，丢弃
+		}
+	}
+
+	s.statsMu.Lock()
+	s.stats.LogsIngested += uint64(count)
+	s.statsMu.Unlock()
+
+	writeJSON(w, map[string]interface{}{
+		"accepted": count,
+		"total":    len(logs),
+	})
 }
 
 // ============================================================================

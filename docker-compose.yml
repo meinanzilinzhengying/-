@@ -295,6 +295,10 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
       control-plane:
         condition: service_healthy
     ports:
@@ -311,6 +315,8 @@ services:
       WORKER_COUNT: 4
       CLICKHOUSE_ADDR: "clickhouse:9000"
       CLICKHOUSE_DATABASE: cloudflow
+      VICTORIAMETRICS_ADDR: "http://victoriametrics:8428"
+      LOKI_ADDR: "http://loki:3100"
       CONTROL_PLANE_ADDR: "control-plane:9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9102/health"]
@@ -523,6 +529,29 @@ services:
     networks:
       - cloudflow-net
 
+  # VictoriaMetrics（指标存储）
+  victoriametrics:
+    image: victoriametrics/victorial-metrics:latest
+    container_name: cloudflow-victoriametrics
+    restart: unless-stopped
+    ports:
+      - "8428:8428"  # HTTP
+      - "2003:2003"  # Graphite
+    command:
+      - "--storageDataPath=/var/lib/victorial-metrics-data"
+      - "--graphiteListenAddress=:2003"
+      - "--httpListenAddress=:8428"
+      - "--retentionPeriod=30d"
+    volumes:
+      - victoriametrics-data:/var/lib/victorial-metrics-data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8428/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cloudflow-net
+
   # Promtail（日志采集）
   promtail:
     image: grafana/promtail:2.9.4
@@ -567,3 +596,5 @@ volumes:
     name: cloudflow-grafana-data
   loki-data:
     name: cloudflow-loki-data
+  victoriametrics-data:
+    name: cloudflow-victoriametrics-data

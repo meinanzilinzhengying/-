@@ -311,12 +311,30 @@ func (s *Service) Stop() {
 	close(s.evalStopChan)
 	s.evalWG.Wait()
 
+	// P1-04 修复: 使用优雅关闭等待请求完成
 	if s.httpServer != nil {
-		s.httpServer.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			fmt.Printf("HTTP server shutdown error: %v\n", err)
+		}
 	}
+
+	// P1-04 修复: gRPC 使用带超时的 GracefulStop
 	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
+		stopped := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(30 * time.Second):
+			fmt.Println("gRPC graceful stop timeout, forcing stop")
+			s.grpcServer.Stop()
+		}
 	}
+
 	if s.db != nil {
 		s.db.Close()
 	}

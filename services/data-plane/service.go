@@ -262,11 +262,28 @@ func (s *Service) Stop() {
 	s.running.Store(false)
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
 
+	// P1-04 修复: 使用优雅关闭等待请求完成
 	if s.metricsServer != nil {
-		s.metricsServer.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.metricsServer.Shutdown(ctx); err != nil {
+			fmt.Printf("Metrics server shutdown error: %v\n", err)
+		}
 	}
+
+	// P1-04 修复: gRPC 使用带超时的 GracefulStop
 	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
+		stopped := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(30 * time.Second):
+			fmt.Println("gRPC graceful stop timeout, forcing stop")
+			s.grpcServer.Stop()
+		}
 	}
 
 	// 关闭 ClickHouse 连接

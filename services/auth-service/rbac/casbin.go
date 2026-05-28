@@ -424,12 +424,12 @@ func (a *MemoryAdapter) RemoveFilteredPolicy(sec string, ptype string, fieldInde
 // RBACEngine 是基于 Casbin 的 RBAC 授权引擎。
 type RBACEngine struct {
 	enforcer *casbin.SyncedEnforcer
-	adapter  *MemoryAdapter
+	adapter  persist.Adapter
 	config   RBACConfig
 	mu       sync.RWMutex
 }
 
-// NewRBACEngine 创建一个新的 RBAC 引擎实例。
+// NewRBACEngine 创建一个新的 RBAC 引擎实例（使用内存适配器）。
 func NewRBACEngine(config RBACConfig) *RBACEngine {
 	if config.SuperAdminRole == "" {
 		config.SuperAdminRole = "super_admin"
@@ -439,6 +439,21 @@ func NewRBACEngine(config RBACConfig) *RBACEngine {
 	}
 	return &RBACEngine{
 		adapter: NewMemoryAdapter(),
+		config:  config,
+	}
+}
+
+// NewRBACEngineWithAdapter 使用指定的适配器创建 RBAC 引擎实例。
+// P0-02 修复: 支持持久化适配器（如 GormAdapter）
+func NewRBACEngineWithAdapter(config RBACConfig, adapter persist.Adapter) *RBACEngine {
+	if config.SuperAdminRole == "" {
+		config.SuperAdminRole = "super_admin"
+	}
+	if config.BuiltinRoles == nil {
+		config.BuiltinRoles = defaultRBACConfig().BuiltinRoles
+	}
+	return &RBACEngine{
+		adapter: adapter,
 		config:  config,
 	}
 }
@@ -462,9 +477,21 @@ func (e *RBACEngine) Start(ctx context.Context) error {
 
 	e.enforcer = enforcer
 
-	// 加载默认策略
+	// 从适配器加载策略（对于持久化适配器，会从数据库加载）
+	if err := e.enforcer.LoadPolicy(); err != nil {
+		return fmt.Errorf("failed to load policy: %w", err)
+	}
+
+	// 检查是否需要初始化默认策略（仅当策略为空时）
 	if e.config.DefaultPoliciesEnabled {
-		e.AddBuiltinRoles()
+		policies := e.enforcer.GetPolicy()
+		if len(policies) == 0 {
+			e.AddBuiltinRoles()
+			// 保存默认策略到持久化存储
+			if err := e.enforcer.SavePolicy(); err != nil {
+				return fmt.Errorf("failed to save default policies: %w", err)
+			}
+		}
 	}
 
 	return nil

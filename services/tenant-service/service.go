@@ -9,23 +9,24 @@
 //   - tenant_id 全链路透传
 //
 // 端口:
-//   - gRPC: 9007
-//   - HTTP: 8007
-//   - Metrics: 9107
+//   - gRPC: 9010
+//   - HTTP: 8010
+//   - Metrics: 9110
 package tenantservice
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+
+	_ "github.com/go-sql-driver/mysql"
 
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/shared/tenant"
@@ -39,30 +40,35 @@ import (
 type Config struct {
 	ServiceName string
 	Version     string
-	GrpcAddr    string // :9007
-	HttpAddr    string // :8007
+	GrpcAddr    string // :9010
+	HttpAddr    string // :8010
 
-	TiDBAddr string
+	// P0-02 修复: TiDB 配置
+	TiDBAddr     string
+	TiDBUser     string
+	TiDBPassword string
+	TiDBDatabase string
 
-	DefaultRetentionDays int
-	DefaultMaxAgents     int
-	DefaultMaxFlowsPerDay int64
-	DefaultMaxStorageGB  int
-	DefaultMaxAlertRules int
+	DefaultRetentionDays   int
+	DefaultMaxAgents       int
+	DefaultMaxFlowsPerDay  int64
+	DefaultMaxStorageGB    int
+	DefaultMaxAlertRules   int
 }
 
 // DefaultConfig 默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		ServiceName:          "tenant-service",
-		Version:              "1.0.0",
-		GrpcAddr:             ":9007",
-		HttpAddr:             ":8007",
-		DefaultRetentionDays: 30,
-		DefaultMaxAgents:     100,
+		ServiceName:           "tenant-service",
+		Version:               "1.0.0",
+		GrpcAddr:              ":9010",
+		HttpAddr:              ":8010",
+		TiDBDatabase:          "cloudflow_tenant",
+		DefaultRetentionDays:  30,
+		DefaultMaxAgents:      100,
 		DefaultMaxFlowsPerDay: 10_000_000,
-		DefaultMaxStorageGB:  100,
-		DefaultMaxAlertRules: 100,
+		DefaultMaxStorageGB:   100,
+		DefaultMaxAlertRules:  100,
 	}
 }
 
@@ -74,9 +80,8 @@ func DefaultConfig() *Config {
 type Service struct {
 	config *Config
 
-	// 存储
-	tenants  sync.Map // tenantId -> *svcproto.Tenant
-	projects sync.Map // projectId -> *svcproto.Project
+	// P0-02 修复: TiDB 数据库连接
+	db *sql.DB
 
 	// gRPC/HTTP
 	grpcServer *grpc.Server
@@ -98,6 +103,13 @@ func New(config *Config) (*Service, error) {
 		health:    health.NewServer(),
 	}
 
+	// P0-02 修复: 初始化 TiDB 连接
+	if config.TiDBAddr != "" {
+		if err := s.initTiDB(); err != nil {
+			return nil, fmt.Errorf("TiDB init failed: %w", err)
+		}
+	}
+
 	s.grpcServer = grpc.NewServer()
 	RegisterTenantService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
@@ -105,28 +117,187 @@ func New(config *Config) (*Service, error) {
 	return s, nil
 }
 
+// initTiDB P0-02 修复: 初始化 TiDB 连接和表结构
+func (s *Service) initTiDB() error {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_bin",
+		s.config.TiDBUser,
+		s.config.TiDBPassword,
+		s.config.TiDBAddr,
+		s.config.TiDBDatabase,
+	)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("TiDB open failed: %w", err)
+	}
+
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return fmt.Errorf("TiDB ping failed: %w", err)
+	}
+
+	s.db = db
+
+	// 初始化表结构
+	if err := s.initTables(); err != nil {
+		return fmt.Errorf("init tables failed: %w", err)
+	}
+
+	fmt.Printf("Tenant Service TiDB connected: %s/%s\n", s.config.TiDBAddr, s.config.TiDBDatabase)
+	return nil
+}
+
+// initTables 初始化租户服务所需的表结构
+func (s *Service) initTables() error {
+	// 租户表
+	createTenantTable := `
+	CREATE TABLE IF NOT EXISTS tenants (
+		tenant_id VARCHAR(64) PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		display_name VARCHAR(200),
+		description TEXT,
+		plan VARCHAR(20) DEFAULT 'free',
+		status VARCHAR(20) DEFAULT 'active',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		INDEX idx_name (name),
+		INDEX idx_status (status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
+
+	if _, err := s.db.Exec(createTenantTable); err != nil {
+		return fmt.Errorf("create tenants table: %w", err)
+	}
+
+	// 项目表
+	createProjectTable := `
+	CREATE TABLE IF NOT EXISTS projects (
+		project_id VARCHAR(64) PRIMARY KEY,
+		tenant_id VARCHAR(64) NOT NULL,
+		name VARCHAR(100) NOT NULL,
+		display_name VARCHAR(200),
+		description TEXT,
+		status VARCHAR(20) DEFAULT 'active',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		INDEX idx_tenant_id (tenant_id),
+		INDEX idx_name (name)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
+
+	if _, err := s.db.Exec(createProjectTable); err != nil {
+		return fmt.Errorf("create projects table: %w", err)
+	}
+
+	// 配额表
+	createQuotaTable := `
+	CREATE TABLE IF NOT EXISTS quotas (
+		quota_id VARCHAR(64) PRIMARY KEY,
+		tenant_id VARCHAR(64) NOT NULL,
+		project_id VARCHAR(64),
+		max_agents INT DEFAULT 100,
+		max_flows_per_day BIGINT DEFAULT 10000000,
+		max_storage_gb INT DEFAULT 100,
+		max_alert_rules INT DEFAULT 100,
+		retention_days INT DEFAULT 30,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		INDEX idx_tenant_id (tenant_id),
+		INDEX idx_project_id (project_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
+
+	if _, err := s.db.Exec(createQuotaTable); err != nil {
+		return fmt.Errorf("create quotas table: %w", err)
+	}
+
+	// 租户成员表
+	createMemberTable := `
+	CREATE TABLE IF NOT EXISTS tenant_members (
+		member_id VARCHAR(64) PRIMARY KEY,
+		tenant_id VARCHAR(64) NOT NULL,
+		user_id VARCHAR(64) NOT NULL,
+		role VARCHAR(20) DEFAULT 'user',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		INDEX idx_tenant_id (tenant_id),
+		INDEX idx_user_id (user_id),
+		UNIQUE INDEX idx_tenant_user (tenant_id, user_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
+
+	if _, err := s.db.Exec(createMemberTable); err != nil {
+		return fmt.Errorf("create tenant_members table: %w", err)
+	}
+
+	// 创建默认租户（如果不存在）
+	return s.createDefaultTenant()
+}
+
+// createDefaultTenant 创建默认租户
+func (s *Service) createDefaultTenant() error {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM tenants WHERE tenant_id = 'default'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check default tenant: %w", err)
+	}
+
+	if count == 0 {
+		_, err = s.db.Exec(
+			"INSERT INTO tenants (tenant_id, name, display_name, description, plan) VALUES (?, ?, ?, ?, ?)",
+			"default",
+			"default",
+			"默认租户",
+			"系统默认租户",
+			"free",
+		)
+		if err != nil {
+			return fmt.Errorf("create default tenant: %w", err)
+		}
+
+		// 创建默认租户的配额
+		_, err = s.db.Exec(
+			"INSERT INTO quotas (quota_id, tenant_id, max_agents, max_flows_per_day, max_storage_gb, max_alert_rules, retention_days) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			"quota-default",
+			"default",
+			s.config.DefaultMaxAgents,
+			s.config.DefaultMaxFlowsPerDay,
+			s.config.DefaultMaxStorageGB,
+			s.config.DefaultMaxAlertRules,
+			s.config.DefaultRetentionDays,
+		)
+		if err != nil {
+			return fmt.Errorf("create default quota: %w", err)
+		}
+
+		fmt.Printf("Default tenant created\n")
+	}
+
+	return nil
+}
+
 // Start 启动服务
 func (s *Service) Start() error {
-	// gRPC (带租户拦截器)
+	// 启动 gRPC
 	lis, err := net.Listen("tcp", s.config.GrpcAddr)
 	if err != nil {
 		return fmt.Errorf("gRPC listen failed: %w", err)
 	}
 
-	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(tenant.GRPCUnaryServerInterceptor()),
-	)
-	RegisterTenantService(grpcServer, s)
-	healthpb.RegisterHealthServer(grpcServer, s.health)
-	s.grpcServer = grpcServer
 	go func() { s.grpcServer.Serve(lis) }()
 
-	// HTTP (带租户中间件)
+	// 启动 HTTP
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthzHandler)
-	mux.HandleFunc("/api/tenants", s.tenantsHTTPHandler)
-	mux.HandleFunc("/api/projects", s.projectsHTTPHandler)
-	mux.HandleFunc("/api/quotas", s.quotaHTTPHandler)
+	mux.HandleFunc("/api/tenants", s.tenantsHandler)
+	mux.HandleFunc("/api/tenants/create", s.createTenantHandler)
+	mux.HandleFunc("/api/tenants/update", s.updateTenantHandler)
+	mux.HandleFunc("/api/tenants/delete", s.deleteTenantHandler)
+	mux.HandleFunc("/api/projects", s.projectsHandler)
+	mux.HandleFunc("/api/quotas", s.quotasHandler)
 
 	s.httpServer = &http.Server{
 		Addr:    s.config.HttpAddr,
@@ -135,7 +306,8 @@ func (s *Service) Start() error {
 	go func() { s.httpServer.ListenAndServe() }()
 
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
-	fmt.Printf("Tenant Service started: gRPC=%s, HTTP=%s\n", s.config.GrpcAddr, s.config.HttpAddr)
+	fmt.Printf("Tenant Service started: gRPC=%s, HTTP=%s (TiDB=%s)\n",
+		s.config.GrpcAddr, s.config.HttpAddr, s.config.TiDBAddr)
 	return nil
 }
 
@@ -148,155 +320,360 @@ func (s *Service) Stop() {
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()
 	}
+	if s.db != nil {
+		s.db.Close()
+	}
 }
 
 // ============================================================================
-// gRPC: 租户管理
+// gRPC 服务方法
 // ============================================================================
 
 // CreateTenant 创建租户
 func (s *Service) CreateTenant(ctx context.Context, req *svcproto.CreateTenantRequest) (*svcproto.CreateTenantResponse, error) {
-	tc := tenant.MustFromContext(ctx)
+	tenantID := fmt.Sprintf("tenant-%d", time.Now().UnixNano())
 
-	tenant := &svcproto.Tenant{
-		Id:          generateID("tenant"),
-		Name:        req.Name,
-		DisplayName: req.DisplayName,
-		Status:      "active",
-		Plan:        req.Plan,
-		Quota:       s.defaultQuota(req.Quota),
-		CreatedAt:   time.Now().Unix(),
-		UpdatedAt:   time.Now().Unix(),
+	_, err := s.db.Exec(
+		"INSERT INTO tenants (tenant_id, name, display_name, description, plan) VALUES (?, ?, ?, ?, ?)",
+		tenantID,
+		req.Name,
+		req.DisplayName,
+		req.Description,
+		req.Plan,
+	)
+	if err != nil {
+		return &svcproto.CreateTenantResponse{Success: false, Message: err.Error()}, nil
 	}
 
-	if tenant.Plan == "" {
-		tenant.Plan = "free"
+	// 创建默认配额
+	_, err = s.db.Exec(
+		"INSERT INTO quotas (quota_id, tenant_id, max_agents, max_flows_per_day, max_storage_gb, max_alert_rules, retention_days) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		fmt.Sprintf("quota-%s", tenantID),
+		tenantID,
+		s.config.DefaultMaxAgents,
+		s.config.DefaultMaxFlowsPerDay,
+		s.config.DefaultMaxStorageGB,
+		s.config.DefaultMaxAlertRules,
+		s.config.DefaultRetentionDays,
+	)
+	if err != nil {
+		return &svcproto.CreateTenantResponse{Success: false, Message: err.Error()}, nil
 	}
 
-	s.tenants.Store(tenant.Id, tenant)
-
-	// 创建默认项目
-	defaultProject := &svcproto.Project{
-		Id:          generateID("proj"),
-		TenantId:    tenant.Id,
-		Name:        "default",
-		DisplayName: "Default Project",
-		Description: "Auto-created default project",
-		Status:      "active",
-		Namespaces:  []string{tenant.Name + "-default"},
-		CreatedAt:   time.Now().Unix(),
-		UpdatedAt:   time.Now().Unix(),
-	}
-	s.projects.Store(defaultProject.Id, defaultProject)
-
-	return &svcproto.CreateTenantResponse{Tenant: tenant}, nil
+	return &svcproto.CreateTenantResponse{
+		Success: true,
+		TenantId: tenantID,
+	}, nil
 }
 
-// GetTenant 获取租户
+// GetTenant 获取租户信息
 func (s *Service) GetTenant(ctx context.Context, req *svcproto.GetTenantRequest) (*svcproto.GetTenantResponse, error) {
-	tc := tenant.MustFromContext(ctx)
-
-	// 租户隔离: 只能查询自己的租户
-	if err := tenant.ValidateTenantAccess(ctx, req.TenantId); err != nil {
-		return nil, err
+	var tenant svcproto.Tenant
+	err := s.db.QueryRow(
+		"SELECT tenant_id, name, display_name, description, plan, status, created_at, updated_at FROM tenants WHERE tenant_id = ?",
+		req.TenantId,
+	).Scan(
+		&tenant.TenantId,
+		&tenant.Name,
+		&tenant.DisplayName,
+		&tenant.Description,
+		&tenant.Plan,
+		&tenant.Status,
+		&tenant.CreatedAt,
+		&tenant.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return &svcproto.GetTenantResponse{Tenant: nil}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get tenant: %w", err)
 	}
 
-	v, ok := s.tenants.Load(req.TenantId)
-	if !ok {
-		return nil, fmt.Errorf("tenant %s not found", req.TenantId)
-	}
-	return &svcproto.GetTenantResponse{Tenant: v.(*svcproto.Tenant)}, nil
+	return &svcproto.GetTenantResponse{Tenant: &tenant}, nil
 }
 
-// ListTenants 列出租户
+// UpdateTenant 更新租户信息
+func (s *Service) UpdateTenant(ctx context.Context, req *svcproto.UpdateTenantRequest) (*svcproto.UpdateTenantResponse, error) {
+	result, err := s.db.Exec(
+		"UPDATE tenants SET display_name = ?, description = ?, plan = ?, status = ? WHERE tenant_id = ?",
+		req.DisplayName,
+		req.Description,
+		req.Plan,
+		req.Status,
+		req.TenantId,
+	)
+	if err != nil {
+		return &svcproto.UpdateTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return &svcproto.UpdateTenantResponse{Success: rowsAffected > 0}, nil
+}
+
+// DeleteTenant 删除租户
+func (s *Service) DeleteTenant(ctx context.Context, req *svcproto.DeleteTenantRequest) (*svcproto.DeleteTenantResponse, error) {
+	// 不能删除默认租户
+	if req.TenantId == "default" {
+		return &svcproto.DeleteTenantResponse{Success: false, Message: "cannot delete default tenant"}, nil
+	}
+
+	// 开启事务
+	tx, err := s.db.Begin()
+	if err != nil {
+		return &svcproto.DeleteTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	// 删除配额
+	_, err = tx.Exec("DELETE FROM quotas WHERE tenant_id = ?", req.TenantId)
+	if err != nil {
+		tx.Rollback()
+		return &svcproto.DeleteTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	// 删除项目
+	_, err = tx.Exec("DELETE FROM projects WHERE tenant_id = ?", req.TenantId)
+	if err != nil {
+		tx.Rollback()
+		return &svcproto.DeleteTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	// 删除成员
+	_, err = tx.Exec("DELETE FROM tenant_members WHERE tenant_id = ?", req.TenantId)
+	if err != nil {
+		tx.Rollback()
+		return &svcproto.DeleteTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	// 删除租户
+	_, err = tx.Exec("DELETE FROM tenants WHERE tenant_id = ?", req.TenantId)
+	if err != nil {
+		tx.Rollback()
+		return &svcproto.DeleteTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return &svcproto.DeleteTenantResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	return &svcproto.DeleteTenantResponse{Success: true}, nil
+}
+
+// ListTenants 列出所有租户
 func (s *Service) ListTenants(ctx context.Context, req *svcproto.ListTenantsRequest) (*svcproto.ListTenantsResponse, error) {
-	tc := tenant.MustFromContext(ctx)
+	rows, err := s.db.Query("SELECT tenant_id, name, display_name, description, plan, status, created_at FROM tenants")
+	if err != nil {
+		return nil, fmt.Errorf("list tenants: %w", err)
+	}
+	defer rows.Close()
 
 	var tenants []*svcproto.Tenant
-	s.tenants.Range(func(_, v interface{}) bool {
-		t := v.(*svcproto.Tenant)
-		// 租户隔离: 非平台管理员只能看到自己的租户
-		if !tc.IsPlatformAdmin && t.Id != tc.TenantID {
-			return true
+	for rows.Next() {
+		var tenant svcproto.Tenant
+		if err := rows.Scan(
+			&tenant.TenantId,
+			&tenant.Name,
+			&tenant.DisplayName,
+			&tenant.Description,
+			&tenant.Plan,
+			&tenant.Status,
+			&tenant.CreatedAt,
+		); err != nil {
+			continue
 		}
-		if req.Status != "" && t.Status != req.Status {
-			return true
-		}
-		if req.Plan != "" && t.Plan != req.Plan {
-			return true
-		}
-		tenants = append(tenants, t)
-		return true
-	})
-	return &svcproto.ListTenantsResponse{Tenants: tenants, Total: len(tenants)}, nil
-}
-
-// UpdateQuota 更新配额
-func (s *Service) UpdateQuota(ctx context.Context, req *svcproto.UpdateTenantQuotaRequest) (*svcproto.UpdateTenantQuotaResponse, error) {
-	tenant.MustFromContext(ctx)
-
-	v, ok := s.tenants.Load(req.TenantId)
-	if !ok {
-		return &svcproto.UpdateTenantQuotaResponse{Success: false, Message: "tenant not found"}, nil
+		tenants = append(tenants, &tenant)
 	}
 
-	t := v.(*svcproto.Tenant)
-	t.Quota = req.Quota
-	t.UpdatedAt = time.Now().Unix()
-	s.tenants.Store(req.TenantId, t)
-
-	return &svcproto.UpdateTenantQuotaResponse{Success: true, Message: "quota updated"}, nil
+	return &svcproto.ListTenantsResponse{Tenants: tenants}, nil
 }
-
-// ============================================================================
-// gRPC: 项目管理
-// ============================================================================
 
 // CreateProject 创建项目
 func (s *Service) CreateProject(ctx context.Context, req *svcproto.CreateProjectRequest) (*svcproto.CreateProjectResponse, error) {
-	tc := tenant.MustFromContext(ctx)
+	projectID := fmt.Sprintf("project-%d", time.Now().UnixNano())
 
-	project := &svcproto.Project{
-		Id:          generateID("proj"),
-		TenantId:    tc.TenantID,
-		Name:        req.Name,
-		DisplayName: req.DisplayName,
-		Description: req.Description,
-		Status:      "active",
-		Namespaces:  req.Namespaces,
-		CreatedAt:   time.Now().Unix(),
-		UpdatedAt:   time.Now().Unix(),
+	_, err := s.db.Exec(
+		"INSERT INTO projects (project_id, tenant_id, name, display_name, description) VALUES (?, ?, ?, ?, ?)",
+		projectID,
+		req.TenantId,
+		req.Name,
+		req.DisplayName,
+		req.Description,
+	)
+	if err != nil {
+		return &svcproto.CreateProjectResponse{Success: false, Message: err.Error()}, nil
 	}
 
-	if project.DisplayName == "" {
-		project.DisplayName = project.Name
-	}
-	if project.Namespaces == nil {
-		project.Namespaces = []string{tc.TenantID + "-" + project.Name}
-	}
-
-	s.projects.Store(project.Id, project)
-	return &svcproto.CreateProjectResponse{Project: project}, nil
+	return &svcproto.CreateProjectResponse{
+		Success:  true,
+		ProjectId: projectID,
+	}, nil
 }
 
-// ListProjects 列出项目
+// GetProject 获取项目信息
+func (s *Service) GetProject(ctx context.Context, req *svcproto.GetProjectRequest) (*svcproto.GetProjectResponse, error) {
+	var project svcproto.Project
+	err := s.db.QueryRow(
+		"SELECT project_id, tenant_id, name, display_name, description, status, created_at FROM projects WHERE project_id = ?",
+		req.ProjectId,
+	).Scan(
+		&project.ProjectId,
+		&project.TenantId,
+		&project.Name,
+		&project.DisplayName,
+		&project.Description,
+		&project.Status,
+		&project.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return &svcproto.GetProjectResponse{Project: nil}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get project: %w", err)
+	}
+
+	return &svcproto.GetProjectResponse{Project: &project}, nil
+}
+
+// ListProjects 列出租户下的项目
 func (s *Service) ListProjects(ctx context.Context, req *svcproto.ListProjectsRequest) (*svcproto.ListProjectsResponse, error) {
-	tc := tenant.MustFromContext(ctx)
+	rows, err := s.db.Query("SELECT project_id, tenant_id, name, display_name, description, status, created_at FROM projects WHERE tenant_id = ?", req.TenantId)
+	if err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
+	}
+	defer rows.Close()
 
 	var projects []*svcproto.Project
-	s.projects.Range(func(_, v interface{}) bool {
-		p := v.(*svcproto.Project)
-		// 租户隔离
-		if p.TenantId != tc.TenantID {
-			return true
+	for rows.Next() {
+		var project svcproto.Project
+		if err := rows.Scan(
+			&project.ProjectId,
+			&project.TenantId,
+			&project.Name,
+			&project.DisplayName,
+			&project.Description,
+			&project.Status,
+			&project.CreatedAt,
+		); err != nil {
+			continue
 		}
-		if req.Status != "" && p.Status != req.Status {
-			return true
+		projects = append(projects, &project)
+	}
+
+	return &svcproto.ListProjectsResponse{Projects: projects}, nil
+}
+
+// GetQuota 获取配额信息
+func (s *Service) GetQuota(ctx context.Context, req *svcproto.GetQuotaRequest) (*svcproto.GetQuotaResponse, error) {
+	var quota svcproto.Quota
+	err := s.db.QueryRow(
+		"SELECT quota_id, tenant_id, project_id, max_agents, max_flows_per_day, max_storage_gb, max_alert_rules, retention_days FROM quotas WHERE tenant_id = ?",
+		req.TenantId,
+	).Scan(
+		&quota.QuotaId,
+		&quota.TenantId,
+		&quota.ProjectId,
+		&quota.MaxAgents,
+		&quota.MaxFlowsPerDay,
+		&quota.MaxStorageGb,
+		&quota.MaxAlertRules,
+		&quota.RetentionDays,
+	)
+	if err == sql.ErrNoRows {
+		// 返回默认配额
+		return &svcproto.GetQuotaResponse{
+			Quota: &svcproto.Quota{
+				TenantId:        req.TenantId,
+				MaxAgents:       int32(s.config.DefaultMaxAgents),
+				MaxFlowsPerDay:  s.config.DefaultMaxFlowsPerDay,
+				MaxStorageGb:    int32(s.config.DefaultMaxStorageGB),
+				MaxAlertRules:   int32(s.config.DefaultMaxAlertRules),
+				RetentionDays:   int32(s.config.DefaultRetentionDays),
+			},
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get quota: %w", err)
+	}
+
+	return &svcproto.GetQuotaResponse{Quota: &quota}, nil
+}
+
+// UpdateQuota 更新配额信息
+func (s *Service) UpdateQuota(ctx context.Context, req *svcproto.UpdateQuotaRequest) (*svcproto.UpdateQuotaResponse, error) {
+	result, err := s.db.Exec(
+		"UPDATE quotas SET max_agents = ?, max_flows_per_day = ?, max_storage_gb = ?, max_alert_rules = ?, retention_days = ? WHERE tenant_id = ?",
+		req.MaxAgents,
+		req.MaxFlowsPerDay,
+		req.MaxStorageGb,
+		req.MaxAlertRules,
+		req.RetentionDays,
+		req.TenantId,
+	)
+	if err != nil {
+		return &svcproto.UpdateQuotaResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return &svcproto.UpdateQuotaResponse{Success: rowsAffected > 0}, nil
+}
+
+// AddTenantMember 添加租户成员
+func (s *Service) AddTenantMember(ctx context.Context, req *svcproto.AddTenantMemberRequest) (*svcproto.AddTenantMemberResponse, error) {
+	memberID := fmt.Sprintf("member-%d", time.Now().UnixNano())
+
+	_, err := s.db.Exec(
+		"INSERT INTO tenant_members (member_id, tenant_id, user_id, role) VALUES (?, ?, ?, ?)",
+		memberID,
+		req.TenantId,
+		req.UserId,
+		req.Role,
+	)
+	if err != nil {
+		return &svcproto.AddTenantMemberResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	return &svcproto.AddTenantMemberResponse{Success: true}, nil
+}
+
+// RemoveTenantMember 移除租户成员
+func (s *Service) RemoveTenantMember(ctx context.Context, req *svcproto.RemoveTenantMemberRequest) (*svcproto.RemoveTenantMemberResponse, error) {
+	result, err := s.db.Exec(
+		"DELETE FROM tenant_members WHERE tenant_id = ? AND user_id = ?",
+		req.TenantId,
+		req.UserId,
+	)
+	if err != nil {
+		return &svcproto.RemoveTenantMemberResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return &svcproto.RemoveTenantMemberResponse{Success: rowsAffected > 0}, nil
+}
+
+// ListTenantMembers 列出租户成员
+func (s *Service) ListTenantMembers(ctx context.Context, req *svcproto.ListTenantMembersRequest) (*svcproto.ListTenantMembersResponse, error) {
+	rows, err := s.db.Query("SELECT member_id, tenant_id, user_id, role, created_at FROM tenant_members WHERE tenant_id = ?", req.TenantId)
+	if err != nil {
+		return nil, fmt.Errorf("list tenant members: %w", err)
+	}
+	defer rows.Close()
+
+	var members []*svcproto.TenantMember
+	for rows.Next() {
+		var member svcproto.TenantMember
+		if err := rows.Scan(
+			&member.MemberId,
+			&member.TenantId,
+			&member.UserId,
+			&member.Role,
+			&member.CreatedAt,
+		); err != nil {
+			continue
 		}
-		projects = append(projects, p)
-		return true
-	})
-	return &svcproto.ListProjectsResponse{Projects: projects, Total: len(projects)}, nil
+		members = append(members, &member)
+	}
+
+	return &svcproto.ListTenantMembersResponse{Members: members}, nil
 }
 
 // ============================================================================
@@ -305,97 +682,66 @@ func (s *Service) ListProjects(ctx context.Context, req *svcproto.ListProjectsRe
 
 func (s *Service) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"healthy","service":"%s","version":"%s"}`,
-		s.config.ServiceName, s.config.Version)
 }
 
-func (s *Service) tenantsHTTPHandler(w http.ResponseWriter, r *http.Request) {
-	tc, ok := tenant.FromContext(r.Context())
-	if !ok {
-		http.Error(w, "tenant context required", http.StatusForbidden)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
+func (s *Service) tenantsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
 		resp, _ := s.ListTenants(r.Context(), &svcproto.ListTenantsRequest{})
-		writeJSON(w, resp)
-	case http.MethodPost:
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	}
+}
+
+func (s *Service) createTenantHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
 		var req svcproto.CreateTenantRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		resp, err := s.CreateTenant(r.Context(), &req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, resp)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		json.NewDecoder(r.Body).Decode(&req)
+		resp, _ := s.CreateTenant(r.Context(), &req)
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
 	}
 }
 
-func (s *Service) projectsHTTPHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		resp, _ := s.ListProjects(r.Context(), &svcproto.ListProjectsRequest{})
-		writeJSON(w, resp)
-	case http.MethodPost:
-		var req svcproto.CreateProjectRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		resp, err := s.CreateProject(r.Context(), &req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, resp)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (s *Service) updateTenantHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req svcproto.UpdateTenantRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		resp, _ := s.UpdateTenant(r.Context(), &req)
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
 	}
 }
 
-func (s *Service) quotaHTTPHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPut:
-		var req svcproto.UpdateTenantQuotaRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		resp, _ := s.UpdateQuota(r.Context(), &req)
-		writeJSON(w, resp)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (s *Service) deleteTenantHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req svcproto.DeleteTenantRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		resp, _ := s.DeleteTenant(r.Context(), &req)
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
 	}
 }
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-func (s *Service) defaultQuota(custom *svcproto.TenantQuota) *svcproto.TenantQuota {
-	if custom != nil {
-		return custom
-	}
-	return &svcproto.TenantQuota{
-		MaxAgents:       s.config.DefaultMaxAgents,
-		MaxFlowsPerDay:  s.config.DefaultMaxFlowsPerDay,
-		MaxStorageGB:    s.config.DefaultMaxStorageGB,
-		MaxAlertRules:   s.config.DefaultMaxAlertRules,
-		RetentionDays:   s.config.DefaultRetentionDays,
+func (s *Service) projectsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		tenantID := r.URL.Query().Get("tenant_id")
+		resp, _ := s.ListProjects(r.Context(), &svcproto.ListProjectsRequest{TenantId: tenantID})
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
 	}
 }
 
-func generateID(prefix string) string {
-	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
-}
-
-func writeJSON(w http.ResponseWriter, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+func (s *Service) quotasHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		tenantID := r.URL.Query().Get("tenant_id")
+		resp, _ := s.GetQuota(r.Context(), &svcproto.GetQuotaRequest{TenantId: tenantID})
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	}
 }

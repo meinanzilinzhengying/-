@@ -14,11 +14,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 
 	_ "github.com/go-sql-driver/mysql"
 
 	"cloud-flow/services/auth-service/auth"
 	"cloud-flow/services/auth-service/rbac"
+	rbacadapter "cloud-flow/services/auth-service/rbac/adapter"
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/shared/tenant"
 )
@@ -87,7 +90,8 @@ type Service struct {
 	rbacEngine *rbac.RBACEngine
 
 	// P0-02 修复: TiDB 用户存储
-	db *sql.DB
+	db     *sql.DB
+	gormDB *gorm.DB
 
 	// 用户缓存 (热路径优化，但数据来源于 TiDB)
 	usersCache sync.Map // username -> *UserInfo
@@ -128,16 +132,9 @@ func New(config *Config) (*Service, error) {
 		nil, // OIDC 在 Start 中初始化
 	)
 
-	// 初始化 RBAC 引擎
-	rbacEngine := rbac.NewRBACEngine(rbac.RBACConfig{
-		SuperAdminRole:         config.SuperAdminRole,
-		DefaultPoliciesEnabled: true,
-	})
-
 	s := &Service{
 		config:        config,
 		authenticator: authenticator,
-		rbacEngine:    rbacEngine,
 		cacheTTL:      5 * time.Minute,
 		startTime:     time.Now(),
 		health:        health.NewServer(),
@@ -148,6 +145,23 @@ func New(config *Config) (*Service, error) {
 		if err := s.initTiDB(); err != nil {
 			return nil, fmt.Errorf("TiDB init failed: %w", err)
 		}
+
+		// P0-02 修复: 使用 GormAdapter 初始化 RBAC 引擎
+		gormAdapter, err := rbacadapter.NewGormAdapter(s.gormDB)
+		if err != nil {
+			return nil, fmt.Errorf("RBAC adapter init failed: %w", err)
+		}
+
+		s.rbacEngine = rbac.NewRBACEngineWithAdapter(rbac.RBACConfig{
+			SuperAdminRole:         config.SuperAdminRole,
+			DefaultPoliciesEnabled: true,
+		}, gormAdapter)
+	} else {
+		// 没有数据库时使用内存适配器（仅用于开发/测试）
+		s.rbacEngine = rbac.NewRBACEngine(rbac.RBACConfig{
+			SuperAdminRole:         config.SuperAdminRole,
+			DefaultPoliciesEnabled: true,
+		})
 	}
 
 	s.grpcServer = grpc.NewServer()
@@ -184,6 +198,13 @@ func (s *Service) initTiDB() error {
 	}
 
 	s.db = db
+
+	// P0-02 修复: 初始化 GORM DB (用于 RBAC 持久化)
+	gormDB, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("GORM open failed: %w", err)
+	}
+	s.gormDB = gormDB
 
 	// 初始化用户表
 	if err := s.initUserTable(); err != nil {

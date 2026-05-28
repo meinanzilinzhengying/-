@@ -8,9 +8,8 @@
 //   - 写入存储后端 (ClickHouse/VictoriaMetrics/Loki)
 //
 // 端口:
-//   - gRPC: 9001
-//   - HTTP: 8001
-//   - Metrics: 9101
+//   - gRPC: 9002
+//   - Metrics: 9102
 package dataplane
 
 import (
@@ -43,8 +42,8 @@ type Config struct {
 	ServiceName string
 	Version     string
 
-	GrpcAddr string // :9001
-	HttpAddr string // :8001
+	GrpcAddr string // :9002
+	MetricsAddr string // :9102
 
 	// 批量写入
 	BatchSize     int
@@ -70,8 +69,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		ServiceName:         "data-plane",
 		Version:             "1.0.0",
-		GrpcAddr:            ":9001",
-		HttpAddr:            ":8001",
+		GrpcAddr:            ":9002",
+		MetricsAddr:         ":9102",
 		BatchSize:           10000,
 		FlushInterval:       time.Second,
 		QueueSize:           100000,
@@ -128,8 +127,8 @@ type Service struct {
 	grpcServer *grpc.Server
 	health     *health.Server
 
-	// HTTP
-	httpServer *http.Server
+	// Metrics HTTP
+	metricsServer *http.Server
 
 	// 运行状态
 	startTime time.Time
@@ -192,17 +191,17 @@ func (s *Service) Start() error {
 		}
 	}()
 
-	// 启动 HTTP
+	// 启动 Metrics HTTP
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.healthzHandler)
-	mux.HandleFunc("/api/stats", s.statsHandler)
+	mux.HandleFunc("/health", s.healthzHandler)
+	mux.HandleFunc("/metrics", s.statsHandler)
 	mux.HandleFunc("/api/sampling/config", s.samplingConfigHandler)
 	mux.HandleFunc("/api/sampling/stats", s.samplingStatsHandler)
 
-	s.httpServer = &http.Server{Addr: s.config.HttpAddr, Handler: mux}
+	s.metricsServer = &http.Server{Addr: s.config.MetricsAddr, Handler: mux}
 	go func() {
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("HTTP server error: %v\n", err)
+		if err := s.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("Metrics server error: %v\n", err)
 		}
 	}()
 
@@ -214,8 +213,8 @@ func (s *Service) Start() error {
 	s.running.Store(true)
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
 
-	fmt.Printf("Data Plane started: gRPC=%s, HTTP=%s (sampling enabled, rate=1/%d)\n",
-		s.config.GrpcAddr, s.config.HttpAddr, s.config.Sampling.DefaultRate)
+	fmt.Printf("Data Plane started: gRPC=%s, Metrics=%s (sampling enabled, rate=1/%d)\n",
+		s.config.GrpcAddr, s.config.MetricsAddr, s.config.Sampling.DefaultRate)
 	return nil
 }
 
@@ -224,8 +223,8 @@ func (s *Service) Stop() {
 	s.running.Store(false)
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
 
-	if s.httpServer != nil {
-		s.httpServer.Close()
+	if s.metricsServer != nil {
+		s.metricsServer.Close()
 	}
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()

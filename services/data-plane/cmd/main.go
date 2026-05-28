@@ -13,7 +13,7 @@ import (
 func main() {
 	cfg := dataplane.DefaultConfig()
 	flag.StringVar(&cfg.GrpcAddr, "grpc-addr", cfg.GrpcAddr, "gRPC listen address")
-	flag.StringVar(&cfg.HttpAddr, "http-addr", cfg.HttpAddr, "HTTP listen address")
+	flag.StringVar(&cfg.MetricsAddr, "metrics-addr", cfg.MetricsAddr, "Metrics HTTP listen address")
 	flag.Parse()
 
 	svc, err := dataplane.New(cfg)

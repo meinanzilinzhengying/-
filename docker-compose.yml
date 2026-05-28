@@ -267,6 +267,15 @@ services:
       HEARTBEAT_TIMEOUT: "60s"
       AUTH_ADDR: "auth-service:9006"
       TENANT_ADDR: "tenant-service:9010"
+      # P1-01 新增: TLS/mTLS 配置
+      TLS_ENABLED: "false"
+      TLS_CA_FILE: "/certs/ca.crt"
+      TLS_CERT_FILE: "/certs/server.crt"
+      TLS_KEY_FILE: "/certs/server.key"
+      TLS_CLIENT_AUTH: "false"
+      TLS_INSECURE_SKIP: "false"
+    volumes:
+      - ./certs:/certs:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/healthz"]
       interval: 10s

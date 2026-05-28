@@ -14,7 +14,10 @@ package controlplane
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"strings"
@@ -23,6 +26,8 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
@@ -51,12 +56,20 @@ type Config struct {
 	DataPlaneAddr string
 
 	// 其他服务连接
-	AuthAddr     string
-	TenantAddr   string
+	AuthAddr   string
+	TenantAddr string
 
 	// Agent 管理
 	AgentTTL         time.Duration
 	HeartbeatTimeout time.Duration
+
+	// P1-01 新增: TLS/mTLS 配置
+	TLSEnabled       bool   // 是否启用 TLS
+	TLSCAFile        string // CA 证书路径
+	TLSCertFile      string // 服务器证书路径
+	TLSKeyFile       string // 服务器私钥路径
+	TLSClientAuth    bool   // 是否要求客户端证书 (mTLS)
+	TLSInsecureSkip  bool   // 是否跳过证书验证 (仅用于开发)
 }
 
 // DefaultConfig 默认配置
@@ -70,6 +83,8 @@ func DefaultConfig() *Config {
 		EtcdPrefix:       "cloudflow/services/",
 		AgentTTL:         90 * time.Second,
 		HeartbeatTimeout: 60 * time.Second,
+		TLSEnabled:       false, // 默认禁用 TLS
+		TLSInsecureSkip:  false, // 默认不跳过证书验证
 	}
 }
 
@@ -93,6 +108,7 @@ type Service struct {
 
 	// gRPC
 	grpcServer *grpc.Server
+	grpcCreds  credentials.TransportCredentials
 	health     *health.Server
 
 	// HTTP
@@ -120,11 +136,25 @@ func New(config *Config) (*Service, error) {
 		health:    health.NewServer(),
 	}
 
-	// 初始化 gRPC
-	s.grpcServer = grpc.NewServer(
+	// P1-01 新增: 初始化 TLS credentials
+	var err error
+	if config.TLSEnabled {
+		s.grpcCreds, err = s.newServerTLSCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	grpcOptions = append(grpcOptions,
 		grpc.MaxRecvMsgSize(64*1024*1024),
 		grpc.MaxSendMsgSize(64*1024*1024),
 	)
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 
 	// 注册服务
 	RegisterControlPlaneService(s.grpcServer, s)
@@ -295,16 +325,90 @@ func (s *Service) registerToEtcd() error {
 	return nil
 }
 
+// newServerTLSCredentials P1-01 新增: 创建服务器 TLS credentials
+func (s *Service) newServerTLSCredentials() (credentials.TransportCredentials, error) {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// 如果配置了 mTLS，加载 CA 证书验证客户端
+	if s.config.TLSClientAuth && s.config.TLSCAFile != "" {
+		caCert, err := ioutil.ReadFile(s.config.TLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert")
+		}
+		tlsConfig.ClientCAs = caCertPool
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	// 加载服务器证书和私钥
+	if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
+		serverCert, err := tls.LoadX509KeyPair(s.config.TLSCertFile, s.config.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load server cert: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{serverCert}
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
+}
+
+// newClientTLSCredentials P1-01 新增: 创建客户端 TLS credentials
+func (s *Service) newClientTLSCredentials() (credentials.TransportCredentials, error) {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// 如果配置了跳过证书验证（仅用于开发）
+	if s.config.TLSInsecureSkip {
+		tlsConfig.InsecureSkipVerify = true
+		return credentials.NewTLS(tlsConfig), nil
+	}
+
+	// 加载 CA 证书验证服务器
+	if s.config.TLSCAFile != "" {
+		caCert, err := ioutil.ReadFile(s.config.TLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	// 如果启用了 mTLS，加载客户端证书
+	if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
+		clientCert, err := tls.LoadX509KeyPair(s.config.TLSCertFile, s.config.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client cert: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{clientCert}
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
+}
+
 // connectToDownstream 建立下游服务连接
 func (s *Service) connectToDownstream() error {
 	var errs []error
+
+	// 获取 gRPC dial 选项
+	dialOptions, err := s.getGRPCDialOptions()
+	if err != nil {
+		return fmt.Errorf("failed to get dial options: %w", err)
+	}
 
 	// 连接 Data Plane
 	if s.config.DataPlaneAddr != "" {
 		conn, err := grpc.Dial(
 			s.config.DataPlaneAddr,
-			grpc.WithInsecure(),
-			grpc.WithTimeout(5*time.Second),
+			append(dialOptions, grpc.WithTimeout(5*time.Second))...,
 		)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("connect data-plane failed: %w", err))
@@ -317,8 +421,7 @@ func (s *Service) connectToDownstream() error {
 	if s.config.AuthAddr != "" {
 		conn, err := grpc.Dial(
 			s.config.AuthAddr,
-			grpc.WithInsecure(),
-			grpc.WithTimeout(5*time.Second),
+			append(dialOptions, grpc.WithTimeout(5*time.Second))...,
 		)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("connect auth-service failed: %w", err))
@@ -331,8 +434,7 @@ func (s *Service) connectToDownstream() error {
 	if s.config.TenantAddr != "" {
 		conn, err := grpc.Dial(
 			s.config.TenantAddr,
-			grpc.WithInsecure(),
-			grpc.WithTimeout(5*time.Second),
+			append(dialOptions, grpc.WithTimeout(5*time.Second))...,
 		)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("connect tenant-service failed: %w", err))
@@ -345,6 +447,23 @@ func (s *Service) connectToDownstream() error {
 		return fmt.Errorf("downstream connect errors: %v", errs)
 	}
 	return nil
+}
+
+// getGRPCDialOptions P1-01 新增: 获取 gRPC dial 选项
+func (s *Service) getGRPCDialOptions() ([]grpc.DialOption, error) {
+	var options []grpc.DialOption
+
+	if s.config.TLSEnabled {
+		creds, err := s.newClientTLSCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create client TLS credentials: %w", err)
+		}
+		options = append(options, grpc.WithTransportCredentials(creds))
+	} else {
+		options = append(options, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	return options, nil
 }
 
 // authMiddleware 认证中间件

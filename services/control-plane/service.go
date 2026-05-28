@@ -377,32 +377,51 @@ func (s *Service) authenticateRequest(r *http.Request) bool {
 	// 检查 API Key
 	apiKey := r.Header.Get("X-API-Key")
 	if apiKey != "" {
-		// 验证 API Key（实际实现应该查询数据库或调用 Auth Service）
-		return s.validateAPIKey(apiKey)
+		return s.validateAPIKey(r.Context(), apiKey)
 	}
 
 	// 检查 Bearer Token
 	authHeader := r.Header.Get("Authorization")
 	if len(authHeader) > 7 && strings.ToLower(authHeader[:7]) == "bearer " {
 		token := authHeader[7:]
-		return s.validateToken(token)
+		return s.validateToken(r.Context(), token)
 	}
 
 	return false
 }
 
 // validateAPIKey 验证 API Key
-func (s *Service) validateAPIKey(apiKey string) bool {
-	// 实际实现应该查询数据库
-	// 这里简化实现，检查是否非空
-	return apiKey != ""
+func (s *Service) validateAPIKey(ctx context.Context, apiKey string) bool {
+	if s.authConn == nil {
+		return false
+	}
+
+	client := svcproto.NewAuthServiceClient(s.authConn)
+	resp, err := client.ValidateToken(ctx, &svcproto.ValidateTokenRequest{
+		Token: apiKey,
+	})
+	if err != nil {
+		return false
+	}
+
+	return resp.Valid
 }
 
 // validateToken 验证 JWT Token
-func (s *Service) validateToken(token string) bool {
-	// 实际实现应该调用 Auth Service 验证
-	// 这里简化实现，检查是否非空
-	return token != ""
+func (s *Service) validateToken(ctx context.Context, token string) bool {
+	if s.authConn == nil {
+		return false
+	}
+
+	client := svcproto.NewAuthServiceClient(s.authConn)
+	resp, err := client.ValidateToken(ctx, &svcproto.ValidateTokenRequest{
+		Token: token,
+	})
+	if err != nil {
+		return false
+	}
+
+	return resp.Valid
 }
 
 // ============================================================================

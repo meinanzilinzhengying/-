@@ -1,22 +1,8 @@
-// Package authservice Auth Service 服务
-//
-// 职责:
-//   - JWT 认证签发与验证
-//   - OIDC SSO 集成
-//   - API Key 管理
-//   - Casbin RBAC 鉴权
-//   - tenant_id 全链路透传
-//   - 权限模型: tenant → project → role → policy
-//
-// 端口:
-//   - gRPC: 9006
-//   - HTTP: 8006
-//   - Metrics: 9106
 package authservice
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,6 +14,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+
+	_ "github.com/go-sql-driver/mysql"
 
 	"cloud-flow/services/auth-service/auth"
 	"cloud-flow/services/auth-service/rbac"
@@ -62,8 +50,11 @@ type Config struct {
 	// RBAC
 	SuperAdminRole string
 
-	// TiDB
-	TiDBAddr string
+	// TiDB (P0-02 修复: 用户持久化)
+	TiDBAddr     string
+	TiDBUser     string
+	TiDBPassword string
+	TiDBDatabase string
 }
 
 // DefaultConfig 默认配置
@@ -77,6 +68,7 @@ func DefaultConfig() *Config {
 		JWTExpireSec:   86400,   // 24h
 		JWTRefreshSec:  604800,  // 7d
 		SuperAdminRole: "super_admin",
+		TiDBDatabase:   "cloudflow_auth",
 	}
 }
 
@@ -94,10 +86,13 @@ type Service struct {
 	// RBAC
 	rbacEngine *rbac.RBACEngine
 
-	// 用户缓存
-	users sync.Map // userId -> *UserInfo
+	// P0-02 修复: TiDB 用户存储
+	db *sql.DB
 
-	// API Key 存储 (委托给 authenticator)
+	// 用户缓存 (热路径优化，但数据来源于 TiDB)
+	usersCache sync.Map // username -> *UserInfo
+	cacheTTL   time.Duration
+	cacheMu    sync.RWMutex
 
 	// gRPC/HTTP
 	grpcServer *grpc.Server
@@ -114,6 +109,8 @@ type UserInfo struct {
 	Password string // bcrypt hash
 	TenantID string
 	Role     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // New 创建服务
@@ -133,7 +130,7 @@ func New(config *Config) (*Service, error) {
 
 	// 初始化 RBAC 引擎
 	rbacEngine := rbac.NewRBACEngine(rbac.RBACConfig{
-		SuperAdminRole:       config.SuperAdminRole,
+		SuperAdminRole:         config.SuperAdminRole,
 		DefaultPoliciesEnabled: true,
 	})
 
@@ -141,8 +138,16 @@ func New(config *Config) (*Service, error) {
 		config:        config,
 		authenticator: authenticator,
 		rbacEngine:    rbacEngine,
+		cacheTTL:      5 * time.Minute,
 		startTime:     time.Now(),
 		health:        health.NewServer(),
+	}
+
+	// P0-02 修复: 初始化 TiDB 连接
+	if config.TiDBAddr != "" {
+		if err := s.initTiDB(); err != nil {
+			return nil, fmt.Errorf("TiDB init failed: %w", err)
+		}
 	}
 
 	s.grpcServer = grpc.NewServer()
@@ -150,6 +155,120 @@ func New(config *Config) (*Service, error) {
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
 
 	return s, nil
+}
+
+// initTiDB P0-02 修复: 初始化 TiDB 连接和用户表
+func (s *Service) initTiDB() error {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_bin",
+		s.config.TiDBUser,
+		s.config.TiDBPassword,
+		s.config.TiDBAddr,
+		s.config.TiDBDatabase,
+	)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("TiDB open failed: %w", err)
+	}
+
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return fmt.Errorf("TiDB ping failed: %w", err)
+	}
+
+	s.db = db
+
+	// 初始化用户表
+	if err := s.initUserTable(); err != nil {
+		return fmt.Errorf("init user table failed: %w", err)
+	}
+
+	// 加载用户到缓存
+	if err := s.loadUsersToCache(); err != nil {
+		return fmt.Errorf("load users to cache failed: %w", err)
+	}
+
+	fmt.Printf("Auth Service TiDB connected: %s/%s\n", s.config.TiDBAddr, s.config.TiDBDatabase)
+	return nil
+}
+
+// initUserTable 初始化用户表
+func (s *Service) initUserTable() error {
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS users (
+		user_id VARCHAR(64) PRIMARY KEY,
+		username VARCHAR(50) UNIQUE NOT NULL,
+		password VARCHAR(255) NOT NULL,
+		tenant_id VARCHAR(64) DEFAULT 'default',
+		role VARCHAR(20) NOT NULL DEFAULT 'user',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		INDEX idx_username (username),
+		INDEX idx_tenant (tenant_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+	`
+
+	if _, err := s.db.Exec(createTableSQL); err != nil {
+		return fmt.Errorf("create users table: %w", err)
+	}
+
+	// 检查是否存在默认管理员用户
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'admin'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check admin user: %w", err)
+	}
+
+	if count == 0 {
+		// 创建默认管理员
+		defaultPassword := "admin123" // 生产环境应强制要求设置环境变量
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(defaultPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("generate password hash: %w", err)
+		}
+
+		_, err = s.db.Exec(
+			"INSERT INTO users (user_id, username, password, tenant_id, role) VALUES (?, ?, ?, ?, ?)",
+			"admin-001",
+			"admin",
+			string(hashedPassword),
+			"default",
+			"admin",
+		)
+		if err != nil {
+			return fmt.Errorf("create admin user: %w", err)
+		}
+
+		fmt.Printf("Default admin user created: admin/admin123 (请立即修改密码)\n")
+	}
+
+	return nil
+}
+
+// loadUsersToCache 从 TiDB 加载用户到内存缓存
+func (s *Service) loadUsersToCache() error {
+	rows, err := s.db.Query("SELECT user_id, username, password, tenant_id, role FROM users")
+	if err != nil {
+		return fmt.Errorf("query users: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var user UserInfo
+		if err := rows.Scan(&user.UserID, &user.Username, &user.Password, &user.TenantID, &user.Role); err != nil {
+			continue
+		}
+		s.usersCache.Store(user.Username, &user)
+	}
+
+	return nil
 }
 
 // Start 启动服务
@@ -185,6 +304,12 @@ func (s *Service) Start() error {
 	mux.HandleFunc("/api/roles", s.rolesHandler)
 	mux.HandleFunc("/api/permissions/check", s.checkPermissionHandler)
 	mux.HandleFunc("/api/apikeys", s.apiKeyHandler)
+	
+	// P0-02 修复: 添加用户管理 API
+	mux.HandleFunc("/api/users", s.usersHandler)
+	mux.HandleFunc("/api/users/create", s.createUserHandler)
+	mux.HandleFunc("/api/users/update", s.updateUserHandler)
+	mux.HandleFunc("/api/users/delete", s.deleteUserHandler)
 
 	s.httpServer = &http.Server{
 		Addr:    s.config.HttpAddr,
@@ -193,7 +318,8 @@ func (s *Service) Start() error {
 	go func() { s.httpServer.ListenAndServe() }()
 
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
-	fmt.Printf("Auth Service started: gRPC=%s, HTTP=%s\n", s.config.GrpcAddr, s.config.HttpAddr)
+	fmt.Printf("Auth Service started: gRPC=%s, HTTP=%s (TiDB=%s)\n", 
+		s.config.GrpcAddr, s.config.HttpAddr, s.config.TiDBAddr)
 	return nil
 }
 
@@ -207,6 +333,9 @@ func (s *Service) Stop() {
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()
 	}
+	if s.db != nil {
+		s.db.Close()
+	}
 }
 
 // ============================================================================
@@ -215,9 +344,9 @@ func (s *Service) Stop() {
 
 // Authenticate 认证 (用户名+密码 → JWT)
 func (s *Service) Authenticate(ctx context.Context, req *svcproto.AuthenticateRequest) (*svcproto.AuthenticateResponse, error) {
-	// 查找用户
-	user, ok := s.findUser(req.Username)
-	if !ok {
+	// P0-02 修复: 从 TiDB 查找用户
+	user, err := s.findUserFromDB(req.Username)
+	if err != nil || user == nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -260,13 +389,11 @@ func (s *Service) ValidateToken(ctx context.Context, req *svcproto.ValidateToken
 
 // Authorize 鉴权 (Casbin RBAC)
 func (s *Service) Authorize(ctx context.Context, req *svcproto.AuthorizeRequest) (*svcproto.AuthorizeResponse, error) {
-	// 从 context 获取租户信息
 	tc, ok := tenant.FromContext(ctx)
 	if !ok {
 		return &svcproto.AuthorizeResponse{Allowed: false, Reason: "no tenant context"}, nil
 	}
 
-	// 使用 Casbin 检查权限
 	allowed, reason := s.rbacEngine.CheckPermission(
 		req.UserId, tc.TenantID, tc.ProjectID, req.Resource, req.Action,
 	)
@@ -293,7 +420,6 @@ func (s *Service) CreateRole(ctx context.Context, req *svcproto.CreateRoleReques
 		CreatedAt:   time.Now().Unix(),
 	}
 
-	// 为角色添加 Casbin 策略
 	for _, perm := range req.Permissions {
 		action, resource := parsePermission(perm)
 		if action != "" {
@@ -335,7 +461,6 @@ func (s *Service) CreatePolicy(ctx context.Context, req *svcproto.CreatePolicyRe
 		UpdatedAt:   time.Now().Unix(),
 	}
 
-	// 添加到 Casbin
 	for _, action := range req.Actions {
 		for _, resource := range req.Resources {
 			s.rbacEngine.AddPolicy("*", tc.TenantID, req.ProjectId, resource, action, req.Effect)
@@ -380,6 +505,130 @@ func (s *Service) OIDCCallback(ctx context.Context, req *svcproto.OIDCCallbackRe
 		UserId:    claims.Subject,
 		Role:      claims.Role,
 	}, nil
+}
+
+// ============================================================================
+// P0-02 修复: 用户管理 (TiDB 持久化)
+// ============================================================================
+
+// findUserFromDB 从 TiDB 查找用户
+func (s *Service) findUserFromDB(username string) (*UserInfo, error) {
+	// 先从缓存查找
+	if cached, ok := s.usersCache.Load(username); ok {
+		return cached.(*UserInfo), nil
+	}
+
+	// 缓存未命中，从 TiDB 查询
+	var user UserInfo
+	err := s.db.QueryRow(
+		"SELECT user_id, username, password, tenant_id, role FROM users WHERE username = ?",
+		username,
+	).Scan(&user.UserID, &user.Username, &user.Password, &user.TenantID, &user.Role)
+	
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query user: %w", err)
+	}
+
+	// 更新缓存
+	s.usersCache.Store(username, &user)
+	return &user, nil
+}
+
+// CreateUser 创建用户
+func (s *Service) CreateUser(username, password, role, tenantID string) error {
+	// 哈希密码
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	userID := fmt.Sprintf("user-%d", time.Now().UnixNano())
+
+	_, err = s.db.Exec(
+		"INSERT INTO users (user_id, username, password, tenant_id, role) VALUES (?, ?, ?, ?, ?)",
+		userID, username, string(hashedPassword), tenantID, role,
+	)
+	if err != nil {
+		return fmt.Errorf("insert user: %w", err)
+	}
+
+	// 更新缓存
+	user := &UserInfo{
+		UserID:   userID,
+		Username: username,
+		Password: string(hashedPassword),
+		TenantID: tenantID,
+		Role:     role,
+	}
+	s.usersCache.Store(username, user)
+
+	return nil
+}
+
+// UpdateUser 更新用户
+func (s *Service) UpdateUser(username, password, role string) error {
+	if password != "" {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("hash password: %w", err)
+		}
+		_, err = s.db.Exec(
+			"UPDATE users SET password = ?, role = ? WHERE username = ?",
+			string(hashedPassword), role, username,
+		)
+		if err != nil {
+			return fmt.Errorf("update user: %w", err)
+		}
+	} else {
+		_, err := s.db.Exec(
+			"UPDATE users SET role = ? WHERE username = ?",
+			role, username,
+		)
+		if err != nil {
+			return fmt.Errorf("update user role: %w", err)
+		}
+	}
+
+	// 清除缓存，强制下次从 DB 读取
+	s.usersCache.Delete(username)
+
+	return nil
+}
+
+// DeleteUser 删除用户
+func (s *Service) DeleteUser(username string) error {
+	_, err := s.db.Exec("DELETE FROM users WHERE username = ?", username)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+
+	// 清除缓存
+	s.usersCache.Delete(username)
+
+	return nil
+}
+
+// ListUsers 列出用户
+func (s *Service) ListUsers() ([]*UserInfo, error) {
+	rows, err := s.db.Query("SELECT user_id, username, tenant_id, role FROM users")
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*UserInfo
+	for rows.Next() {
+		var user UserInfo
+		if err := rows.Scan(&user.UserID, &user.Username, &user.TenantID, &user.Role); err != nil {
+			continue
+		}
+		users = append(users, &user)
+	}
+
+	return users, nil
 }
 
 // ============================================================================
@@ -457,17 +706,16 @@ func (s *Service) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) oidcAuthHandler(w http.ResponseWriter, r *http.Request) {
-	// 返回 OIDC 授权 URL
 	if s.config.OIDCIssuer == "" {
 		http.Error(w, "OIDC not configured", http.StatusNotImplemented)
 		return
 	}
 	writeJSON(w, map[string]string{
-		"issuer":       s.config.OIDCIssuer,
+		"issuer":            s.config.OIDCIssuer,
 		"authorization_url": s.config.OIDCIssuer + "/auth",
-		"client_id":    s.config.OIDCClientID,
-		"redirect_url": s.config.OIDCRedirectURL,
-		"scopes":       s.config.OIDCScopes,
+		"client_id":         s.config.OIDCClientID,
+		"redirect_url":      s.config.OIDCRedirectURL,
+		"scopes":            s.config.OIDCScopes,
 	})
 }
 
@@ -512,24 +760,121 @@ func (s *Service) apiKeyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// P0-02 修复: 用户管理 HTTP Handler
+func (s *Service) usersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	users, err := s.ListUsers()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"users": users})
+}
+
+func (s *Service) createUserHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+		TenantID string `json:"tenant_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if body.Username == "" || body.Password == "" {
+		http.Error(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+
+	if body.Role == "" {
+		body.Role = "user"
+	}
+	if body.TenantID == "" {
+		body.TenantID = "default"
+	}
+
+	if err := s.CreateUser(body.Username, body.Password, body.Role, body.TenantID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "created"})
+}
+
+func (s *Service) updateUserHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if body.Username == "" {
+		http.Error(w, "username required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.UpdateUser(body.Username, body.Password, body.Role); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "updated"})
+}
+
+func (s *Service) deleteUserHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		http.Error(w, "username required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.DeleteUser(username); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "deleted"})
+}
+
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
+// findUser 保留旧方法用于向后兼容，但优先使用 TiDB
 func (s *Service) findUser(username string) (*UserInfo, bool) {
-	var found *UserInfo
-	s.users.Range(func(_, v interface{}) bool {
-		u := v.(*UserInfo)
-		if u.Username == username {
-			found = u
-			return false
-		}
-		return true
-	})
-	if found == nil {
+	user, err := s.findUserFromDB(username)
+	if err != nil || user == nil {
 		return nil, false
 	}
-	return found, true
+	return user, true
 }
 
 // parsePermission 解析权限字符串 "flow:read" → (action="read", resource="flow")

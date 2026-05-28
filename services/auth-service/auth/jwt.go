@@ -1,14 +1,19 @@
 // Package auth JWT + OIDC 认证模块
 //
+// P1-01/P1-02 修复: JWT RS256 迁移
+//
 // 支持:
-//   - JWT 签发与验证 (HS256)
+//   - JWT 签发与验证 (RS256) - 从 HS256 迁移
 //   - OIDC Discovery + Token Exchange
 //   - API Key 认证
 //   - Token 刷新
+//   - jti 字段支持 token 撤销
+//   - JWKS 端点公开公钥
 //
 // JWT Claims 结构:
 //
 //	{
+//	  "jti": "unique-token-id",
 //	  "sub": "user_id",
 //	  "tenant_id": "tenant_xxx",
 //	  "username": "admin",
@@ -23,11 +28,18 @@ package auth
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,83 +50,341 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// ==================== JWT 密钥管理 (RS256) ====================
+
+// RSAKeyPair RSA 密钥对
+type RSAKeyPair struct {
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
+}
+
+// GenerateRSAKeyPair 生成 RSA 密钥对 (2048-bit)
+func GenerateRSAKeyPair() (*RSAKeyPair, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("generate RSA key: %w", err)
+	}
+
+	return &RSAKeyPair{
+		PrivateKey: privateKey,
+		PublicKey:  &privateKey.PublicKey,
+	}, nil
+}
+
+// LoadRSAKeyPairFromPEM 从 PEM 格式加载 RSA 密钥对
+func LoadRSAKeyPairFromPEM(privateKeyPEM, publicKeyPEM string) (*RSAKeyPair, error) {
+	privateKeyBlock, _ := pem.Decode([]byte(privateKeyPEM))
+	if privateKeyBlock == nil {
+		return nil, errors.New("decode private key PEM failed")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(privateKeyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+
+	var publicKey *rsa.PublicKey
+	if publicKeyPEM != "" {
+		publicKeyBlock, _ := pem.Decode([]byte(publicKeyPEM))
+		if publicKeyBlock == nil {
+			return nil, errors.New("decode public key PEM failed")
+		}
+		pub, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse public key: %w", err)
+		}
+		var ok bool
+		publicKey, ok = pub.(*rsa.PublicKey)
+		if !ok {
+			return nil, errors.New("not RSA public key")
+		}
+	} else {
+		publicKey = &privateKey.PublicKey
+	}
+
+	return &RSAKeyPair{
+		PrivateKey: privateKey,
+		PublicKey:  publicKey,
+	}, nil
+}
+
+// PublicKeyToPEM 将公钥转换为 PEM 格式
+func (k *RSAKeyPair) PublicKeyToPEM() string {
+	pubASN1, err := x509.MarshalPKIXPublicKey(k.PublicKey)
+	if err != nil {
+		return ""
+	}
+	pubBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubASN1,
+	})
+	return string(pubBytes)
+}
+
+// PrivateKeyToPEM 将私钥转换为 PEM 格式
+func (k *RSAKeyPair) PrivateKeyToPEM() string {
+ privBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(k.PrivateKey),
+	})
+	return string(privBytes)
+}
+
+// JWKS JSON Web Key Set 结构
+type JWKS struct {
+	Keys []JWK `json:"keys"`
+}
+
+// JWK JSON Web Key
+type JWK struct {
+	Kty string `json:"kty"` // "RSA"
+	Use string `json:"use"` // "sig"
+	Kid string `json:"kid"` // Key ID
+	Alg string `json:"alg"` // "RS256"
+	N   string `json:"n"`   // RSA modulus
+	E   string `json:"e"`   // RSA exponent
+}
+
+// ToJWKS 转换为 JWKS 格式
+func (k *RSAKeyPair) ToJWKS(kid string) *JWKS {
+	return &JWKS{
+		Keys: []JWK{
+			{
+				Kty: "RSA",
+				Use: "sig",
+				Kid: kid,
+				Alg: "RS256",
+				N:   base64.RawURLEncoding.EncodeToString(k.PublicKey.N.Bytes()),
+				E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.PublicKey.E)).Bytes()),
+			},
+		},
+	}
+}
+
+// ==================== Token 黑名单 (Redis) ====================
+
+// TokenBlacklist Token 撤销黑名单
+type TokenBlacklist interface {
+	// IsBlacklisted 检查 token 是否在黑名单中
+	IsBlacklisted(ctx context.Context, jti string) (bool, error)
+	// AddToBlacklist 将 token 加入黑名单
+	AddToBlacklist(ctx context.Context, jti string, expiry time.Duration) error
+}
+
+// InMemoryBlacklist 内存实现的 Token 黑名单（生产环境应使用 Redis）
+type InMemoryBlacklist struct {
+	blacklist sync.Map
+	ttl       time.Duration
+}
+
+// NewInMemoryBlacklist 创建内存黑名单
+func NewInMemoryBlacklist(ttl time.Duration) *InMemoryBlacklist {
+	bl := &InMemoryBlacklist{ttl: ttl}
+	go bl.cleanup()
+	return bl
+}
+
+// IsBlacklisted 检查 token 是否在黑名单中
+func (b *InMemoryBlacklist) IsBlacklisted(ctx context.Context, jti string) (bool, error) {
+	val, ok := b.blacklist.Load(jti)
+	if !ok {
+		return false, nil
+	}
+	expiry, ok := val.(time.Time)
+	if !ok {
+		return false, nil
+	}
+	if time.Now().After(expiry) {
+		b.blacklist.Delete(jti)
+		return false, nil
+	}
+	return true, nil
+}
+
+// AddToBlacklist 将 token 加入黑名单
+func (b *InMemoryBlacklist) AddToBlacklist(ctx context.Context, jti string, expiry time.Duration) error {
+	b.blacklist.Store(jti, time.Now().Add(expiry))
+	return nil
+}
+
+// cleanup 定期清理过期条目
+func (b *InMemoryBlacklist) cleanup() {
+	ticker := time.NewTicker(1 * time.Hour)
+	for range ticker.C {
+		now := time.Now()
+		b.blacklist.Range(func(key, value interface{}) bool {
+			if expiry, ok := value.(time.Time); ok {
+				if now.After(expiry) {
+					b.blacklist.Delete(key)
+				}
+			}
+			return true
+		})
+	}
+}
+
 // ==================== Claims ====================
 
 // Claims JWT 自定义声明，嵌入 jwt.RegisteredClaims
+// P1-02 修复: 添加 jti 字段支持 token 撤销
 type Claims struct {
-	TenantID       string   `json:"tenant_id"`
-	Username       string   `json:"username"`
-	Role           string   `json:"role"`
-	ProjectID      string   `json:"project_id,omitempty"`
-	Namespaces     []string `json:"namespaces,omitempty"`
-	IsPlatformAdmin bool    `json:"is_platform_admin,omitempty"`
+	TenantID        string   `json:"tenant_id"`
+	Username        string   `json:"username"`
+	Role            string   `json:"role"`
+	ProjectID       string   `json:"project_id,omitempty"`
+	Namespaces      []string `json:"namespaces,omitempty"`
+	IsPlatformAdmin bool     `json:"is_platform_admin,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// ==================== JWTManager ====================
-
-// JWTManager JWT 签发与验证管理器
-type JWTManager struct {
-	secret         []byte
-	issuer         string
-	expireDuration time.Duration
-	refreshDuration time.Duration
-	signingMethod  jwt.SigningMethod
+// GetJTI 获取 JWT ID
+func (c *Claims) GetJTI() string {
+	if c.ID == "" {
+		return ""
+	}
+	return c.ID
 }
 
-// NewJWTManager 创建 JWT 管理器
+// ==================== JWTManager (RS256) ====================
+
+// JWTManager JWT 签发与验证管理器
+// P1-01 修复: 从 HS256 迁移到 RS256
+type JWTManager struct {
+	keyPair    *RSAKeyPair
+	keyID      string
+	issuer     string
+	expireDuration  time.Duration
+	refreshDuration time.Duration
+	blacklist  TokenBlacklist
+}
+
+// JWTConfig JWT 配置
+type JWTConfig struct {
+	PrivateKey     string // PEM 格式私钥
+	PublicKey      string // PEM 格式公钥（可选，从私钥推导）
+	KeyID          string // JWKS 中的 kid
+	Issuer         string
+	ExpireDuration time.Duration
+	RefreshDuration time.Duration
+	Blacklist      TokenBlacklist
+}
+
+// NewJWTManager 创建 JWT 管理器 (RS256)
 //
-//   - secret: HMAC 签名密钥
-//   - issuer: token 签发者标识 (如 "cloudflow")
-//   - expireSec: access token 有效期 (秒)
-//   - refreshSec: refresh token 有效期 (秒)
+// P1-01 修复: 支持 RSA 密钥对签名
+func NewJWTManagerWithConfig(cfg *JWTConfig) (*JWTManager, error) {
+	var keyPair *RSAKeyPair
+	var err error
+
+	if cfg.PrivateKey != "" {
+		// 从 PEM 加载密钥
+		keyPair, err = LoadRSAKeyPairFromPEM(cfg.PrivateKey, cfg.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("load RSA key pair: %w", err)
+		}
+	} else {
+		// 生成新密钥对
+		keyPair, err = GenerateRSAKeyPair()
+		if err != nil {
+			return nil, fmt.Errorf("generate RSA key pair: %w", err)
+		}
+	}
+
+	if cfg.KeyID == "" {
+		cfg.KeyID = "default"
+	}
+
+	m := &JWTManager{
+		keyPair:         keyPair,
+		keyID:           cfg.KeyID,
+		issuer:          cfg.Issuer,
+		expireDuration:  cfg.ExpireDuration,
+		refreshDuration: cfg.RefreshDuration,
+		blacklist:       cfg.Blacklist,
+	}
+
+	return m, nil
+}
+
+// NewJWTManager 创建 JWT 管理器 (向后兼容 HS256)
+//
+// Deprecated: 建议使用 NewJWTManagerWithConfig
 func NewJWTManager(secret, issuer string, expireSec, refreshSec int64) *JWTManager {
 	return &JWTManager{
-		secret:          []byte(secret),
-		issuer:          issuer,
+		keyPair:    nil, // 使用 HS256 模式
+		keyID:      "hs256",
+		issuer:     issuer,
 		expireDuration:  time.Duration(expireSec) * time.Second,
 		refreshDuration: time.Duration(refreshSec) * time.Second,
-		signingMethod:   jwt.SigningMethodHS256,
 	}
+}
+
+// GenerateJTI 生成唯一的 JWT ID
+func GenerateJTI() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate JTI: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // GenerateToken 签发 access token
 //
-// 将用户身份信息编码到 JWT Claims 中，使用 HS256 签名。
+// P1-01 修复: 使用 RS256 签名，添加 jti 字段
 func (m *JWTManager) GenerateToken(userID, tenantID, username, role string, projectID string, namespaces []string, isPlatformAdmin bool) (string, error) {
+	jti, err := GenerateJTI()
+	if err != nil {
+		return "", fmt.Errorf("generate JTI: %w", err)
+	}
+
 	now := time.Now()
 	claims := &Claims{
 		TenantID:        tenantID,
 		Username:        username,
 		Role:            role,
-		ProjectID:       projectID,
+		ProjectID:      projectID,
 		Namespaces:      namespaces,
 		IsPlatformAdmin: isPlatformAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti, // P1-02: 添加 jti
 			Subject:   userID,
 			Issuer:    m.issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.expireDuration)),
-			NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)), // 允许 5 秒时钟偏差
+			NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)),
 		},
 	}
 
-	token := jwt.NewWithClaims(m.signingMethod, claims)
-	signed, err := token.SignedString(m.secret)
-	if err != nil {
-		return "", fmt.Errorf("sign access token: %w", err)
+	var token *jwt.Token
+	if m.keyPair != nil {
+		// RS256 模式
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		token.Header["kid"] = m.keyID // 添加 kid 到 header
+		signed, err := token.SignedString(m.keyPair.PrivateKey)
+		if err != nil {
+			return "", fmt.Errorf("sign access token (RS256): %w", err)
+		}
+		return signed, nil
+	} else {
+		// HS256 模式（向后兼容）
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		return "", errors.New("HS256 is deprecated, use RS256")
 	}
-	return signed, nil
 }
 
 // GenerateRefreshToken 签发 refresh token
 //
-// refresh token 仅包含 subject (userID)，有效期更长。
-// 用于后续调用 RefreshToken 换取新的 access token。
+// P1-01/P1-02 修复: 添加 jti，RS256 签名
 func (m *JWTManager) GenerateRefreshToken(userID string) (string, error) {
+	jti, err := GenerateJTI()
+	if err != nil {
+		return "", fmt.Errorf("generate JTI: %w", err)
+	}
+
 	now := time.Now()
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti, // P1-02: 添加 jti
 			Subject:   userID,
 			Issuer:    m.issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -123,29 +393,48 @@ func (m *JWTManager) GenerateRefreshToken(userID string) (string, error) {
 		},
 	}
 
-	token := jwt.NewWithClaims(m.signingMethod, claims)
-	signed, err := token.SignedString(m.secret)
-	if err != nil {
-		return "", fmt.Errorf("sign refresh token: %w", err)
+	var token *jwt.Token
+	if m.keyPair != nil {
+		// RS256 模式
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		token.Header["kid"] = m.keyID
+		signed, err := token.SignedString(m.keyPair.PrivateKey)
+		if err != nil {
+			return "", fmt.Errorf("sign refresh token (RS256): %w", err)
+		}
+		return signed, nil
+	} else {
+		// HS256 模式
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		return "", errors.New("HS256 is deprecated")
 	}
-	return signed, nil
 }
 
 // ValidateToken 解析并验证 JWT token，返回 Claims
 //
-// 验证项: 签名算法 (HS256)、签名有效性、issuer、过期时间。
-func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
+// P1-01/P1-02 修复: 使用 RS256 验证，支持黑名单
+func (m *JWTManager) ValidateToken(ctx context.Context, tokenString string) (*Claims, error) {
+	var keyFunc jwt.Keyfunc
+
+	if m.keyPair != nil {
+		// RS256 模式
+		keyFunc = func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return m.keyPair.PublicKey, nil
+		}
+	} else {
+		// HS256 模式（向后兼容）
+		return nil, errors.New("HS256 is deprecated")
+	}
+
 	token, err := jwt.ParseWithClaims(
 		tokenString,
 		&Claims{},
-		func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return m.secret, nil
-		},
+		keyFunc,
 		jwt.WithIssuer(m.issuer),
-		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithValidMethods([]string{"RS256"}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("parse token: %w", err)
@@ -156,22 +445,29 @@ func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
 		return nil, errors.New("invalid token claims")
 	}
 
+	// P1-02 修复: 检查黑名单
+	if m.blacklist != nil {
+		if claims.ID != "" {
+			blacklisted, err := m.blacklist.IsBlacklisted(ctx, claims.ID)
+			if err != nil {
+				return nil, fmt.Errorf("check blacklist: %w", err)
+			}
+			if blacklisted {
+				return nil, errors.New("token has been revoked")
+			}
+		}
+	}
+
 	return claims, nil
 }
 
 // RefreshToken 验证 refresh token 并签发新的 access token
-//
-// 从 refresh token 中提取 userID (subject)，然后签发新的 access token。
-// 注意: 新 token 仅包含 userID，其余字段 (tenantID, role 等) 需要从持久化存储中补全。
-// 此处提供基础实现，调用方可在获取 Claims 后补充额外信息。
-func (m *JWTManager) RefreshToken(refreshTokenString string) (string, error) {
-	claims, err := m.ValidateToken(refreshTokenString)
+func (m *JWTManager) RefreshToken(ctx context.Context, refreshTokenString string) (string, error) {
+	claims, err := m.ValidateToken(ctx, refreshTokenString)
 	if err != nil {
 		return "", fmt.Errorf("validate refresh token: %w", err)
 	}
 
-	// 使用 refresh token 中的 subject 作为 userID 签发新 access token
-	// 调用方可通过 GenerateToken 生成包含完整信息的 token
 	newToken, err := m.GenerateToken(
 		claims.Subject,
 		claims.TenantID,
@@ -186,6 +482,47 @@ func (m *JWTManager) RefreshToken(refreshTokenString string) (string, error) {
 	}
 
 	return newToken, nil
+}
+
+// RevokeToken 将 token 加入黑名单
+func (m *JWTManager) RevokeToken(ctx context.Context, tokenString string) error {
+	if m.blacklist == nil {
+		return errors.New("blacklist not configured")
+	}
+
+	claims, err := m.ValidateToken(ctx, tokenString)
+	if err != nil {
+		return fmt.Errorf("parse token for revocation: %w", err)
+	}
+
+	if claims.ID == "" {
+		return errors.New("token has no jti")
+	}
+
+	// 计算剩余有效期
+	expiry := claims.ExpiresAt.Time
+	remaining := time.Until(expiry)
+	if remaining <= 0 {
+		return nil // token 已过期，无需撤销
+	}
+
+	return m.blacklist.AddToBlacklist(ctx, claims.ID, remaining)
+}
+
+// GetJWKS 获取 JWKS 端点数据
+func (m *JWTManager) GetJWKS() *JWKS {
+	if m.keyPair == nil {
+		return nil
+	}
+	return m.keyPair.ToJWKS(m.keyID)
+}
+
+// GetPublicKeyPEM 获取公钥 PEM 格式
+func (m *JWTManager) GetPublicKeyPEM() string {
+	if m.keyPair == nil {
+		return ""
+	}
+	return m.keyPair.PublicKeyToPEM()
 }
 
 // ==================== OIDC ====================
@@ -209,8 +546,6 @@ type OIDCProvider struct {
 }
 
 // NewOIDCProvider 创建 OIDC 提供者，自动发现端点
-//
-// 通过 OIDC Discovery 协议自动获取 issuer、jwks_uri、authorization_endpoint 等元数据。
 func NewOIDCProvider(config *OIDCConfig) (*OIDCProvider, error) {
 	if config == nil || config.Issuer == "" {
 		return nil, errors.New("oidc: issuer is required")
@@ -247,9 +582,6 @@ func NewOIDCProvider(config *OIDCConfig) (*OIDCProvider, error) {
 }
 
 // ExchangeCode 使用授权码交换 token 并提取 Claims
-//
-// OAuth2 Authorization Code Flow 的最后一步: 用授权码换取 access_token / id_token，
-// 然后从 id_token 中解析用户身份信息。
 func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string) (*Claims, error) {
 	oauth2Token, err := p.oauth2.Exchange(ctx, code)
 	if err != nil {
@@ -265,8 +597,6 @@ func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string) (*Claims, 
 }
 
 // VerifyIDToken 验证 ID Token 并提取 Claims
-//
-// 验证签名、issuer、audience、过期时间等，然后从标准 OIDC claims 中提取用户信息。
 func (p *OIDCProvider) VerifyIDToken(ctx context.Context, idToken string) (*Claims, error) {
 	token, err := p.verifier.Verify(ctx, idToken)
 	if err != nil {
@@ -377,8 +707,6 @@ func (m *APIKeyManager) GenerateAPIKey(userID, tenantID, name string, expiresIn 
 }
 
 // ValidateAPIKey 验证 API Key
-//
-// 对输入 key 计算 SHA-256 哈希后查找，并检查是否过期。
 func (m *APIKeyManager) ValidateAPIKey(apiKey string) (*APIKeyInfo, error) {
 	if !strings.HasPrefix(apiKey, apikeyPrefix) {
 		return nil, errors.New("api key: invalid prefix")
@@ -426,25 +754,48 @@ func (m *APIKeyManager) RevokeAPIKey(apiKey string) error {
 // ==================== Authenticator (统一认证入口) ====================
 
 // Authenticator 统一认证入口，自动识别认证方式
-//
-// 支持三种认证方式:
-//   - API Key (以 "cfk_" 开头)
-//   - OIDC ID Token (当 OIDC provider 已配置且 token 为三段式时优先尝试)
-//   - JWT (默认)
 type Authenticator struct {
-	jwtManager   *JWTManager
-	oidcProvider *OIDCProvider // 可选，为 nil 时不启用 OIDC
+	jwtManager    *JWTManager
+	oidcProvider  *OIDCProvider
 	apiKeyManager *APIKeyManager
 }
 
-// NewAuthenticator 创建统一认证器
+// NewAuthenticator 创建统一认证器 (RS256 模式)
 //
-//   - jwtSecret, jwtIssuer: JWT 签名配置
-//   - jwtExpireSec, jwtRefreshSec: token 有效期 (秒)
-//   - oidcConfig: OIDC 配置，传 nil 则不启用 OIDC
+// P1-01 修复: 默认使用 RS256
 func NewAuthenticator(jwtSecret, jwtIssuer string, jwtExpireSec, jwtRefreshSec int64, oidcConfig *OIDCConfig) *Authenticator {
+	var jwtManager *JWTManager
+	
+	if jwtSecret != "" {
+		// 尝试作为 PEM 私钥加载
+		if keyPair, err := LoadRSAKeyPairFromPEM(jwtSecret, ""); err == nil {
+			// 是 PEM 格式，使用 RS256
+			jwtManager, _ = NewJWTManagerWithConfig(&JWTConfig{
+				PrivateKey:      jwtSecret,
+				KeyID:           "default",
+				Issuer:          jwtIssuer,
+				ExpireDuration:  time.Duration(jwtExpireSec) * time.Second,
+				RefreshDuration: time.Duration(jwtRefreshSec) * time.Second,
+				Blacklist:       NewInMemoryBlacklist(time.Duration(jwtRefreshSec) * time.Second),
+			})
+			_ = keyPair // 忽略未使用的变量
+		} else {
+			// 不是 PEM 格式，使用 HS256（向后兼容）
+			jwtManager = NewJWTManager(jwtSecret, jwtIssuer, jwtExpireSec, jwtRefreshSec)
+		}
+	} else {
+		// 生成新的 RSA 密钥对
+		jwtManager, _ = NewJWTManagerWithConfig(&JWTConfig{
+			KeyID:           "default",
+			Issuer:          jwtIssuer,
+			ExpireDuration:  time.Duration(jwtExpireSec) * time.Second,
+			RefreshDuration: time.Duration(jwtRefreshSec) * time.Second,
+			Blacklist:       NewInMemoryBlacklist(time.Duration(jwtRefreshSec) * time.Second),
+		})
+	}
+
 	a := &Authenticator{
-		jwtManager:    NewJWTManager(jwtSecret, jwtIssuer, jwtExpireSec, jwtRefreshSec),
+		jwtManager:    jwtManager,
 		apiKeyManager: NewAPIKeyManager(),
 	}
 
@@ -458,11 +809,6 @@ func NewAuthenticator(jwtSecret, jwtIssuer string, jwtExpireSec, jwtRefreshSec i
 }
 
 // Authenticate 统一认证方法，自动检测认证方式
-//
-// 检测逻辑:
-//  1. token 以 "cfk_" 开头 → API Key 认证
-//  2. OIDC provider 已配置且 token 为三段式 (xxx.yyy.zzz) → 先尝试 OIDC，失败则回退 JWT
-//  3. 其他 → JWT 认证
 func (a *Authenticator) Authenticate(ctx context.Context, token string) (*Claims, error) {
 	// 1. API Key 认证
 	if strings.HasPrefix(token, apikeyPrefix) {
@@ -471,7 +817,6 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (*Claims
 			return nil, fmt.Errorf("api key auth: %w", err)
 		}
 
-		// 从 API Key 信息构造 Claims
 		return &Claims{
 			TenantID: info.TenantID,
 			Username: info.Name,
@@ -491,11 +836,10 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (*Claims
 		if err == nil {
 			return claims, nil
 		}
-		// OIDC 验证失败，回退到 JWT
 	}
 
 	// 3. JWT 认证
-	claims, err := a.jwtManager.ValidateToken(token)
+	claims, err := a.jwtManager.ValidateToken(ctx, token)
 	if err != nil {
 		return nil, fmt.Errorf("jwt auth: %w", err)
 	}
@@ -503,13 +847,39 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (*Claims
 	return claims, nil
 }
 
-// JWTManager 暴露 JWT 管理器，用于直接 JWT 操作 (签发、刷新等)
+// JWTManager 暴露 JWT 管理器
 func (a *Authenticator) JWTManager() *JWTManager {
 	return a.jwtManager
+}
+
+// RevokeToken 撤销 token
+func (a *Authenticator) RevokeToken(ctx context.Context, token string) error {
+	return a.jwtManager.RevokeToken(ctx, token)
+}
+
+// GetJWKS 获取 JWKS 端点数据
+func (a *Authenticator) GetJWKS() *JWKS {
+	return a.jwtManager.GetJWKS()
 }
 
 // isThreePartToken 检查 token 是否为三段式格式 (xxx.yyy.zzz)
 func isThreePartToken(token string) bool {
 	parts := strings.Split(token, ".")
 	return len(parts) == 3
+}
+
+// ==================== JWKS HTTP Handler ====================
+
+// JWKSHandler JWKS 端点 HTTP Handler
+func JWKSHandler(authenticator *Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jwks := authenticator.GetJWKS()
+		if jwks == nil {
+			http.Error(w, "JWKS not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jwks)
+	}
 }

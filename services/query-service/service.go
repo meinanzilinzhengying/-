@@ -9,15 +9,16 @@
 //   - Trace-Flow 关联分析
 //
 // 端口:
-//   - gRPC: 9003
-//   - HTTP: 8003 (对外 API)
+//   - gRPC: 9007
+//   - HTTP: 8007 (对外 API)
 //   - OTLP gRPC: 4317
 //   - OTLP HTTP: 4318
-//   - Metrics: 9103
+//   - Metrics: 9107
 package queryservice
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -25,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -38,29 +40,34 @@ import (
 type Config struct {
 	ServiceName string
 	Version     string
-	GrpcAddr    string // :9003
-	HttpAddr    string // :8003
+	GrpcAddr    string // :9007
+	HttpAddr    string // :8007
 
 	// 后端连接
-	DataPlaneAddr      string
-	TopologyAddr       string
-	AlertAddr          string
-	ClickHouseAddr     string
-	VictoriaMetricsAddr string
-	LokiAddr           string
+	DataPlaneAddr        string
+	TopologyAddr         string
+	AlertAddr            string
+	ClickHouseAddr       string
+	ClickHouseDatabase   string
+	VictoriaMetricsAddr  string
+	LokiAddr             string
 
 	// 查询配置
-	QueryTimeout        time.Duration
+	QueryTimeout         time.Duration
 	MaxConcurrentQueries int
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		ServiceName:          "query-service",
-		Version:              "1.0.0",
-		GrpcAddr:             ":9003",
-		HttpAddr:             ":8003",
-		QueryTimeout:         30 * time.Second,
+		ServiceName:         "query-service",
+		Version:             "1.0.0",
+		GrpcAddr:            ":9007",
+		HttpAddr:            ":8007",
+		ClickHouseAddr:      "clickhouse:9000",
+		ClickHouseDatabase:  "cloudflow",
+		VictoriaMetricsAddr: "http://victoriametrics:8428",
+		LokiAddr:            "http://loki:3100",
+		QueryTimeout:        30 * time.Second,
 		MaxConcurrentQueries: 1000,
 	}
 }
@@ -77,6 +84,10 @@ type Stats struct {
 type Service struct {
 	config *Config
 
+	// 数据库连接
+	clickHouseDB *sql.DB
+	vmHTTPClient *http.Client
+
 	// 客户端连接
 	dataPlaneConn *grpc.ClientConn
 	topologyConn  *grpc.ClientConn
@@ -90,7 +101,7 @@ type Service struct {
 	httpServer *http.Server
 
 	// OTLP
-	otlpReceiver      *otel.OTLPReceiver
+	otlpReceiver       *otel.OTLPReceiver
 	correlationEngine *correlation.CorrelationEngine
 
 	// 统计
@@ -111,6 +122,16 @@ func New(config *Config) (*Service, error) {
 		health:    health.NewServer(),
 	}
 
+	// 初始化 ClickHouse 连接
+	if err := s.initClickHouse(); err != nil {
+		return nil, fmt.Errorf("ClickHouse init failed: %w", err)
+	}
+
+	// 初始化 VictoriaMetrics HTTP 客户端
+	s.vmHTTPClient = &http.Client{
+		Timeout: config.QueryTimeout,
+	}
+
 	s.grpcServer = grpc.NewServer(
 		grpc.MaxRecvMsgSize(64*1024*1024),
 		grpc.MaxSendMsgSize(64*1024*1024),
@@ -129,6 +150,30 @@ func New(config *Config) (*Service, error) {
 	s.correlationEngine = correlation.NewCorrelationEngine(1000000, 30*time.Minute)
 
 	return s, nil
+}
+
+// initClickHouse 初始化 ClickHouse 连接
+func (s *Service) initClickHouse() error {
+	if s.config.ClickHouseAddr == "" {
+		return nil
+	}
+
+	dsn := fmt.Sprintf("clickhouse://%s/%s", s.config.ClickHouseAddr, s.config.ClickHouseDatabase)
+	db, err := sql.Open("clickhouse", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open ClickHouse: %w", err)
+	}
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Hour)
+
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("failed to ping ClickHouse: %w", err)
+	}
+
+	s.clickHouseDB = db
+	return nil
 }
 
 func (s *Service) Start() error {
@@ -184,30 +229,405 @@ func (s *Service) Stop() {
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()
 	}
+	if s.clickHouseDB != nil {
+		s.clickHouseDB.Close()
+	}
 }
 
 // QueryFlows 查询 Flow
 func (s *Service) QueryFlows(ctx context.Context, req *svcproto.QueryFlowRequest) (*svcproto.QueryFlowResponse, error) {
-	// TODO: 查询 ClickHouse
-	return &svcproto.QueryFlowResponse{Total: 0, TookMs: 0}, nil
+	startTime := time.Now()
+	s.statsMu.Lock()
+	s.stats.QueryCount++
+	s.statsMu.Unlock()
+
+	if s.clickHouseDB == nil {
+		return &svcproto.QueryFlowResponse{Records: []map[string]interface{}{}, Total: 0, TookMs: time.Since(startTime).Milliseconds()}, nil
+	}
+
+	// 构建查询
+	query := "SELECT * FROM flows WHERE 1=1"
+	args := []interface{}{}
+
+	if req.TenantId != "" {
+		query += " AND tenant_id = ?"
+		args = append(args, req.TenantId)
+	}
+	if req.StartTime > 0 {
+		query += " AND timestamp >= ?"
+		args = append(args, req.StartTime)
+	}
+	if req.EndTime > 0 {
+		query += " AND timestamp <= ?"
+		args = append(args, req.EndTime)
+	}
+	if req.SrcIp != "" {
+		query += " AND src_ip = ?"
+		args = append(args, req.SrcIp)
+	}
+	if req.DstIp != "" {
+		query += " AND dst_ip = ?"
+		args = append(args, req.DstIp)
+	}
+	if req.Namespace != "" {
+		query += " AND namespace = ?"
+		args = append(args, req.Namespace)
+	}
+	if req.Service != "" {
+		query += " AND service = ?"
+		args = append(args, req.Service)
+	}
+
+	query += " ORDER BY timestamp DESC"
+
+	if req.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", req.Limit)
+	} else {
+		query += " LIMIT 1000"
+	}
+
+	rows, err := s.clickHouseDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		s.statsMu.Lock()
+		s.stats.QueryErrors++
+		s.statsMu.Unlock()
+		return nil, fmt.Errorf("query flows failed: %w", err)
+	}
+	defer rows.Close()
+
+	records := []map[string]interface{}{}
+	columns, _ := rows.Columns()
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		record := make(map[string]interface{})
+		for i, col := range columns {
+			record[col] = values[i]
+		}
+		records = append(records, record)
+	}
+
+	tookMs := time.Since(startTime).Milliseconds()
+	s.statsMu.Lock()
+	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs + uint64(tookMs)) / 2
+	s.statsMu.Unlock()
+
+	return &svcproto.QueryFlowResponse{
+		Records: records,
+		Total:   int64(len(records)),
+		TookMs:  tookMs,
+	}, nil
 }
 
 // QueryMetrics 查询 Metrics
 func (s *Service) QueryMetrics(ctx context.Context, req *svcproto.QueryFlowRequest) (*svcproto.QueryFlowResponse, error) {
-	// TODO: 查询 VictoriaMetrics
-	return &svcproto.QueryFlowResponse{Total: 0, TookMs: 0}, nil
+	startTime := time.Now()
+	s.statsMu.Lock()
+	s.stats.QueryCount++
+	s.statsMu.Unlock()
+
+	if s.clickHouseDB == nil {
+		return &svcproto.QueryFlowResponse{Records: []map[string]interface{}{}, Total: 0, TookMs: time.Since(startTime).Milliseconds()}, nil
+	}
+
+	// 构建查询
+	query := "SELECT * FROM metrics WHERE 1=1"
+	args := []interface{}{}
+
+	if req.TenantId != "" {
+		query += " AND tenant_id = ?"
+		args = append(args, req.TenantId)
+	}
+	if req.StartTime > 0 {
+		query += " AND timestamp >= ?"
+		args = append(args, req.StartTime)
+	}
+	if req.EndTime > 0 {
+		query += " AND timestamp <= ?"
+		args = append(args, req.EndTime)
+	}
+	if req.Namespace != "" {
+		query += " AND namespace = ?"
+		args = append(args, req.Namespace)
+	}
+	if req.Service != "" {
+		query += " AND service = ?"
+		args = append(args, req.Service)
+	}
+
+	query += " ORDER BY timestamp DESC"
+
+	if req.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", req.Limit)
+	} else {
+		query += " LIMIT 1000"
+	}
+
+	rows, err := s.clickHouseDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		s.statsMu.Lock()
+		s.stats.QueryErrors++
+		s.statsMu.Unlock()
+		return nil, fmt.Errorf("query metrics failed: %w", err)
+	}
+	defer rows.Close()
+
+	records := []map[string]interface{}{}
+	columns, _ := rows.Columns()
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		record := make(map[string]interface{})
+		for i, col := range columns {
+			record[col] = values[i]
+		}
+		records = append(records, record)
+	}
+
+	tookMs := time.Since(startTime).Milliseconds()
+	s.statsMu.Lock()
+	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs + uint64(tookMs)) / 2
+	s.statsMu.Unlock()
+
+	return &svcproto.QueryFlowResponse{
+		Records: records,
+		Total:   int64(len(records)),
+		TookMs:  tookMs,
+	}, nil
 }
 
 // QueryTraces 查询 Traces
 func (s *Service) QueryTraces(ctx context.Context, req *svcproto.QueryFlowRequest) (*svcproto.QueryFlowResponse, error) {
-	// TODO: 查询 ClickHouse
-	return &svcproto.QueryFlowResponse{Total: 0, TookMs: 0}, nil
+	startTime := time.Now()
+	s.statsMu.Lock()
+	s.stats.QueryCount++
+	s.statsMu.Unlock()
+
+	if s.clickHouseDB == nil {
+		return &svcproto.QueryFlowResponse{Records: []map[string]interface{}{}, Total: 0, TookMs: time.Since(startTime).Milliseconds()}, nil
+	}
+
+	// 构建查询
+	query := "SELECT * FROM traces WHERE 1=1"
+	args := []interface{}{}
+
+	if req.TenantId != "" {
+		query += " AND tenant_id = ?"
+		args = append(args, req.TenantId)
+	}
+	if req.StartTime > 0 {
+		query += " AND start_time >= ?"
+		args = append(args, req.StartTime)
+	}
+	if req.EndTime > 0 {
+		query += " AND end_time <= ?"
+		args = append(args, req.EndTime)
+	}
+	if req.Namespace != "" {
+		query += " AND namespace = ?"
+		args = append(args, req.Namespace)
+	}
+	if req.Service != "" {
+		query += " AND service_name = ?"
+		args = append(args, req.Service)
+	}
+
+	query += " ORDER BY start_time DESC"
+
+	if req.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", req.Limit)
+	} else {
+		query += " LIMIT 100"
+	}
+
+	rows, err := s.clickHouseDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		s.statsMu.Lock()
+		s.stats.QueryErrors++
+		s.statsMu.Unlock()
+		return nil, fmt.Errorf("query traces failed: %w", err)
+	}
+	defer rows.Close()
+
+	records := []map[string]interface{}{}
+	columns, _ := rows.Columns()
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		record := make(map[string]interface{})
+		for i, col := range columns {
+			record[col] = values[i]
+		}
+		records = append(records, record)
+	}
+
+	tookMs := time.Since(startTime).Milliseconds()
+	s.statsMu.Lock()
+	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs + uint64(tookMs)) / 2
+	s.statsMu.Unlock()
+
+	return &svcproto.QueryFlowResponse{
+		Records: records,
+		Total:   int64(len(records)),
+		TookMs:  tookMs,
+	}, nil
 }
 
 // QueryDashboard Dashboard 聚合查询
 func (s *Service) QueryDashboard(ctx context.Context, req *svcproto.QueryFlowRequest) (*svcproto.QueryFlowResponse, error) {
-	// TODO: 跨服务聚合
-	return &svcproto.QueryFlowResponse{Total: 0, TookMs: 0}, nil
+	startTime := time.Now()
+	s.statsMu.Lock()
+	s.stats.QueryCount++
+	s.statsMu.Unlock()
+
+	if s.clickHouseDB == nil {
+		return &svcproto.QueryFlowResponse{Records: []map[string]interface{}{}, Total: 0, TookMs: time.Since(startTime).Milliseconds()}, nil
+	}
+
+	// Dashboard 聚合查询
+	queries := []struct {
+		name  string
+		query string
+		args  []interface{}
+	}{
+		{
+			name: "flow_count",
+			query: `SELECT 
+				count() as count,
+				toDate(timestamp) as date
+			FROM flows
+			WHERE 1=1`,
+			args: []interface{}{},
+		},
+		{
+			name: "top_talkers",
+			query: `SELECT 
+				src_ip,
+				dst_ip,
+				sum(bytes) as total_bytes,
+				count() as flow_count
+			FROM flows
+			WHERE 1=1`,
+			args: []interface{}{},
+		},
+		{
+			name: "error_rate",
+			query: `SELECT 
+				service,
+				sum(case when status = 'error' then 1 else 0 end) as error_count,
+				count() as total_count,
+				(sum(case when status = 'error' then 1 else 0 end) / count()) * 100 as error_rate
+			FROM flows
+			WHERE 1=1`,
+			args: []interface{}{},
+		},
+		{
+			name: "latency_p95",
+			query: `SELECT 
+				service,
+				quantile(0.95)(latency_ns) as p95_latency
+			FROM flows
+			WHERE 1=1`,
+			args: []interface{}{},
+		},
+	}
+
+	// 添加过滤条件
+	filterQuery := ""
+	filterArgs := []interface{}{}
+
+	if req.TenantId != "" {
+		filterQuery += " AND tenant_id = ?"
+		filterArgs = append(filterArgs, req.TenantId)
+	}
+	if req.StartTime > 0 {
+		filterQuery += " AND timestamp >= ?"
+		filterArgs = append(filterArgs, req.StartTime)
+	}
+	if req.EndTime > 0 {
+		filterQuery += " AND timestamp <= ?"
+		filterArgs = append(filterArgs, req.EndTime)
+	}
+	if req.Namespace != "" {
+		filterQuery += " AND namespace = ?"
+		filterArgs = append(filterArgs, req.Namespace)
+	}
+
+	// 执行所有查询
+	dashboardData := make(map[string]interface{})
+
+	for _, q := range queries {
+		fullQuery := q.query + filterQuery + " GROUP BY * ORDER BY date DESC LIMIT 100"
+
+		rows, err := s.clickHouseDB.QueryContext(ctx, fullQuery, filterArgs...)
+		if err != nil {
+			continue
+		}
+
+		records := []map[string]interface{}{}
+		columns, _ := rows.Columns()
+
+		for rows.Next() {
+			values := make([]interface{}, len(columns))
+			valuePtrs := make([]interface{}, len(columns))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+
+			if err := rows.Scan(valuePtrs...); err != nil {
+				continue
+			}
+
+			record := make(map[string]interface{})
+			for i, col := range columns {
+				record[col] = values[i]
+			}
+			records = append(records, record)
+		}
+		rows.Close()
+
+		dashboardData[q.name] = records
+	}
+
+	tookMs := time.Since(startTime).Milliseconds()
+	s.statsMu.Lock()
+	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs + uint64(tookMs)) / 2
+	s.statsMu.Unlock()
+
+	return &svcproto.QueryFlowResponse{
+		Records: []map[string]interface{}{
+			{"dashboard": dashboardData},
+		},
+		Total:  1,
+		TookMs: tookMs,
+	}, nil
 }
 
 // QueryOTLPTraces 查询 OTEL Traces
@@ -352,12 +772,85 @@ func (s *Service) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"status":"healthy","service":"%s"}`, s.config.ServiceName)
 }
-func (s *Service) overviewHandler(w http.ResponseWriter, r *http.Request)   { w.WriteHeader(http.StatusOK); fmt.Fprint(w, `{}`) }
-func (s *Service) metricsHandler(w http.ResponseWriter, r *http.Request)    { w.WriteHeader(http.StatusOK); fmt.Fprint(w, `{}`) }
-func (s *Service) flowsHandler(w http.ResponseWriter, r *http.Request)      { w.WriteHeader(http.StatusOK); fmt.Fprint(w, `{}`) }
-func (s *Service) tracesHandler(w http.ResponseWriter, r *http.Request)     { w.WriteHeader(http.StatusOK); fmt.Fprint(w, `{}`) }
-func (s *Service) topologyHandler(w http.ResponseWriter, r *http.Request)   { w.WriteHeader(http.StatusOK); fmt.Fprint(w, `{}`) }
-func (s *Service) alertsHandler(w http.ResponseWriter, r *http.Request)     { w.WriteHeader(http.StatusOK); fmt.Fprint(w, `{}`) }
+
+func (s *Service) overviewHandler(w http.ResponseWriter, r *http.Request) {
+	req := &svcproto.QueryFlowRequest{
+		TenantId:  r.URL.Query().Get("tenant_id"),
+		StartTime: parseInt64(r.URL.Query().Get("start_time")),
+		EndTime:   parseInt64(r.URL.Query().Get("end_time")),
+	}
+	resp, err := s.QueryDashboard(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Service) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	req := &svcproto.QueryFlowRequest{
+		TenantId:  r.URL.Query().Get("tenant_id"),
+		StartTime: parseInt64(r.URL.Query().Get("start_time")),
+		EndTime:   parseInt64(r.URL.Query().Get("end_time")),
+		Namespace: r.URL.Query().Get("namespace"),
+		Service:   r.URL.Query().Get("service"),
+		Limit:     parseInt(r.URL.Query().Get("limit"), 1000),
+	}
+	resp, err := s.QueryMetrics(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Service) flowsHandler(w http.ResponseWriter, r *http.Request) {
+	req := &svcproto.QueryFlowRequest{
+		TenantId:  r.URL.Query().Get("tenant_id"),
+		StartTime: parseInt64(r.URL.Query().Get("start_time")),
+		EndTime:   parseInt64(r.URL.Query().Get("end_time")),
+		SrcIp:     r.URL.Query().Get("src_ip"),
+		DstIp:     r.URL.Query().Get("dst_ip"),
+		Namespace: r.URL.Query().Get("namespace"),
+		Service:   r.URL.Query().Get("service"),
+		Limit:     parseInt(r.URL.Query().Get("limit"), 1000),
+	}
+	resp, err := s.QueryFlows(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Service) tracesHandler(w http.ResponseWriter, r *http.Request) {
+	req := &svcproto.QueryFlowRequest{
+		TenantId:  r.URL.Query().Get("tenant_id"),
+		StartTime: parseInt64(r.URL.Query().Get("start_time")),
+		EndTime:   parseInt64(r.URL.Query().Get("end_time")),
+		Namespace: r.URL.Query().Get("namespace"),
+		Service:   r.URL.Query().Get("service"),
+		Limit:     parseInt(r.URL.Query().Get("limit"), 100),
+	}
+	resp, err := s.QueryTraces(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Service) topologyHandler(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{
+		"message": "topology endpoint - use gRPC for topology queries",
+	})
+}
+
+func (s *Service) alertsHandler(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{
+		"message": "alerts endpoint - use gRPC for alert queries",
+	})
+}
 
 func (s *Service) otelTracesHandler(w http.ResponseWriter, r *http.Request) {
 	// Proxy to trace store search
@@ -416,4 +909,22 @@ func convertTraceToProto(t *otel.Trace) *svcproto.TraceInfo {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func parseInt64(s string) int64 {
+	var result int64
+	fmt.Sscanf(s, "%d", &result)
+	return result
+}
+
+func parseInt(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	var result int
+	fmt.Sscanf(s, "%d", &result)
+	if result == 0 {
+		return defaultVal
+	}
+	return result
 }

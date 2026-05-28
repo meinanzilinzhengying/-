@@ -15,9 +15,11 @@ package alertengine
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -62,6 +64,15 @@ func DefaultConfig() *Config {
 	}
 }
 
+// activeAlert 跟踪当前活动的告警，用于去重和恢复检测
+type activeAlert struct {
+	ruleID     string
+	tenantID   string
+	alertID    string
+	startedAt  time.Time
+	lastEvalAt time.Time
+}
+
 // Service Alert Engine
 type Service struct {
 	config *Config
@@ -74,6 +85,11 @@ type Service struct {
 	health     *health.Server
 	httpServer *http.Server
 
+	// P0-05 新增：告警状态管理
+	activeAlerts sync.Map // map[string]*activeAlert - key: "tenant_id:rule_id"
+	evalStopChan chan struct{}
+	evalWG       sync.WaitGroup
+
 	startTime time.Time
 }
 
@@ -83,9 +99,10 @@ func New(config *Config) (*Service, error) {
 	}
 
 	s := &Service{
-		config:    config,
-		startTime: time.Now(),
-		health:    health.NewServer(),
+		config:       config,
+		startTime:    time.Now(),
+		health:       health.NewServer(),
+		evalStopChan: make(chan struct{}),
 	}
 
 	// P0-02 修复: 初始化 TiDB 连接
@@ -135,7 +152,41 @@ func (s *Service) initTiDB() error {
 		return fmt.Errorf("init tables failed: %w", err)
 	}
 
+	// 加载当前活动的告警到内存
+	if err := s.loadActiveAlerts(); err != nil {
+		fmt.Printf("Warning: failed to load active alerts: %v\n", err)
+	}
+
 	fmt.Printf("Alert Engine TiDB connected: %s/%s\n", s.config.TiDBAddr, s.config.TiDBDatabase)
+	return nil
+}
+
+// loadActiveAlerts 从数据库加载活动告警
+func (s *Service) loadActiveAlerts() error {
+	rows, err := s.db.Query(
+		"SELECT alert_id, rule_id, tenant_id, starts_at FROM alerts WHERE status = 'firing'",
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var alertID, ruleID, tenantID string
+		var startsAt time.Time
+		if err := rows.Scan(&alertID, &ruleID, &tenantID, &startsAt); err != nil {
+			continue
+		}
+		key := fmt.Sprintf("%s:%s", tenantID, ruleID)
+		s.activeAlerts.Store(key, &activeAlert{
+			ruleID:     ruleID,
+			tenantID:   tenantID,
+			alertID:    alertID,
+			startedAt:  startsAt,
+			lastEvalAt: time.Now(),
+		})
+	}
+
 	return nil
 }
 
@@ -243,6 +294,10 @@ func (s *Service) Start() error {
 	}
 	go func() { s.httpServer.ListenAndServe() }()
 
+	// P0-05 新增：启动周期性评估
+	s.evalWG.Add(1)
+	go s.runPeriodicEvaluation()
+
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_SERVING)
 	fmt.Printf("Alert Engine started: gRPC=%s, HTTP=%s (TiDB=%s)\n",
 		s.config.GrpcAddr, s.config.HttpAddr, s.config.TiDBAddr)
@@ -251,6 +306,11 @@ func (s *Service) Start() error {
 
 func (s *Service) Stop() {
 	s.health.SetServingStatus(s.config.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
+
+	// P0-05 新增：停止周期性评估
+	close(s.evalStopChan)
+	s.evalWG.Wait()
+
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
@@ -259,6 +319,202 @@ func (s *Service) Stop() {
 	}
 	if s.db != nil {
 		s.db.Close()
+	}
+}
+
+// ============================================================================
+// P0-05 新增：周期性评估引擎
+// ============================================================================
+
+// runPeriodicEvaluation 周期性评估所有规则
+func (s *Service) runPeriodicEvaluation() {
+	defer s.evalWG.Done()
+
+	ticker := time.NewTicker(s.config.EvalInterval)
+	defer ticker.Stop()
+
+	fmt.Printf("Alert periodic evaluation started with interval: %v\n", s.config.EvalInterval)
+
+	for {
+		select {
+		case <-ticker.C:
+			s.evaluateAllRules()
+		case <-s.evalStopChan:
+			fmt.Println("Alert periodic evaluation stopped")
+			return
+		}
+	}
+}
+
+// evaluateAllRules 评估所有启用的规则
+func (s *Service) evaluateAllRules() {
+	rows, err := s.db.Query(
+		"SELECT rule_id, tenant_id, name, display_name, severity, expression, enabled, notify_interval FROM alert_rules WHERE enabled = true",
+	)
+	if err != nil {
+		fmt.Printf("Error fetching rules for evaluation: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	var rules []struct {
+		ruleID         string
+		tenantID       string
+		name           string
+		displayName    string
+		severity       string
+		expression     string
+		enabled        bool
+		notifyInterval int
+	}
+
+	for rows.Next() {
+		var r struct {
+			ruleID         string
+			tenantID       string
+			name           string
+			displayName    string
+			severity       string
+			expression     string
+			enabled        bool
+			notifyInterval int
+		}
+		if err := rows.Scan(&r.ruleID, &r.tenantID, &r.name, &r.displayName, &r.severity, &r.expression, &r.enabled, &r.notifyInterval); err != nil {
+			continue
+		}
+		rules = append(rules, r)
+	}
+
+	for _, rule := range rules {
+		if !rule.enabled {
+			continue
+		}
+
+		// 获取该租户的最新指标
+		metrics := s.getLatestMetrics(rule.tenantID)
+
+		// 评估规则
+		fired, _ := s.evaluateRule(rule.expression, metrics)
+
+		key := fmt.Sprintf("%s:%s", rule.tenantID, rule.ruleID)
+
+		if fired {
+			// 检查是否已有活动告警
+			if _, exists := s.activeAlerts.Load(key); !exists {
+				// 创建新告警
+				alertID := fmt.Sprintf("alert-%d", time.Now().UnixNano())
+				alertTitle := rule.displayName
+				if alertTitle == "" {
+					alertTitle = rule.name
+				}
+				alertMessage := fmt.Sprintf("告警规则触发: %s\n表达式: %s", rule.name, rule.expression)
+
+				annotations, _ := json.Marshal(map[string]string{
+					"expression": rule.expression,
+					"rule_id":    rule.ruleID,
+				})
+				labels, _ := json.Marshal(map[string]string{
+					"tenant_id": rule.tenantID,
+					"rule_name": rule.name,
+					"severity":  rule.severity,
+				})
+
+				_, err := s.db.Exec(
+					"INSERT INTO alerts (alert_id, rule_id, tenant_id, severity, title, message, status, annotations, labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					alertID, rule.ruleID, rule.tenantID, rule.severity, alertTitle, alertMessage, "firing", string(annotations), string(labels),
+				)
+				if err == nil {
+					s.activeAlerts.Store(key, &activeAlert{
+						ruleID:     rule.ruleID,
+						tenantID:   rule.tenantID,
+						alertID:    alertID,
+						startedAt:  time.Now(),
+						lastEvalAt: time.Now(),
+					})
+					fmt.Printf("New alert fired: %s/%s\n", rule.tenantID, rule.name)
+
+					// 创建通知
+					s.createNotification(rule.tenantID, rule.ruleID, alertID, alertTitle, alertMessage)
+				}
+			}
+		} else {
+			// 检查是否需要恢复告警
+			if v, exists := s.activeAlerts.Load(key); exists {
+				active := v.(*activeAlert)
+				_, err := s.db.Exec(
+					"UPDATE alerts SET status = 'resolved', ends_at = ? WHERE alert_id = ?",
+					time.Now(), active.alertID,
+				)
+				if err == nil {
+					s.activeAlerts.Delete(key)
+					fmt.Printf("Alert resolved: %s/%s\n", rule.tenantID, rule.name)
+				}
+			}
+		}
+	}
+}
+
+// getLatestMetrics 获取租户的最新指标（示例实现，实际应从数据源获取）
+func (s *Service) getLatestMetrics(tenantID string) map[string]float64 {
+	// 示例：返回一些默认指标
+	return map[string]float64{
+		"cpu_usage": 45.5,
+		"mem_usage": 62.3,
+		"error_rate": 0.5,
+		"req_per_sec": 1200,
+		"latency_p95": 150,
+	}
+}
+
+// evaluateRule 评估告警规则表达式
+func (s *Service) evaluateRule(expression string, metrics map[string]float64) (bool, error) {
+	// 简单表达式解析器
+	// 支持格式：metric operator threshold
+	// 例如：cpu_usage > 80, error_rate >= 5.0
+
+	var metric string
+	var operator string
+	var threshold float64
+
+	// 尝试解析表达式
+	_, err := fmt.Sscanf(expression, "%s %s %f", &metric, &operator, &threshold)
+	if err != nil {
+		return false, fmt.Errorf("invalid expression format: %w", err)
+	}
+
+	value, exists := metrics[metric]
+	if !exists {
+		return false, nil // 指标不存在，不触发告警
+	}
+
+	// 评估表达式
+	switch operator {
+	case ">":
+		return value > threshold, nil
+	case ">=":
+		return value >= threshold, nil
+	case "<":
+		return value < threshold, nil
+	case "<=":
+		return value <= threshold, nil
+	case "==", "=":
+		return value == threshold, nil
+	case "!=":
+		return value != threshold, nil
+	default:
+		return false, fmt.Errorf("unsupported operator: %s", operator)
+	}
+}
+
+// createNotification 创建告警通知
+func (s *Service) createNotification(tenantID, ruleID, alertID, title, message string) {
+	notificationID := fmt.Sprintf("notif-%d", time.Now().UnixNano())
+	_, err := s.db.Exec(
+		"INSERT INTO alert_notifications (notification_id, alert_id, rule_id, tenant_id, channel_type, status, message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		notificationID, alertID, ruleID, tenantID, "console", "sent", fmt.Sprintf("[%s] %s", title, message),
+	)
+	if err != nil {
+		fmt.Printf("Failed to create notification: %v\n", err)
 	}
 }
 
@@ -376,6 +632,14 @@ func (s *Service) DeleteRule(ctx context.Context, req *svcproto.DeleteAlertRuleR
 		return &svcproto.DeleteAlertRuleResponse{Success: false, Message: err.Error()}, nil
 	}
 
+	// 清除内存中的活动告警
+	s.activeAlerts.Range(func(key, value interface{}) bool {
+		if active := value.(*activeAlert); active.ruleID == req.RuleId {
+			s.activeAlerts.Delete(key)
+		}
+		return true
+	})
+
 	return &svcproto.DeleteAlertRuleResponse{Success: true}, nil
 }
 
@@ -484,6 +748,17 @@ func (s *Service) UpdateAlert(ctx context.Context, req *svcproto.UpdateAlertRequ
 	}
 
 	rowsAffected, _ := result.RowsAffected()
+
+	// 更新内存中的活动告警状态
+	if req.Status == "resolved" {
+		s.activeAlerts.Range(func(key, value interface{}) bool {
+			if active := value.(*activeAlert); active.alertID == req.AlertId {
+				s.activeAlerts.Delete(key)
+			}
+			return true
+		})
+	}
+
 	return &svcproto.UpdateAlertResponse{Success: rowsAffected > 0}, nil
 }
 
@@ -607,7 +882,103 @@ func (s *Service) ListNotifications(ctx context.Context, req *svcproto.ListNotif
 
 // EvaluateRules 评估告警规则
 func (s *Service) EvaluateRules(ctx context.Context, req *svcproto.EvaluateRulesRequest) (*svcproto.EvaluateRulesResponse, error) {
+	// 触发一次评估
+	s.evaluateAllRules()
 	return &svcproto.EvaluateRulesResponse{Success: true}, nil
+}
+
+// EvaluateAlerts 评估告警（P0-05 新增实现）
+func (s *Service) EvaluateAlerts(ctx context.Context, req *svcproto.EvaluateAlertsRequest) (*svcproto.EvaluateAlertsResponse, error) {
+	var firedAlerts []*svcproto.Alert
+
+	// 获取该租户的所有启用规则
+	rows, err := s.db.Query(
+		"SELECT rule_id, tenant_id, name, display_name, severity, expression, project_id FROM alert_rules WHERE tenant_id = ? AND enabled = true",
+		req.TenantId,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list rules: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ruleID, tenantID, name, displayName, severity, expression, projectID string
+		if err := rows.Scan(&ruleID, &tenantID, &name, &displayName, &severity, &expression, &projectID); err != nil {
+			continue
+		}
+
+		// 评估规则
+		fired, _ := s.evaluateRule(expression, req.Metrics)
+
+		key := fmt.Sprintf("%s:%s", tenantID, ruleID)
+
+		if fired {
+			if _, exists := s.activeAlerts.Load(key); !exists {
+				// 创建新告警
+				alertID := fmt.Sprintf("alert-%d", time.Now().UnixNano())
+				alertTitle := displayName
+				if alertTitle == "" {
+					alertTitle = name
+				}
+				alertMessage := fmt.Sprintf("告警规则触发: %s\n表达式: %s", name, expression)
+
+				annotations, _ := json.Marshal(map[string]string{
+					"expression": expression,
+					"rule_id":    ruleID,
+				})
+				labels, _ := json.Marshal(map[string]string{
+					"tenant_id": tenantID,
+					"rule_name": name,
+					"severity":  severity,
+				})
+
+				_, err := s.db.Exec(
+					"INSERT INTO alerts (alert_id, rule_id, tenant_id, project_id, severity, title, message, status, annotations, labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					alertID, ruleID, tenantID, projectID, severity, alertTitle, alertMessage, "firing", string(annotations), string(labels),
+				)
+				if err == nil {
+					s.activeAlerts.Store(key, &activeAlert{
+						ruleID:     ruleID,
+						tenantID:   tenantID,
+						alertID:    alertID,
+						startedAt:  time.Now(),
+						lastEvalAt: time.Now(),
+					})
+
+					// 添加到响应
+					firedAlerts = append(firedAlerts, &svcproto.Alert{
+						Id:         alertID,
+						RuleId:     ruleID,
+						Name:       name,
+						TenantId:   tenantID,
+						Severity:   severity,
+						Message:    alertMessage,
+						StartedAt:  time.Now().Unix(),
+						FiredAt:    time.Now().Unix(),
+						ResolvedAt: 0,
+						Status:     "firing",
+					})
+
+					// 创建通知
+					s.createNotification(tenantID, ruleID, alertID, alertTitle, alertMessage)
+				}
+			}
+		} else {
+			// 检查是否需要恢复告警
+			if v, exists := s.activeAlerts.Load(key); exists {
+				active := v.(*activeAlert)
+				_, err := s.db.Exec(
+					"UPDATE alerts SET status = 'resolved', ends_at = ? WHERE alert_id = ?",
+					time.Now(), active.alertID,
+				)
+				if err == nil {
+					s.activeAlerts.Delete(key)
+				}
+			}
+		}
+	}
+
+	return &svcproto.EvaluateAlertsResponse{Alerts: firedAlerts}, nil
 }
 
 // ============================================================================
@@ -627,6 +998,7 @@ func (s *Service) listAlertsHTTPHandler(w http.ResponseWriter, r *http.Request) 
 			Status:   status,
 		})
 		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -653,6 +1025,7 @@ func (s *Service) listRulesHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		tenantID := r.URL.Query().Get("tenant_id")
 		resp, _ := s.ListRules(r.Context(), &svcproto.ListAlertRulesRequest{TenantId: tenantID})
 		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

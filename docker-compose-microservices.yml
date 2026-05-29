@@ -225,7 +225,7 @@ services:
       - CLICKHOUSE_DATABASE=cloudflow
       # Redis 配置（用于缓存拓扑数据）
       - REDIS_ADDR=redis:6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       # 下游服务连接
       - AUTH_ADDR=auth-service:9006
       - DATA_PLANE_ADDR=data-plane:9001
@@ -265,7 +265,7 @@ services:
       - TIDB_DATABASE=cloudflow_alert
       # Redis 配置（告警状态）
       - REDIS_ADDR=redis:6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       # ClickHouse 配置（查询指标）
       - CLICKHOUSE_ADDR=clickhouse:9000
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
@@ -371,16 +371,17 @@ services:
       - cloudflow-network
 
   # Redis（缓存和消息）
+  # 安全注意：生产环境必须设置 REDIS_PASSWORD 环境变量
   redis:
     image: redis:7.2-alpine
     container_name: cloudflow-redis
     ports:
       - "6379:6379"
-    command: redis-server --requirepass ${REDIS_PASSWORD:-}
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3

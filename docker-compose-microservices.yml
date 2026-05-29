@@ -389,13 +389,13 @@ services:
     networks:
       - cloudflow-network
 
-  # Kafka（消息队列）- 可选，高流量场景使用
+  # Kafka（消息队列）- KRaft 模式，无需 Zookeeper
   kafka:
     image: apache/kafka:3.6.0
     container_name: cloudflow-kafka
     ports:
-      - "9092:9092"  # Internal
-      - "9094:9094"  # External
+      - "127.0.0.1:9092:9092"  # Internal - 仅本地访问
+      - "127.0.0.1:9094:9094"  # External - 仅本地访问
     environment:
       - KAFKA_NODE_ID=1
       - KAFKA_PROCESS_ROLES=broker,controller

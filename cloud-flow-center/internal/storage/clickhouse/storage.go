@@ -31,7 +31,8 @@ import (
 // Config ClickHouse 配置
 type Config struct {
 	// 连接配置
-	Addr        string // e.g., "clickhouse:9000"
+	Addrs       []string // e.g., ["clickhouse-0-0:9000", "clickhouse-0-1:9000"] 用于 HA
+	Addr        string   // e.g., "clickhouse:9000" (向后兼容)
 	Database    string
 	Username    string
 	Password    string
@@ -41,6 +42,10 @@ type Config struct {
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	DialTimeout     time.Duration
+	
+	// HA 配置
+	EnableHA        bool
+	ConnectionRetry int
 
 	// 批量写入
 	BatchSize       int
@@ -60,6 +65,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Addr:            "clickhouse:9000",
+		Addrs:           []string{"clickhouse-0-0:9000", "clickhouse-0-1:9000", "clickhouse-1-0:9000", "clickhouse-1-1:9000"},
 		Database:        "cloudflow",
 		Username:        "default",
 		Password:        "",
@@ -67,6 +73,8 @@ func DefaultConfig() *Config {
 		MaxIdleConns:    5,
 		ConnMaxLifetime: time.Hour,
 		DialTimeout:     10 * time.Second,
+		EnableHA:        false,
+		ConnectionRetry: 3,
 		BatchSize:       10000,
 		FlushInterval:   time.Second,
 		QueueSize:       100000,
@@ -86,6 +94,12 @@ type Storage struct {
 	config *Config
 	db     *sql.DB
 
+	// HA 连接池 - 备用连接
+	alternateDbs []*sql.DB
+	
+	// 当前连接索引
+	currentConnIndex int
+
 	// 批量写入
 	flowQueue   chan *flow.UnifiedFlow
 	traceQueue  chan *TraceRecord
@@ -101,6 +115,9 @@ type Storage struct {
 
 	// 状态
 	ready atomic.Bool
+	
+	// 连接锁
+	connMu sync.RWMutex
 }
 
 // Stats 统计信息
@@ -192,8 +209,58 @@ func New(config *Config) (*Storage, error) {
 	return s, nil
 }
 
-// connect 连接数据库
+// connect 连接数据库（支持 HA）
 func (s *Storage) connect() error {
+	// 首先，检查是否启用 HA 模式
+	if s.config.EnableHA && len(s.config.Addrs) > 0 {
+		// HA 模式：连接所有节点
+		var primaryDb *sql.DB
+		var alts []*sql.DB
+		
+		for i, addr := range s.config.Addrs {
+			dsn := fmt.Sprintf("clickhouse://%s:%s@%s/%s?dial_timeout=%s",
+				s.config.Username,
+				s.config.Password,
+				addr,
+				s.config.Database,
+				s.config.DialTimeout,
+			)
+			
+			db, err := sql.Open("clickhouse", dsn)
+			if err != nil {
+				continue
+			}
+			
+			db.SetMaxOpenConns(s.config.MaxOpenConns)
+			db.SetMaxIdleConns(s.config.MaxIdleConns)
+			db.SetConnMaxLifetime(s.config.ConnMaxLifetime)
+			
+			// 测试连接
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			
+			if err := db.PingContext(ctx); err != nil {
+				db.Close()
+				continue
+			}
+			
+			if primaryDb == nil {
+				primaryDb = db
+			} else {
+				alts = append(alts, db)
+			}
+		}
+		
+		if primaryDb == nil {
+			return fmt.Errorf("could not connect to any ClickHouse node in HA mode")
+		}
+		
+		s.db = primaryDb
+		s.alternateDbs = alts
+		return nil
+	}
+	
+	// 非 HA 模式（向后兼容）
 	dsn := fmt.Sprintf("clickhouse://%s:%s@%s/%s?dial_timeout=%s",
 		s.config.Username,
 		s.config.Password,
@@ -223,6 +290,107 @@ func (s *Storage) connect() error {
 	return nil
 }
 
+// getDB 获取当前可用的数据库连接
+func (s *Storage) getDB() *sql.DB {
+	s.connMu.RLock()
+	defer s.connMu.RUnlock()
+	return s.db
+}
+
+// failover 尝试故障转移到备用连接
+func (s *Storage) failover() bool {
+	if !s.config.EnableHA || len(s.alternateDbs) == 0 {
+		return false
+	}
+	
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	
+	// 尝试所有备用连接
+	for i, alt := range s.alternateDbs {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := alt.PingContext(ctx)
+		cancel()
+		if err == nil {
+			// 切换到这个备用连接
+			oldPrimary := s.db
+			s.db = alt
+			
+			// 重新构建备用连接列表（移除已使用的，添加原来的主连接）
+			newAlts := make([]*sql.DB, 0, len(s.alternateDbs))
+			for j, db := range s.alternateDbs {
+				if j != i {
+					newAlts = append(newAlts, db)
+				}
+			}
+			if oldPrimary != nil {
+				newAlts = append(newAlts, oldPrimary)
+			}
+			s.alternateDbs = newAlts
+			
+			return true
+		}
+	}
+	
+	return false
+}
+
+// execWithRetry 带重试的执行（支持故障转移）
+func (s *Storage) execWithRetry(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	var lastErr error
+	
+	for retries := 0; retries < s.config.ConnectionRetry; retries++ {
+		db := s.getDB()
+		if db == nil {
+			return nil, fmt.Errorf("no available database connection")
+		}
+		
+		res, err := db.ExecContext(ctx, query, args...)
+		if err == nil {
+			return res, nil
+		}
+		
+		lastErr = err
+		if s.config.EnableHA {
+			if s.failover() {
+				continue
+			}
+		}
+		
+		time.Sleep(s.config.RetryInterval)
+	}
+	
+	return nil, lastErr
+}
+
+// queryWithRetry 带重试的查询（支持故障转移）
+func (s *Storage) queryWithRetry(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	var lastErr error
+	
+	for retries := 0; retries < s.config.ConnectionRetry; retries++ {
+		db := s.getDB()
+		if db == nil {
+			return nil, fmt.Errorf("no available database connection")
+		}
+		
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err == nil {
+			return rows, nil
+		}
+		
+		lastErr = err
+		if s.config.EnableHA {
+			if s.failover() {
+				continue
+			}
+		}
+		
+		time.Sleep(s.config.RetryInterval)
+	}
+	
+	return nil, lastErr
+}
+
 // initSchema 初始化 Schema
 func (s *Storage) initSchema() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -238,7 +406,7 @@ func (s *Storage) initSchema() error {
 			continue
 		}
 
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := s.execWithRetry(ctx, stmt); err != nil {
 			// 忽略 "already exists" 错误
 			if !strings.Contains(err.Error(), "already exists") {
 				return fmt.Errorf("execute DDL failed: %w, statement: %s", err, stmt[:min(100, len(stmt))])
@@ -482,7 +650,7 @@ func (s *Storage) queryFlows(ctx context.Context, req *storage.QueryRequest) (*s
 	}
 
 	// 执行查询
-	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	rows, err := s.queryWithRetry(ctx, query.String(), args...)
 	if err != nil {
 		s.stats.QueryErrors++
 		return nil, fmt.Errorf("query failed: %w", err)
@@ -592,7 +760,7 @@ func (s *Storage) QueryTopology(ctx context.Context, req *storage.QueryRequest) 
 		req.EndTime,
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryWithRetry(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query topology failed: %w", err)
 	}

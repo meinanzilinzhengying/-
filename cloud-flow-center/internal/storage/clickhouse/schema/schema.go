@@ -55,24 +55,36 @@ type SchemaConfig struct {
 	TraceTTL   int // Trace 保留天数，默认 7
 	EventTTL   int // Event 保留天数，默认 90
 
+	// 冷热分离配置
+	HotDays    int // 热数据保留天数，默认 7
+	ColdVolume string // 冷存储卷名，默认 'default'
+
 	// 分区配置
 	PartitionBy string // 分区表达式，默认 toYYYYMMDD(timestamp)
 
 	// 副本配置
-	Replicated  bool
-	ReplicaName string
-	ZooKeeper   string
+	Replicated    bool
+	ReplicaName   string
+	ZooKeeper     string
+	ClusterName   string // ClickHouse 集群名，默认 'cloudflow_cluster'
+	ShardCount    int    // 分片数量，默认 2
+	ReplicaCount  int    // 每个分片的副本数，默认 2
 }
 
 // DefaultSchemaConfig 返回默认配置
 func DefaultSchemaConfig() *SchemaConfig {
 	return &SchemaConfig{
-		Database:    "cloudflow",
-		FlowTTL:     30,
-		TraceTTL:    7,
-		EventTTL:    90,
-		PartitionBy: "toYYYYMMDD(timestamp)",
-		Replicated:  false,
+		Database:      "cloudflow",
+		FlowTTL:       30,
+		TraceTTL:      7,
+		EventTTL:      90,
+		HotDays:       7,
+		ColdVolume:    "default",
+		PartitionBy:   "toYYYYMMDD(timestamp)",
+		Replicated:    false,
+		ClusterName:   "cloudflow_cluster",
+		ShardCount:    2,
+		ReplicaCount:  2,
 	}
 }
 
@@ -80,6 +92,11 @@ func DefaultSchemaConfig() *SchemaConfig {
 func GenerateCreateFlowsTable(cfg *SchemaConfig) string {
 	if cfg == nil {
 		cfg = DefaultSchemaConfig()
+	}
+
+	engine := "MergeTree()"
+	if cfg.Replicated {
+		engine = fmt.Sprintf("ReplicatedMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableFlows)
 	}
 
 	return fmt.Sprintf(`
@@ -168,7 +185,7 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     idx_src_ip          UInt32 MATERIALIZED IPv4StringToNumOrDefault(src_ip, 0),
     idx_dst_ip          UInt32 MATERIALIZED IPv4StringToNumOrDefault(dst_ip, 0)
 )
-ENGINE = MergeTree()
+ENGINE = %s
 PARTITION BY %s
 ORDER BY (tenant_id, timestamp, flow_id)
 SETTINGS
@@ -176,13 +193,18 @@ SETTINGS
     min_bytes_for_wide_part = '10M',
     min_rows_for_wide_part = 100000
 %s;
-`, cfg.Database, TableFlows, cfg.PartitionBy, generateTTL(cfg.FlowTTL))
+`, cfg.Database, TableFlows, engine, cfg.PartitionBy, generateTTLWithHotCold(cfg.FlowTTL, cfg.HotDays, cfg.ColdVolume))
 }
 
 // GenerateCreateTracesTable 生成 traces 表 DDL
 func GenerateCreateTracesTable(cfg *SchemaConfig) string {
 	if cfg == nil {
 		cfg = DefaultSchemaConfig()
+	}
+
+	engine := "MergeTree()"
+	if cfg.Replicated {
+		engine = fmt.Sprintf("ReplicatedMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableTraces)
 	}
 
 	return fmt.Sprintf(`
@@ -221,19 +243,24 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     -- Tenant
     tenant_id           LowCardinality(String)
 )
-ENGINE = MergeTree()
+ENGINE = %s
 PARTITION BY %s
 ORDER BY (tenant_id, trace_id, span_id)
 SETTINGS
     index_granularity = 8192
 %s;
-`, cfg.Database, TableTraces, cfg.PartitionBy, generateTTL(cfg.TraceTTL))
+`, cfg.Database, TableTraces, engine, cfg.PartitionBy, generateTTLWithHotCold(cfg.TraceTTL, cfg.HotDays, cfg.ColdVolume))
 }
 
 // GenerateCreateEventsTable 生成 events 表 DDL
 func GenerateCreateEventsTable(cfg *SchemaConfig) string {
 	if cfg == nil {
 		cfg = DefaultSchemaConfig()
+	}
+
+	engine := "MergeTree()"
+	if cfg.Replicated {
+		engine = fmt.Sprintf("ReplicatedMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableEvents)
 	}
 
 	return fmt.Sprintf(`
@@ -265,19 +292,29 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     -- Tenant
     tenant_id           LowCardinality(String)
 )
-ENGINE = MergeTree()
+ENGINE = %s
 PARTITION BY %s
 ORDER BY (tenant_id, timestamp, event_id)
 SETTINGS
     index_granularity = 8192
 %s;
-`, cfg.Database, TableEvents, cfg.PartitionBy, generateTTL(cfg.EventTTL))
+`, cfg.Database, TableEvents, engine, cfg.PartitionBy, generateTTLWithHotCold(cfg.EventTTL, cfg.HotDays, cfg.ColdVolume))
 }
 
 // GenerateCreateAggregationTables 生成聚合表 DDL
 func GenerateCreateAggregationTables(cfg *SchemaConfig) string {
 	if cfg == nil {
 		cfg = DefaultSchemaConfig()
+	}
+
+	// 为每个聚合表选择适当的引擎
+	engine1m := "SummingMergeTree()"
+	engine1h := "SummingMergeTree()"
+	engine1d := "SummingMergeTree()"
+	if cfg.Replicated {
+		engine1m = fmt.Sprintf("ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableFlows1m)
+		engine1h = fmt.Sprintf("ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableFlows1h)
+		engine1d = fmt.Sprintf("ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableFlows1d)
 	}
 
 	return fmt.Sprintf(`
@@ -308,7 +345,7 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     latency_p99         Float64,
     error_count         UInt64
 )
-ENGINE = SummingMergeTree()
+ENGINE = %s
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (tenant_id, timestamp, src_ip, dst_ip, protocol)
 SETTINGS index_granularity = 8192;
@@ -336,7 +373,7 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     latency_p99         Float64,
     error_count         UInt64
 )
-ENGINE = SummingMergeTree()
+ENGINE = %s
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (tenant_id, timestamp, src_ip, dst_ip, protocol)
 SETTINGS index_granularity = 8192;
@@ -361,17 +398,22 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     latency_avg         Float64,
     error_count         UInt64
 )
-ENGINE = SummingMergeTree()
+ENGINE = %s
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (tenant_id, timestamp, src_ip, dst_ip, protocol)
 SETTINGS index_granularity = 8192;
-`, cfg.Database, TableFlows1m, cfg.Database, TableFlows1h, cfg.Database, TableFlows1d)
+`, cfg.Database, TableFlows1m, engine1m, cfg.Database, TableFlows1h, engine1h, cfg.Database, TableFlows1d, engine1d)
 }
 
 // GenerateCreateTopologyTable 生成拓扑表 DDL
 func GenerateCreateTopologyTable(cfg *SchemaConfig) string {
 	if cfg == nil {
 		cfg = DefaultSchemaConfig()
+	}
+
+	engine := "SummingMergeTree()"
+	if cfg.Replicated {
+		engine = fmt.Sprintf("ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/%s/%s', '{replica}')", cfg.Database, TableTopology)
 	}
 
 	return fmt.Sprintf(`
@@ -402,11 +444,11 @@ CREATE TABLE IF NOT EXISTS %s.%s (
     latency_avg         Float64,
     error_count         UInt64
 )
-ENGINE = SummingMergeTree()
+ENGINE = %s
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (tenant_id, timestamp, src_id, dst_id, protocol)
 SETTINGS index_granularity = 8192;
-`, cfg.Database, TableTopology)
+`, cfg.Database, TableTopology, engine)
 }
 
 // GenerateCreateMaterializedViews 生成物化视图 DDL
@@ -572,10 +614,31 @@ func GenerateAllDDL(cfg *SchemaConfig) string {
 	return ddl.String()
 }
 
-// generateTTL 生成 TTL 子句
+// generateTTL 生成 TTL 子句（向后兼容）
 func generateTTL(days int) string {
 	if days <= 0 {
 		return ""
 	}
 	return fmt.Sprintf("TTL timestamp_dt + INTERVAL %d DAY DELETE", days)
+}
+
+// generateTTLWithHotCold 生成包含冷热分离的 TTL 子句
+func generateTTLWithHotCold(totalDays int, hotDays int, coldVolume string) string {
+	if totalDays <= 0 {
+		return ""
+	}
+	
+	ttls := []string{}
+	
+	// 热数据 → 冷数据的移动策略
+	if hotDays > 0 && hotDays < totalDays {
+		if coldVolume != "default" {
+			ttls = append(ttls, fmt.Sprintf("timestamp_dt + INTERVAL %d DAY TO VOLUME '%s'", hotDays, coldVolume))
+		}
+	}
+	
+	// 删除策略
+	ttls = append(ttls, fmt.Sprintf("timestamp_dt + INTERVAL %d DAY DELETE", totalDays))
+	
+	return fmt.Sprintf("TTL %s", strings.Join(ttls, ", "))
 }

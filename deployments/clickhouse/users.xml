@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<yandex>
+    <users>
+        <default>
+            <password from_env="CLICKHOUSE_PASSWORD"/>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <access_management>1</access_management>
+            <named_collections>
+                <default>
+                    <allow>
+                        <any>
+                        </any>
+                    </allow>
+                </default>
+            </named_collections>
+        </default>
+    </users>
+</yandex>

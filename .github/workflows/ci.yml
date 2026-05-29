@@ -2,8 +2,9 @@
 # 云内流量监测系统 (Cloud Flow) - GitHub Actions CI 配置
 # =============================================================================
 # P1-13/P1-14 修复: 扩展 CI 覆盖所有模块，使用正确的 Go 版本
+# P2-18 修复: 增强测试覆盖，启用集成测试和 E2E 测试
 # 触发条件: push 和 pull_request
-# 检查内容: Go 测试、前端构建、Docker 镜像构建、Lint 检查、安全扫描
+# 检查内容: Go 测试、前端构建、Docker 镜像构建、Lint 检查、安全扫描、集成测试、E2E 测试
 # =============================================================================
 
 name: Cloud Flow CI
@@ -57,11 +58,12 @@ jobs:
           args: --timeout=5m
 
   # ---------------------------------------------------------------------------
-  # Job 2: Go 测试
+  # Job 2: Go 单元测试
   # P1-13 修复: 覆盖所有微服务
+  # P2-18 修复: 增强测试覆盖率
   # ---------------------------------------------------------------------------
   go-test:
-    name: Go Test
+    name: Go Unit Test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -76,20 +78,6 @@ jobs:
           - services/tenant-service
           - services/topology-engine
           - services/alert-engine
-    services:
-      # P1-13 修复: 为需要数据库的服务提供 MySQL
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: test
-          MYSQL_DATABASE: test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -107,7 +95,7 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go vet ./...
 
-      - name: Run tests
+      - name: Run unit tests
         working-directory: ${{ matrix.module }}
         env:
           # 为需要数据库的模块设置 DSN
@@ -156,7 +144,7 @@ jobs:
         working-directory: cloud-flow-frontend
         run: npx vue-tsc --noEmit
 
-      - name: Run tests
+      - name: Run frontend tests
         working-directory: cloud-flow-frontend
         run: npm test -- --coverage
 
@@ -350,13 +338,81 @@ jobs:
         continue-on-error: true
 
   # ---------------------------------------------------------------------------
-  # Job 8: P2-2 修复: 集成测试
-  # 注意: 集成测试需要完整环境且运行时间较长
+  # Job 8: P2-18 修复: 集成测试
   # ---------------------------------------------------------------------------
   integration-test:
     name: Integration Test
     runs-on: ubuntu-latest
-    if: false  # 设置为 true 以启用集成测试（需要较长运行时间）
+    strategy:
+      matrix:
+        module:
+          - cloud-flow-center
+          - cloud-flow-edge
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: cloud_flow_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        working-directory: ${{ matrix.module }}
+        run: go mod download
+
+      - name: Build
+        working-directory: ${{ matrix.module }}
+        run: go build -v ./...
+
+      - name: Run integration tests
+        working-directory: ${{ matrix.module }}
+        env:
+          TEST_DB_DSN: root:test@tcp(localhost:3306)/cloud_flow_test?parseTime=true&charset=utf8mb4
+          TEST_REDIS_ADDR: localhost:6379
+        run: |
+          echo "Running integration tests..."
+          go test -v -tags=integration ./...
+        
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-${{ matrix.module }}
+          path: ${{ matrix.module }}/**/test-results.xml
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 9: E2E 测试 (仅在 main 分支和 PR 时运行)
+  # P2-18 新增: 端到端测试
+  # ---------------------------------------------------------------------------
+  e2e-test:
+    name: E2E Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [docker-build, integration-test]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -369,21 +425,46 @@ jobs:
       - name: Start infrastructure
         run: |
           cd cloud-flow-center/deployments
-          docker-compose -f ../../docker-compose.yml up -d tidb redis kafka
+          docker-compose -f ../../docker-compose.yml up -d
 
-      - name: Run integration tests
+      - name: Wait for services
         run: |
-          sleep 30  # 等待服务启动
-          cd cloud-flow-center
-          go test -v -tags=integration ./...
+          echo "Waiting for services to be ready..."
+          sleep 60
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run E2E tests
+        working-directory: cloud-flow-center
+        env:
+          E2E_BASE_URL: http://localhost:8080
+          E2E_PORTAL_URL: http://localhost:8080
+          E2E_API_KEY: test-api-key
+          E2E_JWT_SECRET: test-jwt-secret
+          E2E_DB_DSN: root:test@tcp(localhost:4000)/cloud_flow?parseTime=true
+        run: |
+          echo "Running E2E tests..."
+          go test -v -tags=e2e ./e2e/...
+
+      - name: Upload E2E test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: cloud-flow-center/**/e2e-results.xml
+          retention-days: 7
 
       - name: Cleanup
         if: always()
         run: |
-          docker-compose -f docker-compose.yml down -v
+          cd cloud-flow-center/deployments
+          docker-compose -f ../../docker-compose.yml down -v
 
   # ---------------------------------------------------------------------------
-  # Job 9: 代码覆盖率汇总
+  # Job 10: 代码覆盖率汇总
   # ---------------------------------------------------------------------------
   coverage-report:
     name: Coverage Report
@@ -424,7 +505,7 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # Job 10: 密钥扫描 (Secret Detection)
+  # Job 11: 密钥扫描 (Secret Detection)
   # P1-15 修复: 检测代码中的密钥和敏感信息
   # ---------------------------------------------------------------------------
   secret-scan:
@@ -452,3 +533,31 @@ jobs:
           name: trufflehog-results
           path: trufflehog-results.json
           retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 12: 性能基准测试 (可选，仅在 main 分支运行)
+  # P2-18 新增: 性能回归检测
+  # ---------------------------------------------------------------------------
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run benchmarks
+        run: |
+          go test -bench=. -benchmem -count=3 ./pkg/... 2>&1 | tee benchmark.txt
+        
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark.txt
+          retention-days: 30

@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	_ "github.com/go-sql-driver/mysql"
 
 	svcproto "cloud-flow/services/proto"
+	"cloud-flow/services/shared/tlsutil"
 )
 
 // Config 服务配置
@@ -50,6 +52,14 @@ type Config struct {
 	// 评估配置
 	EvalInterval time.Duration
 	MaxRules     int
+
+	// P0-2 修复: TLS 配置
+	TLSEnabled      bool
+	TLSCAFile       string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientAuth   bool
+	TLSInsecureSkip bool
 }
 
 func DefaultConfig() *Config {
@@ -61,6 +71,8 @@ func DefaultConfig() *Config {
 		TiDBDatabase:  "cloudflow_alert",
 		EvalInterval:  15 * time.Second,
 		MaxRules:      10000,
+		TLSEnabled:    false,
+		TLSInsecureSkip: false,
 	}
 }
 
@@ -90,6 +102,9 @@ type Service struct {
 	evalStopChan chan struct{}
 	evalWG       sync.WaitGroup
 
+	// P0-2 修复: TLS 凭证
+	grpcCreds credentials.TransportCredentials
+
 	startTime time.Time
 }
 
@@ -105,6 +120,23 @@ func New(config *Config) (*Service, error) {
 		evalStopChan: make(chan struct{}),
 	}
 
+	// P0-2 修复: 初始化 TLS 凭证
+	if config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			ClientAuth:   config.TLSClientAuth,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		var err error
+		s.grpcCreds, err = tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
 	// P0-02 修复: 初始化 TiDB 连接
 	if config.TiDBAddr != "" {
 		if err := s.initTiDB(); err != nil {
@@ -112,7 +144,12 @@ func New(config *Config) (*Service, error) {
 		}
 	}
 
-	s.grpcServer = grpc.NewServer()
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 	RegisterAlertService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
 

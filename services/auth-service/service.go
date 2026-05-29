@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"gorm.io/driver/mysql"
@@ -24,6 +25,7 @@ import (
 	rbacadapter "cloud-flow/services/auth-service/rbac/adapter"
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/shared/tenant"
+	"cloud-flow/services/shared/tlsutil"
 )
 
 // ============================================================================
@@ -58,6 +60,14 @@ type Config struct {
 	TiDBUser     string
 	TiDBPassword string
 	TiDBDatabase string
+
+	// P0-2 修复: TLS 配置
+	TLSEnabled      bool
+	TLSCAFile       string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientAuth   bool
+	TLSInsecureSkip bool
 }
 
 // DefaultConfig 默认配置
@@ -72,6 +82,8 @@ func DefaultConfig() *Config {
 		JWTRefreshSec:  604800,  // 7d
 		SuperAdminRole: "super_admin",
 		TiDBDatabase:   "cloudflow_auth",
+		TLSEnabled:     false,
+		TLSInsecureSkip: false,
 	}
 }
 
@@ -102,6 +114,9 @@ type Service struct {
 	grpcServer *grpc.Server
 	health     *health.Server
 	httpServer *http.Server
+
+	// P0-2 修复: TLS 凭证
+	grpcCreds credentials.TransportCredentials
 
 	startTime time.Time
 }
@@ -140,6 +155,23 @@ func New(config *Config) (*Service, error) {
 		health:        health.NewServer(),
 	}
 
+	// P0-2 修复: 初始化 TLS 凭证
+	if config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			ClientAuth:   config.TLSClientAuth,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		var err error
+		s.grpcCreds, err = tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
 	// P0-02 修复: 初始化 TiDB 连接
 	if config.TiDBAddr != "" {
 		if err := s.initTiDB(); err != nil {
@@ -164,7 +196,12 @@ func New(config *Config) (*Service, error) {
 		})
 	}
 
-	s.grpcServer = grpc.NewServer()
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 	RegisterAuthService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
 

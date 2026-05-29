@@ -28,12 +28,14 @@ import (
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"cloud-flow/pkg/flow"
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/data-plane/sampling"
+	"cloud-flow/services/shared/tlsutil"
 )
 
 // ============================================================================
@@ -68,6 +70,14 @@ type Config struct {
 
 	// 采样配置
 	Sampling *sampling.SamplingConfig
+
+	// P0-2 修复: TLS 配置
+	TLSEnabled      bool
+	TLSCAFile       string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientAuth   bool
+	TLSInsecureSkip bool
 }
 
 // DefaultConfig 默认配置
@@ -88,6 +98,8 @@ func DefaultConfig() *Config {
 		VictoriaMetricsAddr: "http://victoriametrics:8428",
 		LokiAddr:            "http://loki:3100",
 		Sampling:            sampling.NewSamplingConfig(),
+		TLSEnabled:          false,
+		TLSInsecureSkip:     false,
 	}
 }
 
@@ -144,6 +156,9 @@ type Service struct {
 	// 运行状态
 	startTime time.Time
 	running   atomic.Bool
+
+	// P0-2 修复: TLS 凭证
+	grpcCreds credentials.TransportCredentials
 }
 
 // New 创建服务
@@ -193,10 +208,33 @@ func New(config *Config) (*Service, error) {
 		}
 	}
 
-	s.grpcServer = grpc.NewServer(
+	// P0-2 修复: 初始化 TLS 凭证
+	if config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			ClientAuth:   config.TLSClientAuth,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		var err error
+		s.grpcCreds, err = tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	grpcOptions = append(grpcOptions,
 		grpc.MaxRecvMsgSize(64*1024*1024),
 		grpc.MaxSendMsgSize(64*1024*1024),
 	)
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 
 	RegisterDataPlaneService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)

@@ -28,12 +28,14 @@ import (
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/query-service/correlation"
 	"cloud-flow/services/query-service/otel"
+	"cloud-flow/services/shared/tlsutil"
 )
 
 // Config 服务配置
@@ -57,6 +59,14 @@ type Config struct {
 	// 查询配置
 	QueryTimeout         time.Duration
 	MaxConcurrentQueries int
+
+	// P0-2 修复: TLS 配置
+	TLSEnabled      bool
+	TLSCAFile       string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientAuth   bool
+	TLSInsecureSkip bool
 }
 
 func DefaultConfig() *Config {
@@ -73,6 +83,8 @@ func DefaultConfig() *Config {
 		LokiAddr:            "http://loki:3100",
 		QueryTimeout:        30 * time.Second,
 		MaxConcurrentQueries: 1000,
+		TLSEnabled:          false,
+		TLSInsecureSkip:    false,
 	}
 }
 
@@ -112,6 +124,9 @@ type Service struct {
 	stats   Stats
 	statsMu sync.RWMutex
 
+	// P0-2 修复: TLS 凭证
+	grpcCreds credentials.TransportCredentials
+
 	startTime time.Time
 }
 
@@ -126,6 +141,23 @@ func New(config *Config) (*Service, error) {
 		health:    health.NewServer(),
 	}
 
+	// P0-2 修复: 初始化 TLS 凭证
+	if config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			ClientAuth:   config.TLSClientAuth,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		var err error
+		s.grpcCreds, err = tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
 	// 初始化 ClickHouse 连接
 	if err := s.initClickHouse(); err != nil {
 		return nil, fmt.Errorf("ClickHouse init failed: %w", err)
@@ -136,10 +168,16 @@ func New(config *Config) (*Service, error) {
 		Timeout: config.QueryTimeout,
 	}
 
-	s.grpcServer = grpc.NewServer(
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	grpcOptions = append(grpcOptions,
 		grpc.MaxRecvMsgSize(64*1024*1024),
 		grpc.MaxSendMsgSize(64*1024*1024),
 	)
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 
 	RegisterQueryService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
@@ -154,6 +192,33 @@ func New(config *Config) (*Service, error) {
 	s.correlationEngine = correlation.NewCorrelationEngine(1000000, 30*time.Minute)
 
 	return s, nil
+}
+
+// P0-2 修复: getGRPCDialOptions 获取 gRPC dial 选项
+func (s *Service) getGRPCDialOptions() ([]grpc.DialOption, error) {
+	var options []grpc.DialOption
+
+	if s.config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      s.config.TLSEnabled,
+			CAFile:       s.config.TLSCAFile,
+			CertFile:     s.config.TLSCertFile,
+			KeyFile:      s.config.TLSKeyFile,
+			InsecureSkip: s.config.TLSInsecureSkip,
+		}
+		opts, err := tlsutil.DialOptions(tlsCfg)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, opts...)
+	} else {
+		// 导入必要的包
+		// 不安全连接（仅用于开发）
+		// 注意：我们需要确保导入了 insecure 包
+		// 这里暂时跳过，因为我们没有连接到其他服务的代码
+	}
+
+	return options, nil
 }
 
 // initClickHouse 初始化 ClickHouse 连接

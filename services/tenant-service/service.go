@@ -16,13 +16,17 @@ package tenantservice
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
@@ -30,6 +34,7 @@ import (
 
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/shared/tenant"
+	"cloud-flow/services/shared/tlsutil"
 )
 
 // ============================================================================
@@ -43,6 +48,9 @@ type Config struct {
 	GrpcAddr    string // :9010
 	HttpAddr    string // :8010
 
+	// Auth Service 地址
+	AuthAddr string
+
 	// P0-02 修复: TiDB 配置
 	TiDBAddr     string
 	TiDBUser     string
@@ -54,6 +62,14 @@ type Config struct {
 	DefaultMaxFlowsPerDay  int64
 	DefaultMaxStorageGB    int
 	DefaultMaxAlertRules   int
+
+	// P0-2 修复: TLS 配置
+	TLSEnabled      bool
+	TLSCAFile       string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientAuth   bool
+	TLSInsecureSkip bool
 }
 
 // DefaultConfig 默认配置
@@ -63,12 +79,15 @@ func DefaultConfig() *Config {
 		Version:               "1.0.0",
 		GrpcAddr:              ":9010",
 		HttpAddr:              ":8010",
+		AuthAddr:              "auth-service:9003",
 		TiDBDatabase:          "cloudflow_tenant",
 		DefaultRetentionDays:  30,
 		DefaultMaxAgents:      100,
 		DefaultMaxFlowsPerDay: 10_000_000,
 		DefaultMaxStorageGB:   100,
 		DefaultMaxAlertRules:  100,
+		TLSEnabled:            false,
+		TLSInsecureSkip:       false,
 	}
 }
 
@@ -83,10 +102,16 @@ type Service struct {
 	// P0-02 修复: TiDB 数据库连接
 	db *sql.DB
 
+	// Auth Service 连接
+	authConn *grpc.ClientConn
+
 	// gRPC/HTTP
 	grpcServer *grpc.Server
 	health     *health.Server
 	httpServer *http.Server
+
+	// P0-2 修复: TLS 凭证
+	grpcCreds credentials.TransportCredentials
 
 	startTime time.Time
 }
@@ -103,6 +128,43 @@ func New(config *Config) (*Service, error) {
 		health:    health.NewServer(),
 	}
 
+	// P0-2 修复: 初始化 TLS 凭证
+	if config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			ClientAuth:   config.TLSClientAuth,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		var err error
+		s.grpcCreds, err = tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
+	// P0-2 修复: 连接 Auth Service（使用 TLS）
+	if config.AuthAddr != "" {
+		// 使用 tlsutil.DialOptions() 获取客户端拨号选项
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		dialOpts, err := tlsutil.DialOptions(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get TLS dial options: %w", err)
+		}
+		s.authConn, err = grpc.Dial(config.AuthAddr, dialOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to dial auth service: %w", err)
+		}
+	}
+
 	// P0-02 修复: 初始化 TiDB 连接
 	if config.TiDBAddr != "" {
 		if err := s.initTiDB(); err != nil {
@@ -110,7 +172,12 @@ func New(config *Config) (*Service, error) {
 		}
 	}
 
-	s.grpcServer = grpc.NewServer()
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 	RegisterTenantService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
 

@@ -16,7 +16,7 @@ func main() {
 	flag.StringVar(&cfg.HttpAddr, "http-addr", cfg.HttpAddr, "HTTP listen address")
 	flag.Parse()
 
-	// 从环境变量读取配置
+	// 从环境变量读取 ClickHouse 配置
 	if addr := os.Getenv("CLICKHOUSE_ADDR"); addr != "" {
 		cfg.ClickHouseAddr = addr
 	}
@@ -28,6 +28,26 @@ func main() {
 	}
 	if db := os.Getenv("CLICKHOUSE_DATABASE"); db != "" {
 		cfg.ClickHouseDatabase = db
+	}
+
+	// P0-2 修复: 从环境变量读取 TLS 配置
+	if v := os.Getenv("TLS_ENABLED"); v == "true" {
+		cfg.TLSEnabled = true
+	}
+	if v := os.Getenv("TLS_CA_FILE"); v != "" {
+		cfg.TLSCAFile = v
+	}
+	if v := os.Getenv("TLS_CERT_FILE"); v != "" {
+		cfg.TLSCertFile = v
+	}
+	if v := os.Getenv("TLS_KEY_FILE"); v != "" {
+		cfg.TLSKeyFile = v
+	}
+	if v := os.Getenv("TLS_CLIENT_AUTH"); v == "true" {
+		cfg.TLSClientAuth = true
+	}
+	if v := os.Getenv("TLS_INSECURE_SKIP"); v == "true" {
+		cfg.TLSInsecureSkip = true
 	}
 
 	svc, err := queryservice.New(cfg)

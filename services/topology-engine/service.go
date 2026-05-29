@@ -37,17 +37,19 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"cloud-flow/pkg/flow"
-	"cloud-flow/services/proto"
+	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/topology-engine/builder"
 	"cloud-flow/services/topology-engine/cache"
 	"cloud-flow/services/topology-engine/graph"
 	"cloud-flow/services/topology-engine/heatmap"
 	"cloud-flow/services/topology-engine/historical"
 	"cloud-flow/services/topology-engine/updater"
+	"cloud-flow/services/shared/tlsutil"
 )
 
 // Config 服务配置
@@ -79,6 +81,14 @@ type Config struct {
 	// 增量更新
 	UpdateInterval  time.Duration
 	StaleThreshold  time.Duration
+
+	// P0-2 修复: TLS 配置
+	TLSEnabled      bool
+	TLSCAFile       string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientAuth   bool
+	TLSInsecureSkip bool
 }
 
 func DefaultConfig() *Config {
@@ -100,6 +110,8 @@ func DefaultConfig() *Config {
 		HeatmapInterval:  60,
 		UpdateInterval:   5 * time.Second,
 		StaleThreshold:   60 * time.Second,
+		TLSEnabled:       false,
+		TLSInsecureSkip:  false,
 	}
 }
 
@@ -108,7 +120,7 @@ type Service struct {
 	config *Config
 
 	// 子组件
-	graphCache    *cache.Cache
+	graphCache   *cache.Cache
 	heatmapEngine *heatmap.HeatmapEngine
 	updater       *updater.TopologyUpdater
 	historical    *historical.HistoricalQuery
@@ -120,6 +132,9 @@ type Service struct {
 
 	// HTTP
 	httpServer *http.Server
+
+	// P0-2 修复: TLS 凭证
+	grpcCreds credentials.TransportCredentials
 
 	startTime time.Time
 }
@@ -184,7 +199,29 @@ func New(config *Config) (*Service, error) {
 		health:        health.NewServer(),
 	}
 
-	s.grpcServer = grpc.NewServer()
+	// P0-2 修复: 初始化 TLS 凭证
+	if config.TLSEnabled {
+		tlsCfg := tlsutil.Config{
+			Enabled:      config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			ClientAuth:   config.TLSClientAuth,
+			InsecureSkip: config.TLSInsecureSkip,
+		}
+		var err error
+		s.grpcCreds, err = tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
+		}
+	}
+
+	// 初始化 gRPC 服务器
+	var grpcOptions []grpc.ServerOption
+	if s.grpcCreds != nil {
+		grpcOptions = append(grpcOptions, grpc.Creds(s.grpcCreds))
+	}
+	s.grpcServer = grpc.NewServer(grpcOptions...)
 	RegisterTopologyService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
 

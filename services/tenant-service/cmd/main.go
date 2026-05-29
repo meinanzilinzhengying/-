@@ -15,6 +15,45 @@ func main() {
 	flag.StringVar(&cfg.GrpcAddr, "grpc-addr", cfg.GrpcAddr, "gRPC listen address")
 	flag.Parse()
 
+	// 从环境变量读取 Auth 服务地址
+	if v := os.Getenv("AUTH_ADDR"); v != "" {
+		cfg.AuthAddr = v
+	}
+
+	// 从环境变量读取 TiDB 配置
+	if v := os.Getenv("TIDB_ADDR"); v != "" {
+		cfg.TiDBAddr = v
+	}
+	if v := os.Getenv("TIDB_USER"); v != "" {
+		cfg.TiDBUser = v
+	}
+	if v := os.Getenv("TIDB_PASSWORD"); v != "" {
+		cfg.TiDBPassword = v
+	}
+	if v := os.Getenv("TIDB_DATABASE"); v != "" {
+		cfg.TiDBDatabase = v
+	}
+
+	// P0-2 修复: 从环境变量读取 TLS 配置
+	if v := os.Getenv("TLS_ENABLED"); v == "true" {
+		cfg.TLSEnabled = true
+	}
+	if v := os.Getenv("TLS_CA_FILE"); v != "" {
+		cfg.TLSCAFile = v
+	}
+	if v := os.Getenv("TLS_CERT_FILE"); v != "" {
+		cfg.TLSCertFile = v
+	}
+	if v := os.Getenv("TLS_KEY_FILE"); v != "" {
+		cfg.TLSKeyFile = v
+	}
+	if v := os.Getenv("TLS_CLIENT_AUTH"); v == "true" {
+		cfg.TLSClientAuth = true
+	}
+	if v := os.Getenv("TLS_INSECURE_SKIP"); v == "true" {
+		cfg.TLSInsecureSkip = true
+	}
+
 	svc, err := tenantservice.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: %v\n", err)

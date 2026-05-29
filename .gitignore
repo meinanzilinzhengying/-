@@ -16,6 +16,20 @@ obj/
 .env
 .env.local
 .env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+
+# 敏感配置文件
+*.pem
+*.key
+*.crt
+*.cert
+id_rsa
+id_dsa
+id_ed25519
+secrets.yaml
+secrets.json
 
 # IDE
 .idea/

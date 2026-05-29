@@ -429,16 +429,36 @@ func Load() (*Config, error) {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	// 精确绑定关键配置项到环境变量，避免模糊匹配
-	_ = viper.BindEnv("center.jwt.secret_key", "CLOUD_FLOW_JWT_SECRET")
-	_ = viper.BindEnv("center.api_key", "CLOUD_FLOW_API_KEY")
-	_ = viper.BindEnv("center.storage.dsn", "CLOUD_FLOW_STORAGE_DSN")
-	_ = viper.BindEnv("center.tls.enabled", "CLOUD_FLOW_TLS_ENABLED")
-	_ = viper.BindEnv("center.tls.server_cert", "CLOUD_FLOW_TLS_SERVER_CERT")
-	_ = viper.BindEnv("center.tls.server_key", "CLOUD_FLOW_TLS_SERVER_KEY")
-	_ = viper.BindEnv("center.tls.ca_cert", "CLOUD_FLOW_TLS_CA_CERT")
-	_ = viper.BindEnv("center.portal.port", "CLOUD_FLOW_PORTAL_PORT")
-	_ = viper.BindEnv("center.log.level", "CLOUD_FLOW_LOG_LEVEL")
-	_ = viper.BindEnv("center.data_dir", "CLOUD_FLOW_DATA_DIR")
+	if err := viper.BindEnv("center.jwt.secret_key", "CLOUD_FLOW_JWT_SECRET"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_JWT_SECRET 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.api_key", "CLOUD_FLOW_API_KEY"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_API_KEY 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.storage.dsn", "CLOUD_FLOW_STORAGE_DSN"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_STORAGE_DSN 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.tls.enabled", "CLOUD_FLOW_TLS_ENABLED"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_TLS_ENABLED 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.tls.server_cert", "CLOUD_FLOW_TLS_SERVER_CERT"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_TLS_SERVER_CERT 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.tls.server_key", "CLOUD_FLOW_TLS_SERVER_KEY"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_TLS_SERVER_KEY 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.tls.ca_cert", "CLOUD_FLOW_TLS_CA_CERT"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_TLS_CA_CERT 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.portal.port", "CLOUD_FLOW_PORTAL_PORT"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_PORTAL_PORT 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.log.level", "CLOUD_FLOW_LOG_LEVEL"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_LOG_LEVEL 失败: %v", err)
+	}
+	if err := viper.BindEnv("center.data_dir", "CLOUD_FLOW_DATA_DIR"); err != nil {
+		log.Printf("警告: 绑定环境变量 CLOUD_FLOW_DATA_DIR 失败: %v", err)
+	}
 
 	// 展开配置文件中的环境变量（如 ${VAR:-default}）
 	expandEnvVarsInConfig()

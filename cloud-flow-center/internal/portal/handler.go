@@ -25,6 +25,7 @@ import (
 	"cloud-flow-center/pkg/auth"
 	"cloud-flow-center/pkg/logger"
 	"cloud-flow/pkg/ratelimit"
+	"cloud-flow/pkg/safety"
 )
 
 //go:embed static/*
@@ -337,15 +338,22 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if err == nil && claims != nil {
 				// JWT 验证成功
 				// 安全地获取 user_id
-				userID, _ = claims["user_id"].(string)
-				role, _ = claims["role"].(string)
+				var ok bool
+				userID, ok = claims["user_id"].(string)
+				if !ok {
+					userID = ""
+				}
+				role, ok = claims["role"].(string)
+				if !ok {
+					role = ""
+				}
 				if userID == "" {
 					http.Error(w, "invalid token", http.StatusUnauthorized)
 					return
 				}
 				// 记录审计日志
 				if s.auditLogger != nil {
-					_ = s.auditLogger.Log(
+					safety.CheckAndWarn(s.logger, s.auditLogger.Log(
 						audit.ActionLogin,
 						userID,
 						"portal",
@@ -355,7 +363,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 						claims,
 						r.RemoteAddr,
 						r.UserAgent(),
-					)
+					), "记录审计日志失败")
 				}
 				// 将用户信息存入 context
 				ctx := r.Context()
@@ -390,7 +398,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if err != nil || !valid {
 			// 记录审计日志
 			if s.auditLogger != nil {
-				_ = s.auditLogger.Log(
+				safety.CheckAndWarn(s.logger, s.auditLogger.Log(
 					audit.ActionLogin,
 					user,
 					"portal",
@@ -400,7 +408,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					nil,
 					r.RemoteAddr,
 					r.UserAgent(),
-				)
+				), "记录审计日志失败")
 			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="Cloud Flow Portal"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -409,7 +417,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		// 记录审计日志
 		if s.auditLogger != nil {
-			_ = s.auditLogger.Log(
+			safety.CheckAndWarn(s.logger, s.auditLogger.Log(
 				audit.ActionLogin,
 				userID,
 				"portal",
@@ -419,7 +427,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				map[string]interface{}{"role": role},
 				r.RemoteAddr,
 				r.UserAgent(),
-			)
+			), "记录审计日志失败")
 		}
 
 		// 将用户信息存入 context

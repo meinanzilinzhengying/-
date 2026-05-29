@@ -19,6 +19,7 @@ import (
 
 	edge "cloud-flow/proto"
 	"cloud-flow-center/pkg/logger"
+	"cloud-flow/pkg/safety"
 	"cloud-flow/pkg/storage"
 )
 
@@ -619,7 +620,7 @@ func (s *TiDBStorage) ListService(page, pageSize int) ([]map[string]interface{},
 		}
 		var eps interface{} = []interface{}{}
 		if endpoints.Valid && endpoints.String != "" {
-			_ = json.Unmarshal([]byte(endpoints.String), &eps)
+			safety.CheckAndWarn(s.logger, json.Unmarshal([]byte(endpoints.String), &eps), "解析 endpoints JSON 失败")
 		}
 		items = append(items, map[string]interface{}{
 			"id": id, "business_id": businessID.String, "name": name,
@@ -661,7 +662,7 @@ func (s *TiDBStorage) GetService(id string) (map[string]interface{}, error) {
 	}
 	var eps interface{} = []interface{}{}
 	if endpoints.Valid && endpoints.String != "" {
-		_ = json.Unmarshal([]byte(endpoints.String), &eps)
+		safety.CheckAndWarn(s.logger, json.Unmarshal([]byte(endpoints.String), &eps), "解析 endpoints JSON 失败")
 	}
 	return map[string]interface{}{
 		"id": id, "business_id": businessID.String, "name": name,
@@ -786,7 +787,7 @@ func (s *TiDBStorage) GetCollector(id string) (map[string]interface{}, error) {
 	}
 	var cfg interface{} = map[string]interface{}{}
 	if config.Valid && config.String != "" {
-		_ = json.Unmarshal([]byte(config.String), &cfg)
+		safety.CheckAndWarn(s.logger, json.Unmarshal([]byte(config.String), &cfg), "解析 config JSON 失败")
 	}
 	return map[string]interface{}{
 		"id": id, "name": name, "host": host.String, "port": port.Int64,
@@ -906,7 +907,7 @@ func (s *TiDBStorage) GetDataNode(id string) (map[string]interface{}, error) {
 	}
 	var cfg interface{} = map[string]interface{}{}
 	if config.Valid && config.String != "" {
-		_ = json.Unmarshal([]byte(config.String), &cfg)
+		safety.CheckAndWarn(s.logger, json.Unmarshal([]byte(config.String), &cfg), "解析 config JSON 失败")
 	}
 	return map[string]interface{}{
 		"id": id, "name": name, "host": host.String, "port": port.Int64,

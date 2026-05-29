@@ -23,9 +23,10 @@ import (
 	"cloud-flow-center/internal/kafkaconsumer"
 	"cloud-flow-center/internal/portal"
 	"cloud-flow-center/internal/storage"
-	"cloud-flow-center/pkg/audit"
-	"cloud-flow-center/pkg/logger"
-	"cloud-flow-center/pkg/metrics"
+	"cloud-flow/pkg/audit"
+	"cloud-flow/pkg/logger"
+	"cloud-flow/pkg/metrics"
+	"cloud-flow/pkg/safety"
 	edge "cloud-flow/proto"
 )
 
@@ -159,12 +160,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	go func() {
+	safety.SafeGo(log, "grpc-server", func() {
 		log.Infof("gRPC 服务监听: %s", listenAddr)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Errorf("gRPC 服务异常: %v", err)
 		}
-	}()
+	})
 
 	// 启动 Portal HTTP 服务
 	auditDir := cfg.DataDir + "/audit"
@@ -190,12 +191,12 @@ func main() {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
-	go func() {
+	safety.SafeGo(log, "portal-server", func() {
 		log.Infof("Portal HTTP 服务监听: %s", httpListenAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Errorf("Portal HTTP 服务异常: %v", err)
 		}
-	}()
+	})
 
 	// P0: Flow Ingest Pipeline - 启动 Kafka 消费者（如果启用）
 	var kafkaConsumer *kafkaconsumer.Consumer
@@ -246,19 +247,19 @@ func main() {
 	configMgr.Stop()
 
 	done := make(chan struct{})
-	go func() {
+	safety.SafeGo(log, "grpc-shutdown", func() {
 		grpcServer.GracefulStop()
 		close(done)
-	}()
+	})
 
 	// 优雅关闭 HTTP 服务
 	httpDone := make(chan struct{})
-	go func() {
+	safety.SafeGo(log, "portal-shutdown", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		httpServer.Shutdown(ctx)
 		close(httpDone)
-	}()
+	})
 
 	select {
 	case <-done:

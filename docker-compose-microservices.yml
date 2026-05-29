@@ -20,7 +20,7 @@ services:
       dockerfile: deployments/Dockerfile
     container_name: cloudflow-auth
     ports:
-      - "8006:8006"  # HTTP API
+      - "127.0.0.1:8006:8006"  # HTTP API - 仅本地访问
       - "9006:9006"  # gRPC
     environment:
       - SERVICE_NAME=auth-service

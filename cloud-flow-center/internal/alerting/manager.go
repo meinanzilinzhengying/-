@@ -112,7 +112,9 @@ func (am *AlertManager) loadAlertHistory() {
 		}
 
 		if len(labelsJSON) > 0 {
-			_ = json.Unmarshal(labelsJSON, &alert.Labels)
+			if err := json.Unmarshal(labelsJSON, &alert.Labels); err != nil {
+				am.logger.Warnf("反序列化告警 labels 失败: %v, 原始数据: %s", err, string(labelsJSON))
+			}
 		}
 		if alert.Labels == nil {
 			alert.Labels = make(map[string]string)

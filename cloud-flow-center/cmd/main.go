@@ -33,7 +33,7 @@ import (
 func main() {
 	// 初始化配置管理器
 	configMgr := config.NewConfigManager(func(format string, args ...interface{}) {
-		log.Printf(format, args...)
+		fmt.Printf(format+"\n", args...)
 	})
 	
 	if err := configMgr.LoadAndWatch(); err != nil {
@@ -182,7 +182,7 @@ func main() {
 	jwtSecret := cfg.JWT.SecretKey
 
 	secureCookie := cfg.TLS.Enabled
-	portalSrv := portal.NewServer(store, jwtSecret, auditLogger, alertManager, log, secureCookie, cfg.RateLimit, time.Duration(cfg.JWT.TokenDuration)*time.Hour, cfg.Portal.RedisAddr, cfg, configMgr)
+	portalSrv := portal.NewServer(store, jwtSecret, auditLogger, alertMgr, log, secureCookie, cfg.RateLimit, time.Duration(cfg.JWT.TokenDuration)*time.Hour, cfg.Portal.RedisAddr, cfg, configMgr)
 
 	httpListenAddr := fmt.Sprintf(":%d", cfg.Portal.Port)
 	httpServer := &http.Server{

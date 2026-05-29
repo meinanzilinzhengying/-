@@ -630,6 +630,25 @@ func (s *Service) createNotification(tenantID, ruleID, alertID, title, message s
 // gRPC 服务方法
 // ============================================================================
 
+// validateRuleOwnership P2-1: 验证规则所有权
+func (s *Service) validateRuleOwnership(ctx context.Context, ruleId string) error {
+	var tenantId string
+	err := s.db.QueryRow("SELECT tenant_id FROM alert_rules WHERE rule_id = ?", ruleId).Scan(&tenantId)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("rule not found")
+	}
+	if err != nil {
+		return fmt.Errorf("query rule: %w", err)
+	}
+
+	if tc, ok := tenant.FromContext(ctx); ok && tc != nil && !tc.IsPlatformAdmin {
+		if tc.TenantID != tenantId {
+			return fmt.Errorf("access denied: rule belongs to tenant %s", tenantId)
+		}
+	}
+	return nil
+}
+
 // CreateRule 创建告警规则
 func (s *Service) CreateRule(ctx context.Context, req *svcproto.CreateAlertRuleRequest) (*svcproto.CreateAlertRuleResponse, error) {
 	ruleID := fmt.Sprintf("rule-%d", time.Now().UnixNano())
@@ -658,15 +677,16 @@ func (s *Service) CreateRule(ctx context.Context, req *svcproto.CreateAlertRuleR
 	}, nil
 }
 
-// GetRule 获取告警规则
+// GetRule 获取告警规则（P2-1 修复：添加租户所有权校验）
 func (s *Service) GetRule(ctx context.Context, req *svcproto.GetAlertRuleRequest) (*svcproto.GetAlertRuleResponse, error) {
 	var rule svcproto.AlertRule
+	var tenantId string
 	err := s.db.QueryRow(
 		"SELECT rule_id, tenant_id, project_id, name, display_name, description, severity, expression, enabled, notify_channels, notify_interval, created_at, updated_at FROM alert_rules WHERE rule_id = ?",
 		req.RuleId,
 	).Scan(
 		&rule.RuleId,
-		&rule.TenantId,
+		&tenantId,
 		&rule.ProjectId,
 		&rule.Name,
 		&rule.DisplayName,
@@ -686,11 +706,21 @@ func (s *Service) GetRule(ctx context.Context, req *svcproto.GetAlertRuleRequest
 		return nil, fmt.Errorf("get rule: %w", err)
 	}
 
+	if tc, ok := tenant.FromContext(ctx); ok && tc != nil && !tc.IsPlatformAdmin {
+		if tc.TenantID != tenantId {
+			return nil, fmt.Errorf("access denied: rule belongs to tenant %s", tenantId)
+		}
+	}
+
 	return &svcproto.GetAlertRuleResponse{Rule: &rule}, nil
 }
 
-// UpdateRule 更新告警规则
+// UpdateRule 更新告警规则（P2-1 修复：添加租户所有权校验）
 func (s *Service) UpdateRule(ctx context.Context, req *svcproto.UpdateAlertRuleRequest) (*svcproto.UpdateAlertRuleResponse, error) {
+	if err := s.validateRuleOwnership(ctx, req.RuleId); err != nil {
+		return &svcproto.UpdateAlertRuleResponse{Success: false, Message: err.Error()}, nil
+	}
+
 	result, err := s.db.Exec(
 		"UPDATE alert_rules SET display_name = ?, description = ?, severity = ?, expression = ?, enabled = ?, notify_channels = ?, notify_interval = ? WHERE rule_id = ?",
 		req.DisplayName,
@@ -710,8 +740,12 @@ func (s *Service) UpdateRule(ctx context.Context, req *svcproto.UpdateAlertRuleR
 	return &svcproto.UpdateAlertRuleResponse{Success: rowsAffected > 0}, nil
 }
 
-// DeleteRule 删除告警规则
+// DeleteRule 删除告警规则（P2-1 修复：添加租户所有权校验）
 func (s *Service) DeleteRule(ctx context.Context, req *svcproto.DeleteAlertRuleRequest) (*svcproto.DeleteAlertRuleResponse, error) {
+	if err := s.validateRuleOwnership(ctx, req.RuleId); err != nil {
+		return &svcproto.DeleteAlertRuleResponse{Success: false, Message: err.Error()}, nil
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return &svcproto.DeleteAlertRuleResponse{Success: false, Message: err.Error()}, nil

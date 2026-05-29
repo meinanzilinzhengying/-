@@ -305,7 +305,11 @@ func (s *Service) Stop() {
 	s.otlpReceiver.Stop()
 	s.correlationEngine.Stop()
 	if s.httpServer != nil {
-		s.httpServer.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			s.httpServer.Close()
+		}
 	}
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()

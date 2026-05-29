@@ -175,6 +175,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Job 4: Docker 镜像构建检查
   # P1-13 修复: 包含所有微服务镜像
+  # P1-17 修复: 添加缺失的 query-service, topology-engine, alert-engine
   # ---------------------------------------------------------------------------
   docker-build:
     name: Docker Build Check
@@ -202,6 +203,15 @@ jobs:
             dockerfile: deployments/Dockerfile
           - name: data-plane
             context: services/data-plane
+            dockerfile: deployments/Dockerfile
+          - name: query-service
+            context: services/query-service
+            dockerfile: deployments/Dockerfile
+          - name: topology-engine
+            context: services/topology-engine
+            dockerfile: deployments/Dockerfile
+          - name: alert-engine
+            context: services/alert-engine
             dockerfile: deployments/Dockerfile
     steps:
       - name: Checkout code

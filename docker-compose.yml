@@ -473,21 +473,134 @@ services:
     image: prom/prometheus:v2.54.1
     container_name: cloudflow-prometheus
     restart: unless-stopped
+    depends_on:
+      alertmanager:
+        condition: service_started
     ports:
       - "9091:9090"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
       - "--web.listen-address=:9090"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
       interval: 10s
       timeout: 5s
       retries: 3
+    networks:
+      - cloudflow-net
+
+  # Alertmanager（告警通知）
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: cloudflow-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager-data:/data
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/data"
+      - "--web.external-url=http://localhost:9093"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cloudflow-net
+
+  # Blackbox Exporter（服务健康检查）
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: cloudflow-blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9115/probe?target=google.com&module=http_2xx"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cloudflow-net
+
+  # Node Exporter（宿主机指标）
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: cloudflow-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9100/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cloudflow-net
+
+  # cAdvisor（容器指标）
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cloudflow-cadvisor
+    restart: unless-stopped
+    ports:
+      - "9101:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cloudflow-net
+
+  # Kafka Exporter（Kafka 指标）
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: cloudflow-kafka-exporter
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--kafka.version=3.5.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9308/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - cloudflow-net
 
@@ -620,6 +733,8 @@ volumes:
     name: cloudflow-kafka-data
   prometheus-data:
     name: cloudflow-prometheus-data
+  alertmanager-data:
+    name: cloudflow-alertmanager-data
   grafana-data:
     name: cloudflow-grafana-data
   loki-data:

@@ -19,6 +19,7 @@ import (
 
 	"cloud-flow-center/internal/alerting"
 	"cloud-flow-center/internal/config"
+	"cloud-flow-center/internal/security"
 	"cloud-flow-center/internal/storage"
 	"cloud-flow-center/pkg/audit"
 	"cloud-flow-center/pkg/auth"
@@ -43,6 +44,7 @@ type Server struct {
 	alertManager      *alerting.AlertManager
 	rateLimiter       *ratelimit.MultiLevelRateLimiter // 多级限流器
 	rateLimitEnabled  bool
+	securityMiddleware *security.SecurityMiddleware
 	csrfTokens        map[string]time.Time
 	csrfMutex         sync.Mutex
 	allowedOrigins    []string
@@ -83,6 +85,14 @@ func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit
 		)
 	}
 	
+	// 初始化安全中间件
+	securityMiddleware := security.NewSecurityMiddleware(security.SecurityConfig{
+		EnableParamValidation: true,
+		EnableAuditLog:        true,
+		MaxRequestBodySize:    10 * 1024 * 1024, // 10MB
+		AllowedContentTypes:   []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"},
+	}, log.Warnf)
+	
 	// 初始化 CSRF 令牌映射
 	csrfTokens := make(map[string]time.Time)
 	// 初始化登录失败计数器
@@ -112,21 +122,22 @@ func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit
 
 	log.Infof("CSRF Cookie Secure 属性设置为: %v", secureCookie)
 	return &Server{
-		store:           store,
-		jwtSecret:       jwtSecret,
-		jwtManager:      jwtManager,
-		auditLogger:     auditLogger,
-		alertManager:    alertManager,
-		logger:          log,
-		rateLimiter:     rateLimiter,
-		rateLimitEnabled: rateLimitCfg.Enabled,
-		csrfTokens:      csrfTokens,
-		allowedOrigins:  allowedOrigins,
-		loginFailures:   loginFailures,
-		secureCookie:    secureCookie,
-		tokenDuration:   tokenDuration,
-		redisStore:      redisStore,
-		centerConfig:    centerCfg,
+		store:              store,
+		jwtSecret:          jwtSecret,
+		jwtManager:        jwtManager,
+		auditLogger:        auditLogger,
+		alertManager:       alertManager,
+		logger:             log,
+		rateLimiter:        rateLimiter,
+		rateLimitEnabled:   rateLimitCfg.Enabled,
+		securityMiddleware:  securityMiddleware,
+		csrfTokens:         csrfTokens,
+		allowedOrigins:     allowedOrigins,
+		loginFailures:     loginFailures,
+		secureCookie:       secureCookie,
+		tokenDuration:      tokenDuration,
+		redisStore:         redisStore,
+		centerConfig:       centerCfg,
 	}
 }
 

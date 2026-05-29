@@ -2420,4 +2420,494 @@ var (
 	_ proto.Message = (*GetEdgeStatusRequest)(nil)
 	_ proto.Message = (*GetEdgeStatusResponse)(nil)
 	_ proto.Message = (*EdgeStatus)(nil)
+
+	// alert-engine 类型
+	_ proto.Message = (*AlertRule)(nil)
+	_ proto.Message = (*Alert)(nil)
+	_ proto.Message = (*CreateAlertRuleRequest)(nil)
+	_ proto.Message = (*CreateAlertRuleResponse)(nil)
+	_ proto.Message = (*GetAlertRuleRequest)(nil)
+	_ proto.Message = (*GetAlertRuleResponse)(nil)
+	_ proto.Message = (*UpdateAlertRuleRequest)(nil)
+	_ proto.Message = (*UpdateAlertRuleResponse)(nil)
+	_ proto.Message = (*DeleteAlertRuleRequest)(nil)
+	_ proto.Message = (*DeleteAlertRuleResponse)(nil)
+	_ proto.Message = (*ListAlertRulesRequest)(nil)
+	_ proto.Message = (*ListAlertRulesResponse)(nil)
+	_ proto.Message = (*CreateAlertRequest)(nil)
+	_ proto.Message = (*CreateAlertResponse)(nil)
+	_ proto.Message = (*GetAlertRequest)(nil)
+	_ proto.Message = (*GetAlertResponse)(nil)
+	_ proto.Message = (*UpdateAlertRequest)(nil)
+	_ proto.Message = (*UpdateAlertResponse)(nil)
+	_ proto.Message = (*ListAlertsRequest)(nil)
+	_ proto.Message = (*ListAlertsResponse)(nil)
+	_ proto.Message = (*CreateNotificationRequest)(nil)
+	_ proto.Message = (*CreateNotificationResponse)(nil)
+	_ proto.Message = (*UpdateNotificationRequest)(nil)
+	_ proto.Message = (*UpdateNotificationResponse)(nil)
+	_ proto.Message = (*ListNotificationsRequest)(nil)
+	_ proto.Message = (*ListNotificationsResponse)(nil)
+	_ proto.Message = (*Notification)(nil)
+	_ proto.Message = (*EvaluateRulesRequest)(nil)
+	_ proto.Message = (*EvaluateRulesResponse)(nil)
+	_ proto.Message = (*EvaluateAlertsRequest)(nil)
+	_ proto.Message = (*EvaluateAlertsResponse)(nil)
 )
+
+// ============================================================================
+// alert-engine 类型定义
+// ============================================================================
+
+// AlertRule 告警规则
+type AlertRule struct {
+	RuleId         string `json:"rule_id"`
+	TenantId       string `json:"tenant_id"`
+	ProjectId      string `json:"project_id"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
+	Description    string `json:"description"`
+	Severity       string `json:"severity"`
+	Expression     string `json:"expression"`
+	Enabled        bool   `json:"enabled"`
+	NotifyChannels string `json:"notify_channels"`
+	NotifyInterval int32  `json:"notify_interval"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+func (m *AlertRule) Reset()         { *m = AlertRule{} }
+func (m *AlertRule) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *AlertRule) ProtoMessage()  {}
+
+func (m *AlertRule) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *AlertRule) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// Alert 告警
+type Alert struct {
+	AlertId     string            `json:"alert_id"`
+	RuleId      string            `json:"rule_id"`
+	TenantId    string            `json:"tenant_id"`
+	ProjectId   string            `json:"project_id"`
+	Severity    string            `json:"severity"`
+	Title       string            `json:"title"`
+	Message     string            `json:"message"`
+	Status      string            `json:"status"`
+	StartsAt    string            `json:"starts_at"`
+	EndsAt      string            `json:"ends_at"`
+	Annotations string            `json:"annotations"`
+	Labels      map[string]string `json:"labels"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
+}
+
+func (m *Alert) Reset()         { *m = Alert{} }
+func (m *Alert) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *Alert) ProtoMessage()  {}
+
+func (m *Alert) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *Alert) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// CreateAlertRuleRequest 创建告警规则请求
+type CreateAlertRuleRequest struct {
+	TenantId       string `json:"tenant_id"`
+	ProjectId      string `json:"project_id"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
+	Description    string `json:"description"`
+	Severity       string `json:"severity"`
+	Expression     string `json:"expression"`
+	Enabled        bool   `json:"enabled"`
+	NotifyChannels string `json:"notify_channels"`
+	NotifyInterval int32  `json:"notify_interval"`
+}
+
+func (m *CreateAlertRuleRequest) Reset()         { *m = CreateAlertRuleRequest{} }
+func (m *CreateAlertRuleRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *CreateAlertRuleRequest) ProtoMessage()  {}
+
+func (m *CreateAlertRuleRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *CreateAlertRuleRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// CreateAlertRuleResponse 创建告警规则响应
+type CreateAlertRuleResponse struct {
+	Success bool   `json:"success"`
+	RuleId  string `json:"rule_id"`
+	Message string `json:"message"`
+}
+
+func (m *CreateAlertRuleResponse) Reset()         { *m = CreateAlertRuleResponse{} }
+func (m *CreateAlertRuleResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *CreateAlertRuleResponse) ProtoMessage()  {}
+
+func (m *CreateAlertRuleResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *CreateAlertRuleResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// GetAlertRuleRequest 获取告警规则请求
+type GetAlertRuleRequest struct {
+	RuleId string `json:"rule_id"`
+}
+
+func (m *GetAlertRuleRequest) Reset()         { *m = GetAlertRuleRequest{} }
+func (m *GetAlertRuleRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *GetAlertRuleRequest) ProtoMessage()  {}
+
+func (m *GetAlertRuleRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *GetAlertRuleRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// GetAlertRuleResponse 获取告警规则响应
+type GetAlertRuleResponse struct {
+	Rule *AlertRule `json:"rule"`
+}
+
+func (m *GetAlertRuleResponse) Reset()         { *m = GetAlertRuleResponse{} }
+func (m *GetAlertRuleResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *GetAlertRuleResponse) ProtoMessage()  {}
+
+func (m *GetAlertRuleResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *GetAlertRuleResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// UpdateAlertRuleRequest 更新告警规则请求
+type UpdateAlertRuleRequest struct {
+	RuleId         string `json:"rule_id"`
+	DisplayName    string `json:"display_name"`
+	Description    string `json:"description"`
+	Severity       string `json:"severity"`
+	Expression     string `json:"expression"`
+	Enabled        bool   `json:"enabled"`
+	NotifyChannels string `json:"notify_channels"`
+	NotifyInterval int32  `json:"notify_interval"`
+}
+
+func (m *UpdateAlertRuleRequest) Reset()         { *m = UpdateAlertRuleRequest{} }
+func (m *UpdateAlertRuleRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *UpdateAlertRuleRequest) ProtoMessage()  {}
+
+func (m *UpdateAlertRuleRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *UpdateAlertRuleRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// UpdateAlertRuleResponse 更新告警规则响应
+type UpdateAlertRuleResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func (m *UpdateAlertRuleResponse) Reset()         { *m = UpdateAlertRuleResponse{} }
+func (m *UpdateAlertRuleResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *UpdateAlertRuleResponse) ProtoMessage()  {}
+
+func (m *UpdateAlertRuleResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *UpdateAlertRuleResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// DeleteAlertRuleRequest 删除告警规则请求
+type DeleteAlertRuleRequest struct {
+	RuleId string `json:"rule_id"`
+}
+
+func (m *DeleteAlertRuleRequest) Reset()         { *m = DeleteAlertRuleRequest{} }
+func (m *DeleteAlertRuleRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *DeleteAlertRuleRequest) ProtoMessage()  {}
+
+func (m *DeleteAlertRuleRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *DeleteAlertRuleRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// DeleteAlertRuleResponse 删除告警规则响应
+type DeleteAlertRuleResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func (m *DeleteAlertRuleResponse) Reset()         { *m = DeleteAlertRuleResponse{} }
+func (m *DeleteAlertRuleResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *DeleteAlertRuleResponse) ProtoMessage()  {}
+
+func (m *DeleteAlertRuleResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *DeleteAlertRuleResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// ListAlertRulesRequest 列出租户告警规则请求
+type ListAlertRulesRequest struct {
+	TenantId string `json:"tenant_id"`
+}
+
+func (m *ListAlertRulesRequest) Reset()         { *m = ListAlertRulesRequest{} }
+func (m *ListAlertRulesRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ListAlertRulesRequest) ProtoMessage()  {}
+
+func (m *ListAlertRulesRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *ListAlertRulesRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// ListAlertRulesResponse 列出租户告警规则响应
+type ListAlertRulesResponse struct {
+	Rules []*AlertRule `json:"rules"`
+}
+
+func (m *ListAlertRulesResponse) Reset()         { *m = ListAlertRulesResponse{} }
+func (m *ListAlertRulesResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ListAlertRulesResponse) ProtoMessage()  {}
+
+func (m *ListAlertRulesResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *ListAlertRulesResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// CreateAlertRequest 创建告警请求
+type CreateAlertRequest struct {
+	RuleId      string            `json:"rule_id"`
+	TenantId    string            `json:"tenant_id"`
+	ProjectId   string            `json:"project_id"`
+	Severity    string            `json:"severity"`
+	Title       string            `json:"title"`
+	Message     string            `json:"message"`
+	Status      string            `json:"status"`
+	Annotations string            `json:"annotations"`
+	Labels      map[string]string `json:"labels"`
+}
+
+func (m *CreateAlertRequest) Reset()         { *m = CreateAlertRequest{} }
+func (m *CreateAlertRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *CreateAlertRequest) ProtoMessage()  {}
+
+func (m *CreateAlertRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *CreateAlertRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// CreateAlertResponse 创建告警响应
+type CreateAlertResponse struct {
+	Success bool   `json:"success"`
+	AlertId string `json:"alert_id"`
+	Message string `json:"message"`
+}
+
+func (m *CreateAlertResponse) Reset()         { *m = CreateAlertResponse{} }
+func (m *CreateAlertResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *CreateAlertResponse) ProtoMessage()  {}
+
+func (m *CreateAlertResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *CreateAlertResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// GetAlertRequest 获取告警请求
+type GetAlertRequest struct {
+	AlertId string `json:"alert_id"`
+}
+
+func (m *GetAlertRequest) Reset()         { *m = GetAlertRequest{} }
+func (m *GetAlertRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *GetAlertRequest) ProtoMessage()  {}
+
+func (m *GetAlertRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *GetAlertRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// GetAlertResponse 获取告警响应
+type GetAlertResponse struct {
+	Alert *Alert `json:"alert"`
+}
+
+func (m *GetAlertResponse) Reset()         { *m = GetAlertResponse{} }
+func (m *GetAlertResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *GetAlertResponse) ProtoMessage()  {}
+
+func (m *GetAlertResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *GetAlertResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// UpdateAlertRequest 更新告警请求
+type UpdateAlertRequest struct {
+	AlertId string `json:"alert_id"`
+	Status  string `json:"status"`
+	EndsAt  string `json:"ends_at"`
+}
+
+func (m *UpdateAlertRequest) Reset()         { *m = UpdateAlertRequest{} }
+func (m *UpdateAlertRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *UpdateAlertRequest) ProtoMessage()  {}
+
+func (m *UpdateAlertRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *UpdateAlertRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// UpdateAlertResponse 更新告警响应
+type UpdateAlertResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func (m *UpdateAlertResponse) Reset()         { *m = UpdateAlertResponse{} }
+func (m *UpdateAlertResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *UpdateAlertResponse) ProtoMessage()  {}
+
+func (m *UpdateAlertResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *UpdateAlertResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// ListAlertsRequest 列出告警请求
+type ListAlertsRequest struct {
+	TenantId string `json:"tenant_id"`
+	Status   string `json:"status"`
+}
+
+func (m *ListAlertsRequest) Reset()         { *m = ListAlertsRequest{} }
+func (m *ListAlertsRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ListAlertsRequest) ProtoMessage()  {}
+
+func (m *ListAlertsRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *ListAlertsRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// ListAlertsResponse 列出告警响应
+type ListAlertsResponse struct {
+	Alerts []*Alert `json:"alerts"`
+}
+
+func (m *ListAlertsResponse) Reset()         { *m = ListAlertsResponse{} }
+func (m *ListAlertsResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ListAlertsResponse) ProtoMessage()  {}
+
+func (m *ListAlertsResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *ListAlertsResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// CreateNotificationRequest 创建通知请求
+type CreateNotificationRequest struct {
+	AlertId       string `json:"alert_id"`
+	RuleId        string `json:"rule_id"`
+	TenantId      string `json:"tenant_id"`
+	ChannelType   string `json:"channel_type"`
+	ChannelConfig string `json:"channel_config"`
+	Status        string `json:"status"`
+	Message       string `json:"message"`
+}
+
+func (m *CreateNotificationRequest) Reset()         { *m = CreateNotificationRequest{} }
+func (m *CreateNotificationRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *CreateNotificationRequest) ProtoMessage()  {}
+
+func (m *CreateNotificationRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *CreateNotificationRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// CreateNotificationResponse 创建通知响应
+type CreateNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func (m *CreateNotificationResponse) Reset()         { *m = CreateNotificationResponse{} }
+func (m *CreateNotificationResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *CreateNotificationResponse) ProtoMessage()  {}
+
+func (m *CreateNotificationResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *CreateNotificationResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// UpdateNotificationRequest 更新通知请求
+type UpdateNotificationRequest struct {
+	NotificationId string `json:"notification_id"`
+	Status          string `json:"status"`
+	ErrorMessage    string `json:"error_message"`
+	Attempts        int32  `json:"attempts"`
+	NextAttemptAt   string `json:"next_attempt_at"`
+}
+
+func (m *UpdateNotificationRequest) Reset()         { *m = UpdateNotificationRequest{} }
+func (m *UpdateNotificationRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *UpdateNotificationRequest) ProtoMessage()  {}
+
+func (m *UpdateNotificationRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *UpdateNotificationRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// UpdateNotificationResponse 更新通知响应
+type UpdateNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func (m *UpdateNotificationResponse) Reset()         { *m = UpdateNotificationResponse{} }
+func (m *UpdateNotificationResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *UpdateNotificationResponse) ProtoMessage()  {}
+
+func (m *UpdateNotificationResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *UpdateNotificationResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// ListNotificationsRequest 列出通知请求
+type ListNotificationsRequest struct {
+	AlertId string `json:"alert_id"`
+}
+
+func (m *ListNotificationsRequest) Reset()         { *m = ListNotificationsRequest{} }
+func (m *ListNotificationsRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ListNotificationsRequest) ProtoMessage()  {}
+
+func (m *ListNotificationsRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *ListNotificationsRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// ListNotificationsResponse 列出通知响应
+type ListNotificationsResponse struct {
+	Notifications []*Notification `json:"notifications"`
+}
+
+func (m *ListNotificationsResponse) Reset()         { *m = ListNotificationsResponse{} }
+func (m *ListNotificationsResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *ListNotificationsResponse) ProtoMessage()  {}
+
+func (m *ListNotificationsResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *ListNotificationsResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// Notification 通知
+type Notification struct {
+	NotificationId string `json:"notification_id"`
+	AlertId       string `json:"alert_id"`
+	RuleId        string `json:"rule_id"`
+	TenantId      string `json:"tenant_id"`
+	ChannelType   string `json:"channel_type"`
+	Status        string `json:"status"`
+	Attempts      int32  `json:"attempts"`
+	CreatedAt     string `json:"created_at"`
+}
+
+func (m *Notification) Reset()         { *m = Notification{} }
+func (m *Notification) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *Notification) ProtoMessage()  {}
+
+func (m *Notification) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *Notification) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// EvaluateRulesRequest 评估规则请求
+type EvaluateRulesRequest struct {
+	TenantId string `json:"tenant_id"`
+}
+
+func (m *EvaluateRulesRequest) Reset()         { *m = EvaluateRulesRequest{} }
+func (m *EvaluateRulesRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *EvaluateRulesRequest) ProtoMessage()  {}
+
+func (m *EvaluateRulesRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *EvaluateRulesRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// EvaluateRulesResponse 评估规则响应
+type EvaluateRulesResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func (m *EvaluateRulesResponse) Reset()         { *m = EvaluateRulesResponse{} }
+func (m *EvaluateRulesResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *EvaluateRulesResponse) ProtoMessage()  {}
+
+func (m *EvaluateRulesResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *EvaluateRulesResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// EvaluateAlertsRequest 评估告警请求
+type EvaluateAlertsRequest struct {
+	TenantId string            `json:"tenant_id"`
+	Metrics  map[string]float64 `json:"metrics"`
+}
+
+func (m *EvaluateAlertsRequest) Reset()         { *m = EvaluateAlertsRequest{} }
+func (m *EvaluateAlertsRequest) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *EvaluateAlertsRequest) ProtoMessage()  {}
+
+func (m *EvaluateAlertsRequest) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *EvaluateAlertsRequest) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+
+// EvaluateAlertsResponse 评估告警响应
+type EvaluateAlertsResponse struct {
+	Alerts []*Alert `json:"alerts"`
+}
+
+func (m *EvaluateAlertsResponse) Reset()         { *m = EvaluateAlertsResponse{} }
+func (m *EvaluateAlertsResponse) String() string { return fmt.Sprintf("%+v", *m) }
+func (m *EvaluateAlertsResponse) ProtoMessage()  {}
+
+func (m *EvaluateAlertsResponse) Marshal() ([]byte, error)         { return json.Marshal(m) }
+func (m *EvaluateAlertsResponse) Unmarshal(data []byte) error      { return json.Unmarshal(data, m) }
+

@@ -11,5 +11,8 @@ require (
 	google.golang.org/grpc/health/grpc_health_v1 v0.0.0
 )
 
-replace cloud-flow/pkg => ../../../pkg
-replace cloud-flow/services/proto => ../../../proto
+replace (
+	cloud-flow/pkg => ../../../pkg
+	cloud-flow/services/proto => ../../../proto
+	cloud-flow/services/shared/auth => ../shared/auth
+)

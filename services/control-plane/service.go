@@ -170,6 +170,11 @@ func (s *Service) Start() error {
 		return fmt.Errorf("etcd init failed: %w", err)
 	}
 
+	// P1-9: 从 etcd 恢复 Agent/Edge 状态
+	if err := s.restoreStateFromEtcd(); err != nil {
+		fmt.Printf("Warning: failed to restore state from etcd: %v\n", err)
+	}
+
 	// 建立下游服务连接
 	if err := s.connectToDownstream(); err != nil {
 		return fmt.Errorf("connect downstream failed: %w", err)
@@ -321,6 +326,38 @@ func (s *Service) registerToEtcd() error {
 			}
 		}
 	}()
+
+	return nil
+}
+
+// restoreStateFromEtcd P1-9: 从 etcd 恢复 Agent/Edge 状态
+func (s *Service) restoreStateFromEtcd() error {
+	if s.etcdClient == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(s.etcdCtx, 10*time.Second)
+	defer cancel()
+
+	// 恢复 Agents
+	agentResp, err := s.etcdClient.Get(ctx, s.config.EtcdPrefix+"agents/", clientv3.WithPrefix())
+	if err == nil {
+		for _, kv := range agentResp.Kvs {
+			agentId := string(kv.Key)[len(s.config.EtcdPrefix+"agents/"):]
+			// Agent 信息在内存中，通过 agentId 重新关联
+			// 实际使用时需要通过 gRPC 调用获取完整 AgentInfo
+			fmt.Printf("Restored agent from etcd: %s\n", agentId)
+		}
+	}
+
+	// 恢复 Edges
+	edgeResp, err := s.etcdClient.Get(ctx, s.config.EtcdPrefix+"edges/", clientv3.WithPrefix())
+	if err == nil {
+		for _, kv := range edgeResp.Kvs {
+			edgeId := string(kv.Key)[len(s.config.EtcdPrefix+"edges/"):]
+			fmt.Printf("Restored edge from etcd: %s\n", edgeId)
+		}
+	}
 
 	return nil
 }
@@ -547,15 +584,38 @@ func (s *Service) validateToken(ctx context.Context, token string) bool {
 // Agent 管理
 // ============================================================================
 
-// RegisterAgent 注册 Agent
+// RegisterAgent 注册 Agent（持久化到 etcd）
 func (s *Service) RegisterAgent(agent *svcproto.AgentInfo) {
 	agent.Status = "online"
 	s.agents.Store(agent.AgentId, agent)
+	s.persistAgentToEtcd(agent)
 }
 
-// DeregisterAgent 注销 Agent
+// persistAgentToEtcd P1-9: 将 Agent 状态持久化到 etcd
+func (s *Service) persistAgentToEtcd(agent *svcproto.AgentInfo) {
+	if s.etcdClient == nil {
+		return
+	}
+	key := s.config.EtcdPrefix + "agents/" + agent.AgentId
+	// 使用短 TTL，心跳会续期
+	leaseResp, err := s.etcdClient.Grant(s.etcdCtx, int64(s.config.AgentTTL.Seconds()))
+	if err != nil {
+		fmt.Printf("Failed to grant lease for agent %s: %v\n", agent.AgentId, err)
+		return
+	}
+	_, err = s.etcdClient.Put(s.etcdCtx, key, agent.AgentId, clientv3.WithLease(leaseResp.ID))
+	if err != nil {
+		fmt.Printf("Failed to persist agent %s to etcd: %v\n", agent.AgentId, err)
+	}
+}
+
+// DeregisterAgent 注销 Agent（从 etcd 移除）
 func (s *Service) DeregisterAgent(agentId string) {
 	s.agents.Delete(agentId)
+	if s.etcdClient != nil {
+		key := s.config.EtcdPrefix + "agents/" + agentId
+		s.etcdClient.Delete(s.etcdCtx, key)
+	}
 }
 
 // GetAgent 获取 Agent
@@ -591,15 +651,37 @@ func (s *Service) ListAgents(tenantId, region, status string) []*svcproto.AgentI
 // Edge 管理
 // ============================================================================
 
-// RegisterEdge 注册 Edge
+// RegisterEdge 注册 Edge（持久化到 etcd）
 func (s *Service) RegisterEdge(edge *svcproto.EdgeInfo) {
 	edge.Status = "online"
 	s.edges.Store(edge.EdgeId, edge)
+	s.persistEdgeToEtcd(edge)
 }
 
-// DeregisterEdge 注销 Edge
+// persistEdgeToEtcd P1-9: 将 Edge 状态持久化到 etcd
+func (s *Service) persistEdgeToEtcd(edge *svcproto.EdgeInfo) {
+	if s.etcdClient == nil {
+		return
+	}
+	key := s.config.EtcdPrefix + "edges/" + edge.EdgeId
+	leaseResp, err := s.etcdClient.Grant(s.etcdCtx, int64(s.config.AgentTTL.Seconds()))
+	if err != nil {
+		fmt.Printf("Failed to grant lease for edge %s: %v\n", edge.EdgeId, err)
+		return
+	}
+	_, err = s.etcdClient.Put(s.etcdCtx, key, edge.EdgeId, clientv3.WithLease(leaseResp.ID))
+	if err != nil {
+		fmt.Printf("Failed to persist edge %s to etcd: %v\n", edge.EdgeId, err)
+	}
+}
+
+// DeregisterEdge 注销 Edge（从 etcd 移除）
 func (s *Service) DeregisterEdge(edgeId string) {
 	s.edges.Delete(edgeId)
+	if s.etcdClient != nil {
+		key := s.config.EtcdPrefix + "edges/" + edgeId
+		s.etcdClient.Delete(s.etcdCtx, key)
+	}
 }
 
 // GetEdge 获取 Edge

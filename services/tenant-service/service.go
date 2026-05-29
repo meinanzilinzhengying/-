@@ -80,7 +80,7 @@ func DefaultConfig() *Config {
 		Version:               "1.0.0",
 		GrpcAddr:              ":9010",
 		HttpAddr:              ":8010",
-		AuthAddr:              "auth-service:9003",
+		AuthAddr:              "auth-service:9006",
 		TiDBDatabase:          "cloudflow_tenant",
 		DefaultRetentionDays:  30,
 		DefaultMaxAgents:      100,

@@ -333,7 +333,7 @@ services:
     environment:
       - CLICKHOUSE_DB=cloudflow
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-ClickHouse2024Secure}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-ClickHouse2024SecurePass}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./services/data-plane/deployments/clickhouse-config.xml:/etc/clickhouse-server/config.d/custom-config.xml

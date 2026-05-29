@@ -820,6 +820,7 @@ func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
 	}
 
 	var wg sync.WaitGroup
+	var mu sync.Mutex // FIX: 保护 error 变量的并发写入
 	var chErr, vmErr, lokiErr error
 
 	// 并行写入 ClickHouse
@@ -827,7 +828,9 @@ func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
 	go func() {
 		defer wg.Done()
 		if err := s.writeToClickHouse(batch); err != nil {
+			mu.Lock()
 			chErr = err
+			mu.Unlock()
 		}
 	}()
 
@@ -836,7 +839,9 @@ func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
 	go func() {
 		defer wg.Done()
 		if err := s.writeToVictoriaMetrics(batch); err != nil {
+			mu.Lock()
 			vmErr = err
+			mu.Unlock()
 		}
 	}()
 
@@ -845,7 +850,9 @@ func (s *Service) flushFlows(batch []*flow.UnifiedFlow) {
 	go func() {
 		defer wg.Done()
 		if err := s.writeToLoki(batch); err != nil {
+			mu.Lock()
 			lokiErr = err
+			mu.Unlock()
 		}
 	}()
 

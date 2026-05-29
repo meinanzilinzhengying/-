@@ -17,7 +17,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"net"
 	"net/http"
 	"strings"
@@ -370,7 +370,7 @@ func (s *Service) newServerTLSCredentials() (credentials.TransportCredentials, e
 
 	// 如果配置了 mTLS，加载 CA 证书验证客户端
 	if s.config.TLSClientAuth && s.config.TLSCAFile != "" {
-		caCert, err := ioutil.ReadFile(s.config.TLSCAFile)
+		caCert, err := os.ReadFile(s.config.TLSCAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}
@@ -408,7 +408,7 @@ func (s *Service) newClientTLSCredentials() (credentials.TransportCredentials, e
 
 	// 加载 CA 证书验证服务器
 	if s.config.TLSCAFile != "" {
-		caCert, err := ioutil.ReadFile(s.config.TLSCAFile)
+		caCert, err := os.ReadFile(s.config.TLSCAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}

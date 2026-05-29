@@ -346,7 +346,10 @@ func (s *Service) loadUsersToCache() error {
 // Start 启动服务
 func (s *Service) Start() error {
 	// 启动 RBAC 引擎
-	s.rbacEngine.Start(context.Background())
+	// FIX: 检查 RBAC 引擎启动错误
+	if err := s.rbacEngine.Start(context.Background()); err != nil {
+		return fmt.Errorf("RBAC engine start failed: %w", err)
+	}
 
 	// 注册内置角色
 	s.rbacEngine.AddBuiltinRoles()

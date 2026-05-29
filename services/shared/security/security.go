@@ -189,6 +189,7 @@ type LoginAttempt struct {
 type LoginLockoutManager struct {
 	attempts sync.Map
 	config *SecurityConfig
+	mu     sync.Mutex // FIX: 保护 RecordFailedAttempt 中的读-修改-写竞态
 }
 
 // NewLoginLockoutManager 创建登录锁定管理器
@@ -199,10 +200,14 @@ func NewLoginLockoutManager(config *SecurityConfig) *LoginLockoutManager {
 }
 
 // RecordFailedAttempt 记录失败登录
+// FIX: 使用 mutex 保护读-修改-写操作，防止并发竞态
 func (m *LoginLockoutManager) RecordFailedAttempt(userID string) error {
 	if !m.config.LoginLockoutEnabled {
 		return nil
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	now := time.Now()
 	val, _ := m.attempts.LoadOrStore(userID, &LoginAttempt{

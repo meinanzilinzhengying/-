@@ -130,13 +130,13 @@ services:
       dockerfile: deployments/Dockerfile
     container_name: cloudflow-data-plane
     ports:
-      - "8001:8001"  # HTTP API
-      - "9001:9001"  # gRPC
+      - "8002:8002"  # HTTP API (FIX: 从 8001 改为 8002，避免与 control-plane 端口冲突)
+      - "9002:9002"  # gRPC (FIX: 从 9001 改为 9002，避免与 control-plane 端口冲突)
       - "9101:9101"  # Metrics
     environment:
       - SERVICE_NAME=data-plane
-      - GRPC_ADDR=:9001
-      - HTTP_ADDR=:8001
+      - GRPC_ADDR=:9002
+      - HTTP_ADDR=:8002
       # 批量写入配置
       - BATCH_SIZE=10000
       - FLUSH_INTERVAL=1s

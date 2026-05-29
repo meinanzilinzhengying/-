@@ -630,8 +630,11 @@ func (s *Storage) queryFlows(ctx context.Context, req *storage.QueryRequest) (*s
 		args = append(args, req.Pod)
 	}
 
-	// 排序
+	// 排序 - FIX: 白名单校验 OrderBy 字段，防止 SQL 注入
 	if req.OrderBy != "" {
+		if !isValidOrderByColumn(req.OrderBy) {
+			return nil, fmt.Errorf("invalid order_by column: %s", req.OrderBy)
+		}
 		query.WriteString(fmt.Sprintf(" ORDER BY %s", req.OrderBy))
 		if req.OrderDesc {
 			query.WriteString(" DESC")
@@ -1114,4 +1117,29 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// validOrderByColumns 定义允许排序的列名白名单，防止 SQL 注入
+var validOrderByColumns = map[string]bool{
+	"timestamp":     true,
+	"src_ip":        true,
+	"dst_ip":        true,
+	"src_port":      true,
+	"dst_port":      true,
+	"protocol":      true,
+	"bytes_sent":    true,
+	"bytes_recv":    true,
+	"packets_sent":  true,
+	"packets_recv":  true,
+	"duration":      true,
+	"service":       true,
+	"pod":           true,
+	"namespace":     true,
+	"src_service":   true,
+	"dst_service":   true,
+}
+
+// isValidOrderByColumn 检查 order_by 列名是否在白名单中
+func isValidOrderByColumn(column string) bool {
+	return validOrderByColumns[column]
 }

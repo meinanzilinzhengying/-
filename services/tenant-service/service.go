@@ -20,7 +20,6 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"time"

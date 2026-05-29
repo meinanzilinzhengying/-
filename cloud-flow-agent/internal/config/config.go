@@ -800,8 +800,11 @@ func Load() (*Config, error) {
 			CircuitBreaker: CircuitBreakerConfig{
 				Enabled:        viper.GetBool("ebpf.circuit_breaker.enabled"),
 				MaxFailures:    viper.GetInt("ebpf.circuit_breaker.max_failures"),
-				ResetTimeout:   viper.GetDuration("ebpf.circuit_breaker.reset_timeout") * time.Second,
-				SilentDuration: viper.GetDuration("ebpf.circuit_breaker.silent_duration") * time.Second,
+				// FIX: viper.GetDuration 返回 time.Duration (纳秒)，而配置默认值为纯数字(秒)
+				// 需要乘以 time.Second 转换为正确的时间单位
+				// 如果配置值为 duration string (如 "30s")，GetDuration 已正确解析，不需要额外乘法
+				ResetTimeout:   parseSecondsAsDuration(viper.Get("ebpf.circuit_breaker.reset_timeout")),
+				SilentDuration: parseSecondsAsDuration(viper.Get("ebpf.circuit_breaker.silent_duration")),
 				// 过载熔断阈值
 				CheckInterval:             viper.GetDuration("ebpf.circuit_breaker.check_interval"),
 				CPUDegradedThreshold:      viper.GetFloat64("ebpf.circuit_breaker.cpu_degraded_threshold"),
@@ -1031,4 +1034,33 @@ func (c *Config) Summary() string {
 // maskSecret 对敏感字符串进行脱敏处理，委托给 pkg/utils.MaskSecret 统一实现
 func maskSecret(s string) string {
 	return utils.MaskSecret(s)
+}
+
+// parseSecondsAsDuration 安全解析时长配置。
+// 兼容两种格式：
+//   - 纯数字（如 30）→ 视为秒，返回 30 * time.Second
+//   - duration string（如 "30s"）→ 使用 time.ParseDuration 解析
+func parseSecondsAsDuration(val interface{}) time.Duration {
+	if val == nil {
+		return 0
+	}
+	switch v := val.(type) {
+	case int:
+		return time.Duration(v) * time.Second
+	case int64:
+		return time.Duration(v) * time.Second
+	case float64:
+		return time.Duration(v) * time.Second
+	case string:
+		// 先尝试作为 duration string 解析（如 "30s", "1m"）
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		// 再尝试作为纯数字解析
+		var secs int
+		if _, err := fmt.Sscanf(v, "%d", &secs); err == nil {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 0
 }

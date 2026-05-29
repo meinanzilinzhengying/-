@@ -14,7 +14,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"log"
 	"net"
 	"net/http"
@@ -286,7 +286,7 @@ func ServerTLSCredentials(cfg *SecurityConfig) (credentials.TransportCredentials
 	}
 
 	if cfg.ClientAuth && cfg.CAFile != "" {
-		caCert, err := ioutil.ReadFile(cfg.CAFile)
+		caCert, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}
@@ -325,7 +325,7 @@ func ClientTLSCredentials(cfg *SecurityConfig) (credentials.TransportCredentials
 	}
 
 	if cfg.CAFile != "" {
-		caCert, err := ioutil.ReadFile(cfg.CAFile)
+		caCert, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}

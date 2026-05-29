@@ -96,8 +96,9 @@ func main() {
 	go func() {
 		log.Infof("Portal 服务监听: :%d", port)
 		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-			log.Errorf("Portal 服务异常: %v", err)
-			os.Exit(1)
+			log.Errorf("Portal 服务异常: %v，触发优雅关闭", err)
+			// FIX: 不直接 os.Exit(1)，而是发送信号触发优雅关闭流程
+			sigCh <- syscall.SIGTERM
 		}
 	}()
 

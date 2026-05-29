@@ -41,10 +41,24 @@ type safeClient struct {
 }
 
 // Get 安全地获取客户端
+// 返回可能为 nil，调用方需要检查
 func (sc *safeClient) Get() *grpcclient.Client {
 	sc.mu.RLock()
 	defer sc.mu.RUnlock()
 	return sc.client
+}
+
+// GetOrNil 安全地获取客户端，显式返回 nil 表示未设置
+// 与 Get() 行为一致，但方法名更明确表达可能返回 nil
+func (sc *safeClient) GetOrNil() *grpcclient.Client {
+	return sc.Get()
+}
+
+// IsNil 检查客户端是否为 nil
+func (sc *safeClient) IsNil() bool {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.client == nil
 }
 
 // Set 安全地设置客户端
@@ -304,10 +318,16 @@ func main() {
 	hostIP := getLocalIP()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	resp, err := safeClient.Get().Register(ctx, cfg.ProbeID, hostIP, hostname, Version)
+	// FIX: 检查 safeClient 是否为 nil，防止空指针
+	client := safeClient.Get()
+	if client == nil {
+		log.Errorf("gRPC 客户端未初始化")
+		os.Exit(1)
+	}
+	resp, err := client.Register(ctx, cfg.ProbeID, hostIP, hostname, Version)
 	if err != nil {
 		log.Errorf("注册探针失败: %v", err)
-		safeClient.Get().Close()
+		client.Close()
 		os.Exit(1)
 	}
 	log.Infof("注册成功: %s, 心跳间隔=%ds", resp.GetMessage(), resp.GetHeartbeatInterval())
@@ -550,7 +570,15 @@ func main() {
 			case <-ticker.C:
 				heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				heartbeatStart := time.Now()
-				if err := safeClient.Get().Heartbeat(heartbeatCtx, cfg.ProbeID); err != nil {
+				// FIX: nil 检查 safeClient.Get() 返回值
+				currentClient := safeClient.Get()
+				if currentClient == nil {
+					heartbeatCancel()
+					log.Warn("gRPC 客户端为空，跳过一次心跳")
+					failureCount++
+					continue
+				}
+				if err := currentClient.Heartbeat(heartbeatCtx, cfg.ProbeID); err != nil {
 					failureCount++
 					log.Warnf("心跳失败 (第 %d/%d 次): %v", failureCount, maxFailures, err)
 					metricCollector.HeartbeatSent(err)
@@ -563,8 +591,12 @@ func main() {
 					if failureCount >= maxFailures {
 						log.Warnf("连续心跳失败 %d 次，开始重连 Edge 节点...", maxFailures)
 
-						// 关闭当前客户端
-						safeClient.Get().Close()
+						// FIX: 先获取并置空，防止其他 goroutine 使用已关闭的客户端
+						oldClient := safeClient.Get()
+						safeClient.Set(nil)
+						if oldClient != nil {
+							oldClient.Close()
+						}
 
 						// 等待网卡恢复可用
 						if !netMonitor.IsAvailable() {
@@ -600,6 +632,11 @@ func main() {
 					for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
 						// 轮询候选地址（第一轮优先归属 Edge，后续轮次也优先）
 						for _, addr := range candidateAddrs {
+							// FIX: 关闭上一次循环中创建但未使用的 newClient
+							if newClient != nil && !reconnectSuccess {
+								newClient.Close()
+								newClient = nil
+							}
 							newClient, err = grpcclient.NewClient(addr, cfg.APIKey, mgmtIP, grpcclient.TLSConfig{
 								Enabled:    cfg.TLS.Enabled,
 								ServerName: cfg.TLS.ServerName,
@@ -944,7 +981,9 @@ func main() {
 	}
 
 	// 关闭客户端连接
-	safeClient.Get().Close()
+	if cl := safeClient.Get(); cl != nil {
+		cl.Close()
+	}
 	log.Info("探针已安全退出")
 }
 
@@ -958,9 +997,15 @@ type assignedEdgeInfo struct {
 // saveAssignedEdge 持久化归属 Edge 到本地文件（分布式边缘自治）
 func saveAssignedEdge(probeID, edgeID, sessionID, addr string) {
 	dir := filepath.Join(os.TempDir(), "cloud-flow-edge")
-	os.MkdirAll(dir, 0755)
+	// FIX: 检查目录创建错误
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
 	data := fmt.Sprintf("%s\t%s\t%s\t%s\t%d", probeID, edgeID, sessionID, addr, time.Now().Unix())
-	os.WriteFile(filepath.Join(dir, probeID+".edge"), []byte(data), 0600)
+	// FIX: 检查文件写入错误
+	if err := os.WriteFile(filepath.Join(dir, probeID+".edge"), []byte(data), 0600); err != nil {
+		return
+	}
 }
 
 // loadAssignedEdge 从本地文件恢复归属 Edge（分布式边缘自治）

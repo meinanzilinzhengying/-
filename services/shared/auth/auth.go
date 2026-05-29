@@ -28,7 +28,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"net/http"
 	"strings"
 	"time"
@@ -89,7 +89,7 @@ func buildTLSConfig(config Config) (*tls.Config, error) {
 	}
 
 	if config.CAFile != "" {
-		caCert, err := ioutil.ReadFile(config.CAFile)
+		caCert, err := os.ReadFile(config.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA file: %w", err)
 		}

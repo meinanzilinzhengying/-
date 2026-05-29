@@ -7,7 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"os"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -35,7 +35,7 @@ func ServerCredentials(cfg Config) (credentials.TransportCredentials, error) {
 	}
 
 	if cfg.ClientAuth && cfg.CAFile != "" {
-		caCert, err := ioutil.ReadFile(cfg.CAFile)
+		caCert, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}
@@ -74,7 +74,7 @@ func ClientCredentials(cfg Config) (credentials.TransportCredentials, error) {
 	}
 
 	if cfg.CAFile != "" {
-		caCert, err := ioutil.ReadFile(cfg.CAFile)
+		caCert, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}

@@ -160,6 +160,7 @@ type ConfigManager struct {
 	stopCh       chan struct{}
 	running      bool
 	logger       func(format string, args ...interface{})
+	watcherCloseOnce sync.Once // FIX: 防止 watcher 被双重关闭
 }
 
 // NewConfigManager 创建配置管理器
@@ -245,11 +246,12 @@ func (cm *ConfigManager) RegisterCallback(callback ConfigChangeCallback) {
 
 // watchLoop 监听配置文件变化
 func (cm *ConfigManager) watchLoop() {
-	defer func() {
+	// FIX: 使用 sync.Once 防止 watcher 被双重关闭
+	defer cm.watcherCloseOnce.Do(func() {
 		if cm.watcher != nil {
 			cm.watcher.Close()
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -299,9 +301,12 @@ func (cm *ConfigManager) Stop() {
 	close(cm.stopCh)
 	cm.running = false
 	
-	if cm.watcher != nil {
-		cm.watcher.Close()
-	}
+	// FIX: 使用 sync.Once 统一关闭，防止与 watchLoop defer 并发
+	cm.watcherCloseOnce.Do(func() {
+		if cm.watcher != nil {
+			cm.watcher.Close()
+		}
+	})
 	cm.logger("配置监听已停止")
 }
 

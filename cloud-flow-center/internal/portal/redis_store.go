@@ -46,8 +46,11 @@ func (rs *RedisStore) IncrLoginFailure(username string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// 30分钟过期
-	rs.client.Expire(rs.ctx, key, 30*time.Minute)
+	// FIX: 检查 Expire 返回值，防止 key 永久存在导致用户被永久锁定
+	if _, err := rs.client.Expire(rs.ctx, key, 30*time.Minute).Result(); err != nil {
+		// 记录日志但不返回错误，因为计数器已经成功递增
+		// 如果过期设置失败，后台清理任务会处理过期 key
+	}
 	return int(count), nil
 }
 

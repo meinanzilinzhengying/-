@@ -130,12 +130,13 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       
-      # 副本配置 - 高可用（生产环境建议使用 docker-compose-kafka-ha.yml）
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      # 副本配置 - 单节点模式（生产环境高可用建议使用 docker-compose-kafka-ha.yml）
+      # FIX: 单节点 Kafka 副本因子设为 1，与 broker 数量一致
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_NUM_PARTITIONS: 6
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       
       # 消费者组重平衡优化
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 3000
@@ -672,14 +673,14 @@ services:
 
   # VictoriaMetrics（指标存储）
   victoriametrics:
-    image: victoriametrics/victorial-metrics:latest
+    image: victoriametrics/victoria-metrics:latest
     container_name: cloudflow-victoriametrics
     restart: unless-stopped
     ports:
       - "8428:8428"  # HTTP
       - "2003:2003"  # Graphite
     command:
-      - "--storageDataPath=/var/lib/victorial-metrics-data"
+      - "--storageDataPath=/var/lib/victoria-metrics-data"
       - "--graphiteListenAddress=:2003"
       - "--httpListenAddress=:8428"
       - "--retentionPeriod=30d"

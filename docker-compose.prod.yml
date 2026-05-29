@@ -823,11 +823,11 @@ services:
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--config.file=/etc/prometheus/rules/alerts.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
+      # FIX: 移除重复的 --config.file，告警规则应通过 prometheus.yml 的 rule_files 字段加载
+      # - '--web.enable-admin-api'  # FIX: 生产环境禁用 admin API，防止安全风险
     restart: always
     networks:
       - cloudflow-network

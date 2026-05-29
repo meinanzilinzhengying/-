@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"cloud-flow-agent/pkg/logger"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -352,17 +353,15 @@ func (c *Collector) getPacketDropRate() (rate float64, total, dropped uint64) {
 	prevDropped := c.prevCollectDropped
 	c.mu.RUnlock()
 	
-	// 从Prometheus计数器获取当前值
+	// FIX: prometheus.Metric 是 interface，不能直接用 &prometheus.Metric{} 创建
+	// 改用 prometheus.NewDesc + prometheus.Metric 的正确方式获取 Counter 值
+	// 如果 counter 为 nil，直接使用上一次的累计值
 	var currentTotal, currentDropped float64
 	if collectTotal != nil {
-		dto := &prometheus.Metric{}
-		collectTotal.Write(dto)
-		currentTotal = dto.GetCounter().GetValue()
+		currentTotal = getCounterValue(collectTotal)
 	}
 	if collectDropped != nil {
-		dto := &prometheus.Metric{}
-		collectDropped.Write(dto)
-		currentDropped = dto.GetCounter().GetValue()
+		currentDropped = getCounterValue(collectDropped)
 	}
 	
 	total = uint64(currentTotal)
@@ -395,17 +394,13 @@ func (c *Collector) getReportSuccessRate() (rate float64, total, success uint64)
 	prevSuccess := c.prevSendSuccess
 	c.mu.RUnlock()
 	
-	// 从Prometheus计数器获取当前值
+	// FIX: 使用安全的 counter 值获取方式
 	var currentTotal, currentSuccess float64
 	if sendTotal != nil {
-		dto := &prometheus.Metric{}
-		sendTotal.Write(dto)
-		currentTotal = dto.GetCounter().GetValue()
+		currentTotal = getCounterValue(sendTotal)
 	}
 	if sendSuccess != nil {
-		dto := &prometheus.Metric{}
-		sendSuccess.Write(dto)
-		currentSuccess = dto.GetCounter().GetValue()
+		currentSuccess = getCounterValue(sendSuccess)
 	}
 	
 	total = uint64(currentTotal)
@@ -475,4 +470,18 @@ func (c *Collector) Status() string {
 	
 	return fmt.Sprintf("heartbeat=%d, cpu=%.1f%%, mem=%.1f%%, drop=%.1f%%, success=%.1f%%",
 		s.HeartbeatStatus, s.CPUPercent, s.MemoryPercent, s.PacketDropRate, s.ReportSuccessRate)
+}
+
+// getCounterValue 安全地从 prometheus.Counter 获取当前值。
+// prometheus.Metric 是 interface，不能直接用 &prometheus.Metric{} 创建空实例。
+// 改用 dto.Metric 结构体来接收 Write 的输出。
+func getCounterValue(counter prometheus.Counter) float64 {
+	var metric dto.Metric
+	if err := counter.Write(&metric); err != nil {
+		return 0
+	}
+	if metric.Counter == nil {
+		return 0
+	}
+	return metric.Counter.GetValue()
 }

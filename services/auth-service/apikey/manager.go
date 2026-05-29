@@ -7,6 +7,7 @@ package apikey
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -369,16 +370,10 @@ func (m *Manager) Close() error {
 // ============================================================================
 
 // generateRandomBytes 生成随机字节
+// FIX: 使用 crypto/rand 替代 time.Now() 生成密码学安全的随机数
 func generateRandomBytes(b []byte) error {
-	// 使用系统随机数生成器
-	for i := range b {
-		b[i] = byte(time.Now().UnixNano() >> uint(i*8) % 256)
-		if i > 0 {
-			b[i] ^= b[i-1]
-		}
-	}
-	// 简化实现，生产环境应使用 crypto/rand
-	return nil
+	_, err := rand.Read(b)
+	return err
 }
 
 // isValidPrefix 检查 API Key 前缀

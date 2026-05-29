@@ -1,8 +1,6 @@
-go 1.22
+go 1.24.0
 
 use (
-	./pkg
-	./proto
 	./services/alert-engine
 	./services/auth-service
 	./services/control-plane
@@ -11,4 +9,9 @@ use (
 	./services/shared/auth
 	./services/tenant-service
 	./services/topology-engine
+)
+
+replace (
+	cloud-flow/services/proto => ../../proto
+	cloud-flow/pkg => ../../../pkg
 )

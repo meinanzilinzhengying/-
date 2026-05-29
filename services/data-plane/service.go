@@ -35,6 +35,8 @@ import (
 	"cloud-flow/pkg/flow"
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/data-plane/sampling"
+	"cloud-flow/services/shared/auth"
+	"cloud-flow/services/shared/tenant"
 	"cloud-flow/services/shared/tlsutil"
 )
 
@@ -67,6 +69,7 @@ type Config struct {
 	// 其他服务
 	ControlPlaneAddr string
 	TopologyAddr     string
+	AuthAddr         string // P0-3 修复: 认证服务地址
 
 	// 采样配置
 	Sampling *sampling.SamplingConfig
@@ -97,6 +100,7 @@ func DefaultConfig() *Config {
 		ClickHouseDatabase:  "cloudflow",
 		VictoriaMetricsAddr: "http://victoriametrics:8428",
 		LokiAddr:            "http://loki:3100",
+		AuthAddr:            "auth-service:9003", // P0-3 修复: 认证服务地址
 		Sampling:            sampling.NewSamplingConfig(),
 		TLSEnabled:          false,
 		TLSInsecureSkip:     false,
@@ -159,6 +163,9 @@ type Service struct {
 
 	// P0-2 修复: TLS 凭证
 	grpcCreds credentials.TransportCredentials
+
+	// P0-3 修复: 认证中间件
+	auth *auth.Authenticator
 }
 
 // New 创建服务
@@ -239,6 +246,22 @@ func New(config *Config) (*Service, error) {
 	RegisterDataPlaneService(s.grpcServer, s)
 	healthpb.RegisterHealthServer(s.grpcServer, s.health)
 
+	// P0-3 修复: 初始化认证中间件
+	if config.AuthAddr != "" {
+		authMiddleware, err := auth.NewAuthenticator(auth.Config{
+			AuthAddr:     config.AuthAddr,
+			TLSEnabled:   config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			InsecureSkip: config.TLSInsecureSkip,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to init auth middleware: %w", err)
+		}
+		s.auth = authMiddleware
+	}
+
 	return s, nil
 }
 
@@ -273,7 +296,20 @@ func (s *Service) Start() error {
 	mux.HandleFunc("/api/ingest/metrics", s.ingestMetricsHandler)  // P0-06 新增: 接收指标
 	mux.HandleFunc("/api/ingest/logs", s.ingestLogsHandler)      // P0-06 新增: 接收日志
 
-	s.metricsServer = &http.Server{Addr: s.config.MetricsAddr, Handler: mux}
+	// P0-3 修复: 应用认证中间件
+	var handler http.Handler = mux
+	if s.auth != nil {
+		handler = s.auth.Middleware("/health", "/metrics")(handler)
+	}
+	handler = tenant.HTTPMiddleware(handler)
+
+	s.metricsServer = &http.Server{
+		Addr:         s.config.MetricsAddr,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 	go func() {
 		if err := s.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Metrics server error: %v\n", err)
@@ -331,6 +367,11 @@ func (s *Service) Stop() {
 	// 关闭 ClickHouse 连接
 	if s.clickHouseDB != nil {
 		s.clickHouseDB.Close()
+	}
+
+	// P0-3 修复: 清理认证中间件资源
+	if s.auth != nil {
+		s.auth.Close()
 	}
 }
 
@@ -849,6 +890,13 @@ func (s *Service) statsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) samplingConfigHandler(w http.ResponseWriter, r *http.Request) {
+	// P0-3 修复: 验证认证
+	tenantID := tenant.FromContext(r.Context())
+	if tenantID == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, s.config.Sampling)
@@ -877,6 +925,13 @@ func (s *Service) ingestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// P0-3 修复: 获取租户信息
+	tenantID := tenant.FromContext(r.Context())
+	if tenantID == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var metrics []map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -885,6 +940,8 @@ func (s *Service) ingestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	count := 0
 	for _, m := range metrics {
+		// P0-3 修复: 添加租户信息
+		m["tenant_id"] = tenantID
 		select {
 		case s.metricQueue <- m:
 			count++
@@ -910,6 +967,13 @@ func (s *Service) ingestLogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// P0-3 修复: 获取租户信息
+	tenantID := tenant.FromContext(r.Context())
+	if tenantID == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var logs []map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&logs); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -918,6 +982,8 @@ func (s *Service) ingestLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 	count := 0
 	for _, l := range logs {
+		// P0-3 修复: 添加租户信息
+		l["tenant_id"] = tenantID
 		select {
 		case s.logQueue <- l:
 			count++

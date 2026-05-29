@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +30,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	svcproto "cloud-flow/services/proto"
+	svcproto "cloud-flow/proto"
+	"cloud-flow/services/shared/auth"
+	"cloud-flow/services/shared/tenant"
 	"cloud-flow/services/shared/tlsutil"
 )
 
@@ -45,6 +48,9 @@ type Config struct {
 	TiDBUser     string
 	TiDBPassword string
 	TiDBDatabase string
+
+	// Auth Service 地址
+	AuthAddr string
 
 	DataPlaneAddr string
 	TenantAddr    string
@@ -69,6 +75,7 @@ func DefaultConfig() *Config {
 		GrpcAddr:      ":9009",
 		HttpAddr:      ":8009",
 		TiDBDatabase:  "cloudflow_alert",
+		AuthAddr:      "auth-service:9003",
 		EvalInterval:  15 * time.Second,
 		MaxRules:      10000,
 		TLSEnabled:    false,
@@ -91,6 +98,9 @@ type Service struct {
 
 	// P0-02 修复: TiDB 数据库连接
 	db *sql.DB
+
+	// P0-3 修复: 共享认证中间件
+	auth *auth.Authenticator
 
 	// gRPC/HTTP
 	grpcServer *grpc.Server
@@ -135,6 +145,22 @@ func New(config *Config) (*Service, error) {
 		if err != nil {
 			return nil, fmt.Errorf("TLS credentials init failed: %w", err)
 		}
+	}
+
+	// P0-3 修复: 使用共享认证中间件
+	if config.AuthAddr != "" {
+		authMiddleware, err := auth.NewAuthenticator(auth.Config{
+			AuthAddr:     config.AuthAddr,
+			TLSEnabled:   config.TLSEnabled,
+			CAFile:       config.TLSCAFile,
+			CertFile:     config.TLSCertFile,
+			KeyFile:      config.TLSKeyFile,
+			InsecureSkip: config.TLSInsecureSkip,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to init auth middleware: %w", err)
+		}
+		s.auth = authMiddleware
 	}
 
 	// P0-02 修复: 初始化 TiDB 连接
@@ -325,9 +351,20 @@ func (s *Service) Start() error {
 	mux.HandleFunc("/api/rules/update", s.updateRuleHTTPHandler)
 	mux.HandleFunc("/api/rules/delete", s.deleteRuleHTTPHandler)
 
+	var handler http.Handler = mux
+	// P0-3 修复: 应用共享认证中间件
+	if s.auth != nil {
+		handler = s.auth.Middleware("/healthz")(handler)
+	}
+	// 始终应用租户中间件（在认证后）
+	handler = tenant.HTTPMiddleware(handler)
+
 	s.httpServer = &http.Server{
-		Addr:    s.config.HttpAddr,
-		Handler: mux,
+		Addr:         s.config.HttpAddr,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 	go func() { s.httpServer.ListenAndServe() }()
 
@@ -374,6 +411,11 @@ func (s *Service) Stop() {
 
 	if s.db != nil {
 		s.db.Close()
+	}
+
+	// P0-3 修复: 清理认证中间件资源
+	if s.auth != nil {
+		s.auth.Close()
 	}
 }
 
@@ -1046,7 +1088,7 @@ func (s *Service) healthzHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) listAlertsHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		tenantID := r.URL.Query().Get("tenant_id")
+		tenantID := tenant.MustHaveTenant(r.Context())
 		status := r.URL.Query().Get("status")
 		resp, _ := s.ListAlerts(r.Context(), &svcproto.ListAlertsRequest{
 			TenantId: tenantID,
@@ -1059,25 +1101,91 @@ func (s *Service) listAlertsHTTPHandler(w http.ResponseWriter, r *http.Request) 
 
 func (s *Service) createAlertHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		w.WriteHeader(http.StatusOK)
+		tenantID := tenant.MustHaveTenant(r.Context())
+		var req struct {
+			RuleId      string            `json:"rule_id"`
+			ProjectId   string            `json:"project_id"`
+			Severity    string            `json:"severity"`
+			Title       string            `json:"title"`
+			Message     string            `json:"message"`
+			Annotations string            `json:"annotations"`
+			Labels      map[string]string `json:"labels"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		resp, err := s.CreateAlert(r.Context(), &svcproto.CreateAlertRequest{
+			RuleId:      req.RuleId,
+			TenantId:    tenantID,
+			ProjectId:   req.ProjectId,
+			Severity:    req.Severity,
+			Title:       req.Title,
+			Message:     req.Message,
+			Status:      "firing",
+			Annotations: req.Annotations,
+			Labels:      req.Labels,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
 func (s *Service) updateAlertHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		w.WriteHeader(http.StatusOK)
+		var req struct {
+			AlertId string `json:"alert_id"`
+			Status  string `json:"status"`
+			EndsAt  string `json:"ends_at"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		resp, err := s.UpdateAlert(r.Context(), &svcproto.UpdateAlertRequest{
+			AlertId: req.AlertId,
+			Status:  req.Status,
+			EndsAt:  req.EndsAt,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
 func (s *Service) resolveAlertHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		w.WriteHeader(http.StatusOK)
+		var req struct {
+			AlertId string `json:"alert_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		resp, err := s.UpdateAlert(r.Context(), &svcproto.UpdateAlertRequest{
+			AlertId: req.AlertId,
+			Status:  "resolved",
+			EndsAt:  time.Now().Format(time.RFC3339),
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
 func (s *Service) listRulesHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		tenantID := r.URL.Query().Get("tenant_id")
+		tenantID := tenant.MustHaveTenant(r.Context())
 		resp, _ := s.ListRules(r.Context(), &svcproto.ListAlertRulesRequest{TenantId: tenantID})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -1086,18 +1194,95 @@ func (s *Service) listRulesHTTPHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) createRuleHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		w.WriteHeader(http.StatusOK)
+		tenantID := tenant.MustHaveTenant(r.Context())
+		var req struct {
+			ProjectId      string `json:"project_id"`
+			Name          string `json:"name"`
+			DisplayName   string `json:"display_name"`
+			Description   string `json:"description"`
+			Severity      string `json:"severity"`
+			Expression    string `json:"expression"`
+			Enabled       bool   `json:"enabled"`
+			NotifyChannels string `json:"notify_channels"`
+			NotifyInterval int32  `json:"notify_interval"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		resp, err := s.CreateRule(r.Context(), &svcproto.CreateAlertRuleRequest{
+			TenantId:       tenantID,
+			ProjectId:      req.ProjectId,
+			Name:           req.Name,
+			DisplayName:    req.DisplayName,
+			Description:    req.Description,
+			Severity:       req.Severity,
+			Expression:     req.Expression,
+			Enabled:        req.Enabled,
+			NotifyChannels: req.NotifyChannels,
+			NotifyInterval: req.NotifyInterval,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
 func (s *Service) updateRuleHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		w.WriteHeader(http.StatusOK)
+		var req struct {
+			RuleId         string `json:"rule_id"`
+			DisplayName    string `json:"display_name"`
+			Description    string `json:"description"`
+			Severity       string `json:"severity"`
+			Expression     string `json:"expression"`
+			Enabled        bool   `json:"enabled"`
+			NotifyChannels string `json:"notify_channels"`
+			NotifyInterval int32  `json:"notify_interval"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		resp, err := s.UpdateRule(r.Context(), &svcproto.UpdateAlertRuleRequest{
+			RuleId:         req.RuleId,
+			DisplayName:    req.DisplayName,
+			Description:    req.Description,
+			Severity:       req.Severity,
+			Expression:     req.Expression,
+			Enabled:        req.Enabled,
+			NotifyChannels: req.NotifyChannels,
+			NotifyInterval: req.NotifyInterval,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
 func (s *Service) deleteRuleHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		w.WriteHeader(http.StatusOK)
+		var req struct {
+			RuleId string `json:"rule_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		resp, err := s.DeleteRule(r.Context(), &svcproto.DeleteAlertRuleRequest{
+			RuleId: req.RuleId,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }

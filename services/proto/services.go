@@ -406,31 +406,37 @@ type CorrelationQueryResponse struct {
 
 // AlertRule 告警规则
 type AlertRule struct {
-	Id          string `json:"id"`
-	Name        string `json:"name"`
-	TenantId    string `json:"tenant_id"`
-	Metric      string `json:"metric"`
-	Operator    string `json:"operator"`
-	Threshold   float64 `json:"threshold"`
-	Duration    int64  `json:"duration_s"`
-	Severity    string `json:"severity"`
-	Enabled     bool   `json:"enabled"`
-	Labels      map[string]string `json:"labels"`
+	RuleId         string `json:"rule_id"`
+	TenantId       string `json:"tenant_id"`
+	ProjectId      string `json:"project_id"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
+	Description    string `json:"description"`
+	Severity       string `json:"severity"`
+	Expression     string `json:"expression"`
+	Enabled        bool   `json:"enabled"`
+	NotifyChannels string `json:"notify_channels"`
+	NotifyInterval int32  `json:"notify_interval"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // Alert 告警
 type Alert struct {
-	Id          string            `json:"id"`
+	AlertId     string            `json:"alert_id"`
 	RuleId      string            `json:"rule_id"`
-	Name        string            `json:"name"`
 	TenantId    string            `json:"tenant_id"`
+	ProjectId   string            `json:"project_id"`
 	Severity    string            `json:"severity"`
+	Title       string            `json:"title"`
 	Message     string            `json:"message"`
+	Status      string            `json:"status"`
+	StartsAt    string            `json:"starts_at"`
+	EndsAt      string            `json:"ends_at"`
+	Annotations string            `json:"annotations"`
 	Labels      map[string]string `json:"labels"`
-	StartedAt   int64             `json:"started_at"`
-	FiredAt     int64             `json:"fired_at"`
-	ResolvedAt  int64             `json:"resolved_at"`
-	Status      string            `json:"status"` // firing/resolved
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
 }
 
 // EvaluateAlertsRequest 评估告警请求
@@ -442,6 +448,195 @@ type EvaluateAlertsRequest struct {
 // EvaluateAlertsResponse 评估告警响应
 type EvaluateAlertsResponse struct {
 	Alerts []*Alert `json:"alerts"`
+}
+
+// CreateAlertRuleRequest 创建告警规则请求
+type CreateAlertRuleRequest struct {
+	TenantId       string `json:"tenant_id"`
+	ProjectId      string `json:"project_id"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
+	Description    string `json:"description"`
+	Severity       string `json:"severity"`
+	Expression     string `json:"expression"`
+	Enabled        bool   `json:"enabled"`
+	NotifyChannels string `json:"notify_channels"`
+	NotifyInterval int32  `json:"notify_interval"`
+}
+
+// CreateAlertRuleResponse 创建告警规则响应
+type CreateAlertRuleResponse struct {
+	Success bool   `json:"success"`
+	RuleId  string `json:"rule_id"`
+	Message string `json:"message"`
+}
+
+// GetAlertRuleRequest 获取告警规则请求
+type GetAlertRuleRequest struct {
+	RuleId string `json:"rule_id"`
+}
+
+// GetAlertRuleResponse 获取告警规则响应
+type GetAlertRuleResponse struct {
+	Rule *AlertRule `json:"rule"`
+}
+
+// UpdateAlertRuleRequest 更新告警规则请求
+type UpdateAlertRuleRequest struct {
+	RuleId        string `json:"rule_id"`
+	DisplayName   string `json:"display_name"`
+	Description   string `json:"description"`
+	Severity      string `json:"severity"`
+	Expression    string `json:"expression"`
+	Enabled       bool   `json:"enabled"`
+	NotifyChannels string `json:"notify_channels"`
+	NotifyInterval int32  `json:"notify_interval"`
+}
+
+// UpdateAlertRuleResponse 更新告警规则响应
+type UpdateAlertRuleResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// DeleteAlertRuleRequest 删除告警规则请求
+type DeleteAlertRuleRequest struct {
+	RuleId string `json:"rule_id"`
+}
+
+// DeleteAlertRuleResponse 删除告警规则响应
+type DeleteAlertRuleResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// ListAlertRulesRequest 列出租户告警规则请求
+type ListAlertRulesRequest struct {
+	TenantId string `json:"tenant_id"`
+}
+
+// ListAlertRulesResponse 列出租户告警规则响应
+type ListAlertRulesResponse struct {
+	Rules []*AlertRule `json:"rules"`
+}
+
+// CreateAlertRequest 创建告警请求
+type CreateAlertRequest struct {
+	RuleId      string            `json:"rule_id"`
+	TenantId    string            `json:"tenant_id"`
+	ProjectId   string            `json:"project_id"`
+	Severity    string            `json:"severity"`
+	Title       string            `json:"title"`
+	Message     string            `json:"message"`
+	Status      string            `json:"status"`
+	Annotations string            `json:"annotations"`
+	Labels      map[string]string `json:"labels"`
+}
+
+// CreateAlertResponse 创建告警响应
+type CreateAlertResponse struct {
+	Success bool   `json:"success"`
+	AlertId string `json:"alert_id"`
+	Message string `json:"message"`
+}
+
+// GetAlertRequest 获取告警请求
+type GetAlertRequest struct {
+	AlertId string `json:"alert_id"`
+}
+
+// GetAlertResponse 获取告警响应
+type GetAlertResponse struct {
+	Alert *Alert `json:"alert"`
+}
+
+// UpdateAlertRequest 更新告警请求
+type UpdateAlertRequest struct {
+	AlertId string `json:"alert_id"`
+	Status  string `json:"status"`
+	EndsAt  string `json:"ends_at"`
+}
+
+// UpdateAlertResponse 更新告警响应
+type UpdateAlertResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// ListAlertsRequest 列出告警请求
+type ListAlertsRequest struct {
+	TenantId string `json:"tenant_id"`
+	Status   string `json:"status"`
+}
+
+// ListAlertsResponse 列出告警响应
+type ListAlertsResponse struct {
+	Alerts []*Alert `json:"alerts"`
+}
+
+// CreateNotificationRequest 创建通知请求
+type CreateNotificationRequest struct {
+	AlertId       string `json:"alert_id"`
+	RuleId        string `json:"rule_id"`
+	TenantId      string `json:"tenant_id"`
+	ChannelType   string `json:"channel_type"`
+	ChannelConfig string `json:"channel_config"`
+	Status        string `json:"status"`
+	Message       string `json:"message"`
+}
+
+// CreateNotificationResponse 创建通知响应
+type CreateNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// UpdateNotificationRequest 更新通知请求
+type UpdateNotificationRequest struct {
+	NotificationId string `json:"notification_id"`
+	Status          string `json:"status"`
+	ErrorMessage    string `json:"error_message"`
+	Attempts        int32  `json:"attempts"`
+	NextAttemptAt   string `json:"next_attempt_at"`
+}
+
+// UpdateNotificationResponse 更新通知响应
+type UpdateNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// ListNotificationsRequest 列出通知请求
+type ListNotificationsRequest struct {
+	AlertId string `json:"alert_id"`
+}
+
+// ListNotificationsResponse 列出通知响应
+type ListNotificationsResponse struct {
+	Notifications []*Notification `json:"notifications"`
+}
+
+// Notification 通知
+type Notification struct {
+	NotificationId string `json:"notification_id"`
+	AlertId       string `json:"alert_id"`
+	RuleId        string `json:"rule_id"`
+	TenantId      string `json:"tenant_id"`
+	ChannelType   string `json:"channel_type"`
+	Status        string `json:"status"`
+	Attempts      int32  `json:"attempts"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// EvaluateRulesRequest 评估规则请求
+type EvaluateRulesRequest struct {
+	TenantId string `json:"tenant_id"`
+}
+
+// EvaluateRulesResponse 评估规则响应
+type EvaluateRulesResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 }
 
 // ============================================================================
@@ -1070,12 +1265,22 @@ func topologyServiceGetSnapshotHandler(srv interface{}, ctx context.Context, dec
 type AlertServiceServer interface {
 	HealthCheck(ctx context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error)
 	// 规则管理
-	CreateRule(ctx context.Context, req *AlertRule) (*AlertRule, error)
-	GetRule(ctx context.Context, req *AlertRule) (*AlertRule, error)
-	ListRules(ctx context.Context, req *ListTenantsRequest) ([]*AlertRule, error)
-	DeleteRule(ctx context.Context, req *AlertRule) (*AlertRule, error)
-	// 告警查询
-	ListAlerts(ctx context.Context, req *ListTenantsRequest) ([]*Alert, error)
+	CreateRule(ctx context.Context, req *CreateAlertRuleRequest) (*CreateAlertRuleResponse, error)
+	GetRule(ctx context.Context, req *GetAlertRuleRequest) (*GetAlertRuleResponse, error)
+	ListRules(ctx context.Context, req *ListAlertRulesRequest) (*ListAlertRulesResponse, error)
+	UpdateRule(ctx context.Context, req *UpdateAlertRuleRequest) (*UpdateAlertRuleResponse, error)
+	DeleteRule(ctx context.Context, req *DeleteAlertRuleRequest) (*DeleteAlertRuleResponse, error)
+	// 告警管理
+	CreateAlert(ctx context.Context, req *CreateAlertRequest) (*CreateAlertResponse, error)
+	GetAlert(ctx context.Context, req *GetAlertRequest) (*GetAlertResponse, error)
+	UpdateAlert(ctx context.Context, req *UpdateAlertRequest) (*UpdateAlertResponse, error)
+	ListAlerts(ctx context.Context, req *ListAlertsRequest) (*ListAlertsResponse, error)
+	// 通知管理
+	CreateNotification(ctx context.Context, req *CreateNotificationRequest) (*CreateNotificationResponse, error)
+	UpdateNotification(ctx context.Context, req *UpdateNotificationRequest) (*UpdateNotificationResponse, error)
+	ListNotifications(ctx context.Context, req *ListNotificationsRequest) (*ListNotificationsResponse, error)
+	// 评估
+	EvaluateRules(ctx context.Context, req *EvaluateRulesRequest) (*EvaluateRulesResponse, error)
 	EvaluateAlerts(ctx context.Context, req *EvaluateAlertsRequest) (*EvaluateAlertsResponse, error)
 }
 

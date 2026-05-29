@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"strings"
 
+	"cloud-flow/services/shared/auth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -237,33 +238,40 @@ const (
 	httpHeaderAuth     = "Authorization"
 )
 
-// HTTPMiddleware 从 HTTP 请求头中提取租户信息并注入到 request context 中。
-// 支持两种来源（按优先级）：
-//  1. X-Tenant-Id 等 header 直接传递
-//  2. Authorization header（由上层 JWT 中间件解析后设置 X-Tenant-Id）
+// HTTPMiddleware 从认证上下文或 HTTP 请求头中提取租户信息并注入到 request context 中。
+// 优先从认证中间件注入的 AuthContext 获取（已验证的 JWT token 信息），其次从请求头获取。
+// 安全注意：tenant_id 必须来自经过验证的 JWT token，不应直接信任客户端提供的 X-Tenant-Id header。
 //
 // 若请求中不包含租户信息，中间件不会拒绝请求（由 RequireTenantID 强制）。
 func HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tc := &TenantContext{}
 
-		if v := r.Header.Get(httpHeaderTenantID); v != "" {
-			tc.TenantID = v
-		}
-		if v := r.Header.Get(httpHeaderUserID); v != "" {
-			tc.UserID = v
-		}
-		if v := r.Header.Get(httpHeaderRole); v != "" {
-			tc.Role = v
-		}
-		if v := r.Header.Get(httpHeaderProject); v != "" {
-			tc.ProjectID = v
-		}
-		if v := r.Header.Get(httpHeaderNS); v != "" {
-			tc.Namespaces = strings.Split(v, ",")
-		}
-		if v := r.Header.Get(httpHeaderAuth); v != "" {
-			tc.AuthMethod = "jwt"
+		if authCtx, ok := auth.FromContext(r.Context()); ok && authCtx != nil {
+			tc.TenantID = authCtx.TenantID
+			tc.UserID = authCtx.UserID
+			tc.Username = authCtx.Username
+			tc.Role = authCtx.Role
+			tc.AuthMethod = authCtx.AuthMethod
+		} else {
+			if v := r.Header.Get(httpHeaderTenantID); v != "" {
+				tc.TenantID = v
+			}
+			if v := r.Header.Get(httpHeaderUserID); v != "" {
+				tc.UserID = v
+			}
+			if v := r.Header.Get(httpHeaderRole); v != "" {
+				tc.Role = v
+			}
+			if v := r.Header.Get(httpHeaderProject); v != "" {
+				tc.ProjectID = v
+			}
+			if v := r.Header.Get(httpHeaderNS); v != "" {
+				tc.Namespaces = strings.Split(v, ",")
+			}
+			if v := r.Header.Get(httpHeaderAuth); v != "" {
+				tc.AuthMethod = "jwt"
+			}
 		}
 
 		ctx := NewContext(r.Context(), tc)

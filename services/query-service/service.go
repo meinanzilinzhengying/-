@@ -48,6 +48,8 @@ type Config struct {
 	TopologyAddr         string
 	AlertAddr            string
 	ClickHouseAddr       string
+	ClickHouseUser       string
+	ClickHousePassword   string
 	ClickHouseDatabase   string
 	VictoriaMetricsAddr  string
 	LokiAddr             string
@@ -64,6 +66,8 @@ func DefaultConfig() *Config {
 		GrpcAddr:            ":9007",
 		HttpAddr:            ":8007",
 		ClickHouseAddr:      "clickhouse:9000",
+		ClickHouseUser:      "default",
+		ClickHousePassword:  "",
 		ClickHouseDatabase:  "cloudflow",
 		VictoriaMetricsAddr: "http://victoriametrics:8428",
 		LokiAddr:            "http://loki:3100",
@@ -158,7 +162,19 @@ func (s *Service) initClickHouse() error {
 		return nil
 	}
 
-	dsn := fmt.Sprintf("clickhouse://%s/%s", s.config.ClickHouseAddr, s.config.ClickHouseDatabase)
+	// 构建 DSN，支持用户名和密码认证
+	var dsn string
+	if s.config.ClickHouseUser != "" && s.config.ClickHousePassword != "" {
+		dsn = fmt.Sprintf("clickhouse://%s:%s@%s/%s", 
+			s.config.ClickHouseUser, s.config.ClickHousePassword, 
+			s.config.ClickHouseAddr, s.config.ClickHouseDatabase)
+	} else if s.config.ClickHouseUser != "" {
+		dsn = fmt.Sprintf("clickhouse://%s@%s/%s", 
+			s.config.ClickHouseUser, s.config.ClickHouseAddr, s.config.ClickHouseDatabase)
+	} else {
+		dsn = fmt.Sprintf("clickhouse://%s/%s", s.config.ClickHouseAddr, s.config.ClickHouseDatabase)
+	}
+
 	db, err := sql.Open("clickhouse", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open ClickHouse: %w", err)

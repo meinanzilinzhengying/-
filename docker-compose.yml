@@ -101,7 +101,7 @@ services:
       TZ: Asia/Shanghai
       CLICKHOUSE_DB: cloudflow
       CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
-      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-ClickHouse2024Secure}"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
     healthcheck:
@@ -314,6 +314,8 @@ services:
       QUEUE_SIZE: 100000
       WORKER_COUNT: 4
       CLICKHOUSE_ADDR: "clickhouse:9000"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-ClickHouse2024Secure}"
       CLICKHOUSE_DATABASE: cloudflow
       VICTORIAMETRICS_ADDR: "http://victoriametrics:8428"
       LOKI_ADDR: "http://loki:3100"
@@ -348,6 +350,8 @@ services:
       GRPC_ADDR: ":9007"
       HTTP_ADDR: ":8007"
       CLICKHOUSE_ADDR: "clickhouse:9000"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-ClickHouse2024Secure}"
       CLICKHOUSE_DATABASE: cloudflow
       CACHE_ENABLED: true
       CACHE_TTL: "300s"
@@ -384,6 +388,8 @@ services:
       GRPC_ADDR: ":9008"
       HTTP_ADDR: ":8008"
       CLICKHOUSE_ADDR: "clickhouse:9000"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-ClickHouse2024Secure}"
       CLICKHOUSE_DATABASE: cloudflow
       REDIS_ADDR: "redis:6379"
       DATA_PLANE_ADDR: "data-plane:9002"
@@ -424,6 +430,8 @@ services:
       TIDB_DATABASE: cloudflow_alert
       REDIS_ADDR: "redis:6379"
       CLICKHOUSE_ADDR: "clickhouse:9000"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-ClickHouse2024Secure}"
       CLICKHOUSE_DATABASE: cloudflow
       AUTH_ADDR: "auth-service:9006"
       CONTROL_PLANE_ADDR: "control-plane:9001"

@@ -56,6 +56,8 @@ type Config struct {
 
 	// 存储后端
 	ClickHouseAddr      string
+	ClickHouseUser      string
+	ClickHousePassword  string
 	ClickHouseDatabase string
 	VictoriaMetricsAddr string
 	LokiAddr            string
@@ -80,6 +82,8 @@ func DefaultConfig() *Config {
 		QueueSize:           100000,
 		WorkerCount:         4,
 		ClickHouseAddr:      "clickhouse:9000",
+		ClickHouseUser:      "default",
+		ClickHousePassword:  "",
 		ClickHouseDatabase:  "cloudflow",
 		VictoriaMetricsAddr: "http://victoriametrics:8428",
 		LokiAddr:            "http://loki:3100",
@@ -303,7 +307,19 @@ func (s *Service) initClickHouse() error {
 		database = "cloudflow"
 	}
 
-	dsn := fmt.Sprintf("clickhouse://%s/%s", s.config.ClickHouseAddr, database)
+	// 构建 DSN，支持用户名和密码认证
+	var dsn string
+	if s.config.ClickHouseUser != "" && s.config.ClickHousePassword != "" {
+		dsn = fmt.Sprintf("clickhouse://%s:%s@%s/%s", 
+			s.config.ClickHouseUser, s.config.ClickHousePassword, 
+			s.config.ClickHouseAddr, database)
+	} else if s.config.ClickHouseUser != "" {
+		dsn = fmt.Sprintf("clickhouse://%s@%s/%s", 
+			s.config.ClickHouseUser, s.config.ClickHouseAddr, database)
+	} else {
+		dsn = fmt.Sprintf("clickhouse://%s/%s", s.config.ClickHouseAddr, database)
+	}
+
 	db, err := sql.Open("clickhouse", dsn)
 	if err != nil {
 		return err

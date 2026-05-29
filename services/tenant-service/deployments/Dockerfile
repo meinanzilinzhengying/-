@@ -19,18 +19,7 @@ COPY services/proto/ /build/services/proto/
 COPY services/shared/ /build/services/shared/
 COPY services/tenant-service/ /build/services/tenant-service/
 
-RUN echo 'module cloud-flow/services/tenant-service' > go.mod && \
-    echo 'go 1.22' >> go.mod && \
-    echo '' >> go.mod && \
-    echo 'require (' >> go.mod && \
-    echo '	cloud-flow/pkg v0.0.0' >> go.mod && \
-    echo '	cloud-flow/services/proto v0.0.0' >> go.mod && \
-    echo '	github.com/go-sql-driver/mysql v1.8.1' >> go.mod && \
-    echo '	google.golang.org/grpc v1.80.0' >> go.mod && \
-    echo ')' >> go.mod && \
-    echo '' >> go.mod && \
-    echo 'replace cloud-flow/pkg => ./pkg' >> go.mod && \
-    echo 'replace cloud-flow/services/proto => ./services/proto' >> go.mod
+RUN go mod download
 
 WORKDIR /build/services/tenant-service
 

@@ -19,18 +19,7 @@ COPY services/proto/ /build/services/proto/
 COPY services/shared/ /build/services/shared/
 COPY services/control-plane/ /build/services/control-plane/
 
-RUN echo 'module cloud-flow/services/control-plane' > go.mod && \
-    echo 'go 1.22' >> go.mod && \
-    echo '' >> go.mod && \
-    echo 'require (' >> go.mod && \
-    echo '	cloud-flow/pkg v0.0.0' >> go.mod && \
-    echo '	cloud-flow/services/proto v0.0.0' >> go.mod && \
-    echo '	go.etcd.io/etcd/client/v3 v3.5.13' >> go.mod && \
-    echo '	google.golang.org/grpc v1.80.0' >> go.mod && \
-    echo ')' >> go.mod && \
-    echo '' >> go.mod && \
-    echo 'replace cloud-flow/pkg => ./pkg' >> go.mod && \
-    echo 'replace cloud-flow/services/proto => ./services/proto' >> go.mod
+RUN go mod download
 
 WORKDIR /build/services/control-plane
 

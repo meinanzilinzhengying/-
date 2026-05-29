@@ -1,0 +1,26 @@
+{
+  "MTLSEnabled": true,
+  "CAFile": "/certs/ca.crt",
+  "CertFile": "/certs/auth-service.crt",
+  "KeyFile": "/certs/auth-service.key",
+  "ClientAuth": true,
+  "InsecureSkip": false,
+  "JWTEnabled": true,
+  "JWTSecret": "your-secure-jwt-secret-here-change-in-production",
+  "JWTIssuer": "cloudflow",
+  "JWTExpiry": 86400000000000,
+  "WhitelistEnabled": true,
+  "Whitelist": [
+    "auth-service",
+    "data-plane",
+    "api-gateway",
+    "clickhouse-service"
+  ],
+  "IPWhitelist": [
+    "127.0.0.1",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16"
+  ],
+  "APIAuthEnabled": true
+}

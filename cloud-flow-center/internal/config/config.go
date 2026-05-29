@@ -93,10 +93,39 @@ type KafkaConsumerConfig struct {
 	HeartbeatInterval int    // 心跳间隔（秒）
 }
 
+type RateLimitLevelConfig struct {
+	BucketSize    int           // 令牌桶容量
+	RefillRate    int           // 每秒填充令牌数
+	CleanupInterval time.Duration // 清理间隔
+}
+
 type RateLimitConfig struct {
-	Enabled    bool // 是否启用限流
-	BucketSize int  // 令牌桶容量
-	RefillRate int  // 每秒填充令牌数
+	Enabled      bool                         // 是否启用限流
+	Login        RateLimitLevelConfig         // 登录接口限流配置
+	Query        RateLimitLevelConfig         // 查询接口限流配置
+	API          RateLimitLevelConfig         // 普通 API 接口限流配置
+}
+
+// DefaultRateLimitConfig 默认限流配置
+func DefaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		Enabled: true,
+		Login: RateLimitLevelConfig{
+			BucketSize:    5,      // 登录接口更严格，桶容量小
+			RefillRate:    1,      // 每秒 1 个令牌
+			CleanupInterval: 10 * time.Minute,
+		},
+		Query: RateLimitLevelConfig{
+			BucketSize:    200,    // 查询接口容量大
+			RefillRate:    100,    // 每秒 100 个令牌
+			CleanupInterval: 10 * time.Minute,
+		},
+		API: RateLimitLevelConfig{
+			BucketSize:    100,    // 普通 API 接口
+			RefillRate:    50,     // 每秒 50 个令牌
+			CleanupInterval: 10 * time.Minute,
+		},
+	}
 }
 
 type Config struct {
@@ -176,8 +205,15 @@ func Load() (*Config, error) {
 	viper.SetDefault("center.mixserver.auth_user", "")
 	viper.SetDefault("center.mixserver.auth_pass", "")
 	viper.SetDefault("center.rate_limit.enabled", true)
-	viper.SetDefault("center.rate_limit.bucket_size", 100)
-	viper.SetDefault("center.rate_limit.refill_rate", 50)
+	viper.SetDefault("center.rate_limit.login.bucket_size", 5)
+	viper.SetDefault("center.rate_limit.login.refill_rate", 1)
+	viper.SetDefault("center.rate_limit.login.cleanup_interval", "10m")
+	viper.SetDefault("center.rate_limit.query.bucket_size", 200)
+	viper.SetDefault("center.rate_limit.query.refill_rate", 100)
+	viper.SetDefault("center.rate_limit.query.cleanup_interval", "10m")
+	viper.SetDefault("center.rate_limit.api.bucket_size", 100)
+	viper.SetDefault("center.rate_limit.api.refill_rate", 50)
+	viper.SetDefault("center.rate_limit.api.cleanup_interval", "10m")
 	viper.SetDefault("center.log.level", "info")
 	viper.SetDefault("center.log.format", "json")
 	viper.SetDefault("center.log.output", "stdout")
@@ -278,9 +314,22 @@ func Load() (*Config, error) {
 			AuthPass: viper.GetString("center.mixserver.auth_pass"),
 		},
 		RateLimit: RateLimitConfig{
-			Enabled:    viper.GetBool("center.rate_limit.enabled"),
-			BucketSize: viper.GetInt("center.rate_limit.bucket_size"),
-			RefillRate: viper.GetInt("center.rate_limit.refill_rate"),
+			Enabled: viper.GetBool("center.rate_limit.enabled"),
+			Login: RateLimitLevelConfig{
+				BucketSize:      viper.GetInt("center.rate_limit.login.bucket_size"),
+				RefillRate:      viper.GetInt("center.rate_limit.login.refill_rate"),
+				CleanupInterval: getDuration(viper.GetString("center.rate_limit.login.cleanup_interval"), 10*time.Minute),
+			},
+			Query: RateLimitLevelConfig{
+				BucketSize:      viper.GetInt("center.rate_limit.query.bucket_size"),
+				RefillRate:      viper.GetInt("center.rate_limit.query.refill_rate"),
+				CleanupInterval: getDuration(viper.GetString("center.rate_limit.query.cleanup_interval"), 10*time.Minute),
+			},
+			API: RateLimitLevelConfig{
+				BucketSize:      viper.GetInt("center.rate_limit.api.bucket_size"),
+				RefillRate:      viper.GetInt("center.rate_limit.api.refill_rate"),
+				CleanupInterval: getDuration(viper.GetString("center.rate_limit.api.cleanup_interval"), 10*time.Minute),
+			},
 		},
 		Log: LogConfig{
 			Level:      viper.GetString("center.log.level"),
@@ -314,6 +363,18 @@ func Load() (*Config, error) {
 			RetDays: viper.GetInt("center.storage.retention_days"),
 		},
 	}, nil
+}
+
+// getDuration 解析时间字符串，失败时返回默认值
+func getDuration(s string, defaultDuration time.Duration) time.Duration {
+	if s == "" {
+		return defaultDuration
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultDuration
+	}
+	return d
 }
 
 func (c *Config) Summary() string {

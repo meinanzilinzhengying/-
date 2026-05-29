@@ -35,23 +35,31 @@ var errTooLarge = errors.New("http: request entity too large")
 
 // Server Portal HTTP 服务
 type Server struct {
-	store          storage.StorageEngine
-	logger         *logger.Logger
-	jwtSecret      string
-	jwtManager     *auth.JWTManager
-	auditLogger    *audit.Logger
-	alertManager   *alerting.AlertManager
-	rateLimiter    *ratelimit.TokenBucket
-	csrfTokens     map[string]time.Time
-	csrfMutex      sync.Mutex
-	allowedOrigins []string
-	loginFailures  map[string]loginFailureInfo
+	store             storage.StorageEngine
+	logger            *logger.Logger
+	jwtSecret         string
+	jwtManager        *auth.JWTManager
+	auditLogger       *audit.Logger
+	alertManager      *alerting.AlertManager
+	rateLimiter       *ratelimit.MultiLevelRateLimiter // 多级限流器
+	rateLimitEnabled  bool
+	csrfTokens        map[string]time.Time
+	csrfMutex         sync.Mutex
+	allowedOrigins    []string
+	loginFailures     map[string]loginFailureInfo
 	loginFailuresMutex sync.Mutex
-	secureCookie   bool // 是否使用安全Cookie（HTTPS环境）
-	tokenDuration  time.Duration // JWT 令牌有效期
-	redisStore     *RedisStore // Redis 外部存储（可选，nil 时使用内存存储）
-	centerConfig   *config.Config // 中心服务配置（用于系统配置查询）
+	secureCookie      bool // 是否使用安全Cookie（HTTPS环境）
+	tokenDuration     time.Duration // JWT 令牌有效期
+	redisStore        *RedisStore // Redis 外部存储（可选，nil 时使用内存存储）
+	centerConfig      *config.Config // 中心服务配置（用于系统配置查询）
 }
+
+// RateLimitLevel 限流级别
+const (
+	RateLimitLevelLogin = "login"
+	RateLimitLevelQuery = "query"
+	RateLimitLevelAPI   = "api"
+)
 
 type loginFailureInfo struct {
 	count int
@@ -61,14 +69,20 @@ type loginFailureInfo struct {
 // NewServer 创建 Portal 服务
 func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit.Logger, alertManager *alerting.AlertManager, log *logger.Logger, secureCookie bool, rateLimitCfg config.RateLimitConfig, tokenDuration time.Duration, redisAddr string, centerCfg *config.Config) *Server {
 	jwtManager := auth.NewJWTManager(jwtSecret)
-	// 初始化速率限制器：使用配置中的参数
-	var rateLimiter *ratelimit.TokenBucket
+	
+	// 初始化多级速率限制器
+	rateLimiter := ratelimit.NewMultiLevelRateLimiter()
 	if rateLimitCfg.Enabled {
-		rateLimiter = ratelimit.NewTokenBucket(rateLimitCfg.BucketSize, rateLimitCfg.RefillRate)
-	} else {
-		// 未启用限流时，使用一个超大桶容量，相当于不限流
-		rateLimiter = ratelimit.NewTokenBucket(1000000, 1000000)
+		rateLimiter.RegisterLevel(RateLimitLevelLogin, rateLimitCfg.Login.BucketSize, rateLimitCfg.Login.RefillRate, rateLimitCfg.Login.CleanupInterval)
+		rateLimiter.RegisterLevel(RateLimitLevelQuery, rateLimitCfg.Query.BucketSize, rateLimitCfg.Query.RefillRate, rateLimitCfg.Query.CleanupInterval)
+		rateLimiter.RegisterLevel(RateLimitLevelAPI, rateLimitCfg.API.BucketSize, rateLimitCfg.API.RefillRate, rateLimitCfg.API.CleanupInterval)
+		log.Infof("速率限制已启用: Login(bucket=%d, refill=%d), Query(bucket=%d, refill=%d), API(bucket=%d, refill=%d)",
+			rateLimitCfg.Login.BucketSize, rateLimitCfg.Login.RefillRate,
+			rateLimitCfg.Query.BucketSize, rateLimitCfg.Query.RefillRate,
+			rateLimitCfg.API.BucketSize, rateLimitCfg.API.RefillRate,
+		)
 	}
+	
 	// 初始化 CSRF 令牌映射
 	csrfTokens := make(map[string]time.Time)
 	// 初始化登录失败计数器
@@ -98,20 +112,21 @@ func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit
 
 	log.Infof("CSRF Cookie Secure 属性设置为: %v", secureCookie)
 	return &Server{
-		store:          store,
-		jwtSecret:      jwtSecret,
-		jwtManager:     jwtManager,
-		auditLogger:    auditLogger,
-		alertManager:   alertManager,
-		logger:         log,
-		rateLimiter:    rateLimiter,
-		csrfTokens:     csrfTokens,
-		allowedOrigins: allowedOrigins,
-		loginFailures:  loginFailures,
-		secureCookie:   secureCookie,
-		tokenDuration:  tokenDuration,
-		redisStore:     redisStore,
-		centerConfig:   centerCfg,
+		store:           store,
+		jwtSecret:       jwtSecret,
+		jwtManager:      jwtManager,
+		auditLogger:     auditLogger,
+		alertManager:    alertManager,
+		logger:          log,
+		rateLimiter:     rateLimiter,
+		rateLimitEnabled: rateLimitCfg.Enabled,
+		csrfTokens:      csrfTokens,
+		allowedOrigins:  allowedOrigins,
+		loginFailures:   loginFailures,
+		secureCookie:    secureCookie,
+		tokenDuration:   tokenDuration,
+		redisStore:      redisStore,
+		centerConfig:    centerCfg,
 	}
 }
 
@@ -126,16 +141,58 @@ func (s *Server) maxBytesMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimitMiddleware 速率限制中间件
+// getClientIP 获取客户端真实 IP
+func (s *Server) getClientIP(r *http.Request) string {
+	// 检查 X-Forwarded-For 头部（处理反向代理的情况）
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// X-Forwarded-For 可能包含多个 IP，取第一个
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	
+	// 检查 X-Real-IP 头部
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	
+	// 从 RemoteAddr 获取
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// rateLimitMiddleware 速率限制中间件（通用 API 接口）
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return s.rateLimitMiddlewareWithLevel(next, RateLimitLevelAPI)
+}
+
+// rateLimitMiddlewareWithLevel 速率限制中间件（指定级别）
+func (s *Server) rateLimitMiddlewareWithLevel(next http.HandlerFunc, level string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 检查速率限制
-		if !s.rateLimiter.Allow() {
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-			return
+		if s.rateLimitEnabled {
+			ip := s.getClientIP(r)
+			if !s.rateLimiter.Allow(level, ip) {
+				s.logger.Warnf("Rate limit exceeded for %s: IP=%s, Level=%s", r.URL.Path, ip, level)
+				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				return
+			}
 		}
 		next(w, r)
 	}
+}
+
+// loginRateLimitMiddleware 登录接口专用速率限制中间件
+func (s *Server) loginRateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return s.rateLimitMiddlewareWithLevel(next, RateLimitLevelLogin)
+}
+
+// queryRateLimitMiddleware 查询接口专用速率限制中间件
+func (s *Server) queryRateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return s.rateLimitMiddlewareWithLevel(next, RateLimitLevelQuery)
 }
 
 // generateCSRFToken 生成 CSRF 令牌

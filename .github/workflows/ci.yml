@@ -308,6 +308,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Job 7: P1-15 修复: 依赖漏洞扫描 (SCA)
+  # P1-17 修复: 扩展到所有微服务
   # ---------------------------------------------------------------------------
   dependency-scan:
     name: Dependency Scan
@@ -318,6 +319,13 @@ jobs:
           - cloud-flow-center
           - cloud-flow-agent
           - cloud-flow-edge
+          - services/auth-service
+          - services/control-plane
+          - services/data-plane
+          - services/query-service
+          - services/tenant-service
+          - services/topology-engine
+          - services/alert-engine
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

@@ -2,11 +2,13 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
 
@@ -143,6 +145,182 @@ type Config struct {
 	Alerting       AlertingConfig
 	Storage        StorageConfig
 	KafkaConsumer  KafkaConsumerConfig // P0: Kafka 消费者配置
+}
+
+// ConfigChangeCallback 配置变更回调函数类型
+type ConfigChangeCallback func(oldConfig, newConfig *Config)
+
+// ConfigManager 配置管理器，支持热加载
+type ConfigManager struct {
+	mu           sync.RWMutex
+	config       *Config
+	watcher      *fsnotify.Watcher
+	callbacks    []ConfigChangeCallback
+	stopCh       chan struct{}
+	running      bool
+	logger       func(format string, args ...interface{})
+}
+
+// NewConfigManager 创建配置管理器
+func NewConfigManager(logger func(format string, args ...interface{})) *ConfigManager {
+	return &ConfigManager{
+		callbacks: make([]ConfigChangeCallback, 0),
+		stopCh:    make(chan struct{}),
+		logger:    logger,
+	}
+}
+
+// LoadAndWatch 加载配置并开始监听配置文件变化
+func (cm *ConfigManager) LoadAndWatch() error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// 先加载配置
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	cm.config = cfg
+
+	// 创建文件监听器
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("创建配置监听器失败: %w", err)
+	}
+	cm.watcher = watcher
+
+	// 监听配置目录
+	configPaths := []string{"./configs", "."}
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			if err := watcher.Add(path); err != nil {
+				cm.logger("添加配置路径监听失败 %s: %v", path, err)
+			} else {
+				cm.logger("配置路径监听已添加: %s", path)
+			}
+		}
+	}
+
+	cm.running = true
+
+	// 启动监听协程
+	go cm.watchLoop()
+
+	return nil
+}
+
+// GetConfig 获取当前配置（线程安全）
+func (cm *ConfigManager) GetConfig() *Config {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.config
+}
+
+// Reload 手动重新加载配置
+func (cm *ConfigManager) Reload() error {
+	cm.mu.Lock()
+	oldConfig := cm.config
+	
+	newConfig, err := Load()
+	if err != nil {
+		cm.mu.Unlock()
+		return err
+	}
+	
+	cm.config = newConfig
+	cm.mu.Unlock()
+
+	cm.notifyCallbacks(oldConfig, newConfig)
+	cm.logger("配置已手动重新加载")
+	return nil
+}
+
+// RegisterCallback 注册配置变更回调
+func (cm *ConfigManager) RegisterCallback(callback ConfigChangeCallback) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.callbacks = append(cm.callbacks, callback)
+}
+
+// watchLoop 监听配置文件变化
+func (cm *ConfigManager) watchLoop() {
+	defer func() {
+		if cm.watcher != nil {
+			cm.watcher.Close()
+		}
+	}()
+
+	for {
+		select {
+		case event, ok := <-cm.watcher.Events:
+			if !ok {
+				return
+			}
+			
+			// 只处理 config.yaml 文件的变化
+			if strings.HasSuffix(event.Name, "config.yaml") || strings.HasSuffix(event.Name, "config.yml") {
+				cm.logger("检测到配置文件变化: %s, 事件: %s", event.Name, event.Op)
+				
+				// 防抖处理，避免短时间内多次触发
+				debounceTimer := time.NewTimer(500 * time.Millisecond)
+				select {
+				case <-debounceTimer.C:
+					if err := cm.Reload(); err != nil {
+						cm.logger("重新加载配置失败: %v", err)
+					}
+				case <-cm.stopCh:
+					debounceTimer.Stop()
+					return
+				}
+			}
+			
+		case err, ok := <-cm.watcher.Errors:
+			if !ok {
+				return
+			}
+			cm.logger("配置监听错误: %v", err)
+			
+		case <-cm.stopCh:
+			return
+		}
+	}
+}
+
+// Stop 停止配置监听
+func (cm *ConfigManager) Stop() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	
+	if !cm.running {
+		return
+	}
+	
+	close(cm.stopCh)
+	cm.running = false
+	
+	if cm.watcher != nil {
+		cm.watcher.Close()
+	}
+	cm.logger("配置监听已停止")
+}
+
+// notifyCallbacks 通知所有注册的回调函数
+func (cm *ConfigManager) notifyCallbacks(oldConfig, newConfig *Config) {
+	cm.mu.RLock()
+	callbacks := make([]ConfigChangeCallback, len(cm.callbacks))
+	copy(callbacks, cm.callbacks)
+	cm.mu.RUnlock()
+	
+	for _, callback := range callbacks {
+		func(cb ConfigChangeCallback) {
+			defer func() {
+				if r := recover(); r != nil {
+					cm.logger("配置变更回调 panic: %v", r)
+				}
+			}()
+			cb(oldConfig, newConfig)
+		}(callback)
+	}
 }
 
 // envVarRegex 匹配 ${VAR:-default} 格式的正则表达式（包级别编译，避免每次调用时重复编译）

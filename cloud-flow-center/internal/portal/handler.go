@@ -36,24 +36,25 @@ var errTooLarge = errors.New("http: request entity too large")
 
 // Server Portal HTTP 服务
 type Server struct {
-	store             storage.StorageEngine
-	logger            *logger.Logger
-	jwtSecret         string
-	jwtManager        *auth.JWTManager
-	auditLogger       *audit.Logger
-	alertManager      *alerting.AlertManager
-	rateLimiter       *ratelimit.MultiLevelRateLimiter // 多级限流器
-	rateLimitEnabled  bool
+	store              storage.StorageEngine
+	logger             *logger.Logger
+	jwtSecret          string
+	jwtManager         *auth.JWTManager
+	auditLogger        *audit.Logger
+	alertManager       *alerting.AlertManager
+	rateLimiter        *ratelimit.MultiLevelRateLimiter // 多级限流器
+	rateLimitEnabled   bool
 	securityMiddleware *security.SecurityMiddleware
-	csrfTokens        map[string]time.Time
-	csrfMutex         sync.Mutex
-	allowedOrigins    []string
-	loginFailures     map[string]loginFailureInfo
+	configMgr          *config.ConfigManager // 配置管理器
+	csrfTokens         map[string]time.Time
+	csrfMutex          sync.Mutex
+	allowedOrigins     []string
+	loginFailures      map[string]loginFailureInfo
 	loginFailuresMutex sync.Mutex
-	secureCookie      bool // 是否使用安全Cookie（HTTPS环境）
-	tokenDuration     time.Duration // JWT 令牌有效期
-	redisStore        *RedisStore // Redis 外部存储（可选，nil 时使用内存存储）
-	centerConfig      *config.Config // 中心服务配置（用于系统配置查询）
+	secureCookie       bool // 是否使用安全Cookie（HTTPS环境）
+	tokenDuration      time.Duration // JWT 令牌有效期
+	redisStore         *RedisStore // Redis 外部存储（可选，nil 时使用内存存储）
+	centerConfig       *config.Config // 中心服务配置（用于系统配置查询）
 }
 
 // RateLimitLevel 限流级别
@@ -69,7 +70,7 @@ type loginFailureInfo struct {
 }
 
 // NewServer 创建 Portal 服务
-func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit.Logger, alertManager *alerting.AlertManager, log *logger.Logger, secureCookie bool, rateLimitCfg config.RateLimitConfig, tokenDuration time.Duration, redisAddr string, centerCfg *config.Config) *Server {
+func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit.Logger, alertManager *alerting.AlertManager, log *logger.Logger, secureCookie bool, rateLimitCfg config.RateLimitConfig, tokenDuration time.Duration, redisAddr string, centerCfg *config.Config, configMgr *config.ConfigManager) *Server {
 	jwtManager := auth.NewJWTManager(jwtSecret)
 	
 	// 初始化多级速率限制器
@@ -131,6 +132,7 @@ func NewServer(store storage.StorageEngine, jwtSecret string, auditLogger *audit
 		rateLimiter:        rateLimiter,
 		rateLimitEnabled:   rateLimitCfg.Enabled,
 		securityMiddleware:  securityMiddleware,
+		configMgr:          configMgr,
 		csrfTokens:         csrfTokens,
 		allowedOrigins:     allowedOrigins,
 		loginFailures:     loginFailures,
@@ -675,6 +677,11 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})))
+	
+	// 配置管理
+	mux.HandleFunc("/api/system/config/reload", s.rateLimitMiddleware(s.authMiddleware(s.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		s.handleConfigReload(w, r)
+	}))))
 	
 	// 系统管理 - Data Nodes CRUD
 	mux.HandleFunc("/api/system/data-nodes", s.rateLimitMiddleware(s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -2119,6 +2126,48 @@ func (s *Server) writeJSONWithStatus(w http.ResponseWriter, r *http.Request, sta
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		s.logger.Errorf("JSON Encode 失败: %v", err)
 	}
+}
+
+// requireAdmin 中间件：仅允许管理员访问
+func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		role, ok := r.Context().Value(roleContextKey).(string)
+		if !ok || role != "admin" {
+			s.logger.Warnf("非管理员用户尝试访问受限接口: %s", r.URL.Path)
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// handleConfigReload 处理配置重新加载请求
+func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		s.writeJSONWithStatus(w, r, http.StatusInternalServerError, map[string]interface{}{"error": "配置管理器未初始化"})
+		return
+	}
+
+	// 只允许 POST 方法
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.logger.Infof("用户手动触发配置重新加载")
+	err := s.configMgr.Reload()
+	if err != nil {
+		s.logger.Errorf("配置重新加载失败: %v", err)
+		s.writeJSONWithStatus(w, r, http.StatusInternalServerError, map[string]interface{}{"error": "配置重新加载失败", "message": err.Error()})
+		return
+	}
+
+	newConfig := s.configMgr.GetConfig()
+	s.writeJSON(w, r, map[string]interface{}{
+		"success": true,
+		"message": "配置已重新加载",
+		"config":  newConfig.Summary(),
+	})
 }
 
 // ==================== 新增 API Handler ====================

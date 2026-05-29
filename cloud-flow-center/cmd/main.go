@@ -30,11 +30,18 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
+	// 初始化配置管理器
+	configMgr := config.NewConfigManager(func(format string, args ...interface{}) {
+		log.Printf(format, args...)
+	})
+	
+	if err := configMgr.LoadAndWatch(); err != nil {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
+	defer configMgr.Stop()
+	
+	cfg := configMgr.GetConfig()
 
 	log := logger.New(logger.Config{
 		Level:      cfg.Log.Level,
@@ -48,6 +55,18 @@ func main() {
 	defer log.Sync()
 
 	log.Infof("中心服务启动中... 配置: %s", cfg.Summary())
+
+	// 注册配置变更回调
+	configMgr.RegisterCallback(func(oldCfg, newCfg *config.Config) {
+		log.Infof("配置已更新，旧配置: %s，新配置: %s", oldCfg.Summary(), newCfg.Summary())
+		
+		// 动态更新日志级别
+		if oldCfg.Log.Level != newCfg.Log.Level {
+			log.Infof("日志级别变更: %s -> %s", oldCfg.Log.Level, newCfg.Log.Level)
+		}
+		
+		// 可以添加更多配置变更处理逻辑
+	})
 
 	// 初始化集群管理器
 	clusterMgr, err := cluster.NewManager(cluster.Config{
@@ -162,7 +181,7 @@ func main() {
 	jwtSecret := cfg.JWT.SecretKey
 
 	secureCookie := cfg.TLS.Enabled
-	portalSrv := portal.NewServer(store, jwtSecret, auditLogger, alertMgr, log, secureCookie, cfg.RateLimit, time.Duration(cfg.JWT.TokenDuration)*time.Hour, cfg.Portal.RedisAddr, cfg)
+	portalSrv := portal.NewServer(store, jwtSecret, auditLogger, alertManager, log, secureCookie, cfg.RateLimit, time.Duration(cfg.JWT.TokenDuration)*time.Hour, cfg.Portal.RedisAddr, cfg, configMgr)
 
 	httpListenAddr := fmt.Sprintf(":%d", cfg.Portal.Port)
 	httpServer := &http.Server{
@@ -222,6 +241,9 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	log.Infof("收到信号 %v，开始优雅关闭...", sig)
+
+	// 关闭配置管理器
+	configMgr.Stop()
 
 	done := make(chan struct{})
 	go func() {

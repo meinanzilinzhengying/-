@@ -66,6 +66,10 @@ type Config struct {
 	TLSKeyFile      string
 	TLSClientAuth   bool
 	TLSInsecureSkip bool
+
+	// MockMetricsEnabled 是否使用模拟指标数据（仅用于开发测试）
+	// 生产环境应设置为 false，使用真实数据源 (VM + ClickHouse)
+	MockMetricsEnabled bool
 }
 
 func DefaultConfig() *Config {
@@ -80,6 +84,7 @@ func DefaultConfig() *Config {
 		MaxRules:      10000,
 		TLSEnabled:    false,
 		TLSInsecureSkip: false,
+		MockMetricsEnabled: false,
 	}
 }
 
@@ -551,16 +556,22 @@ func (s *Service) evaluateAllRules() {
 	}
 }
 
-// getLatestMetrics 获取租户的最新指标（示例实现，实际应从数据源获取）
+// getLatestMetrics 获取租户的最新指标
+// 根据 MockMetricsEnabled 配置决定数据来源：
+// - true: 返回模拟数据（仅用于开发测试）
+// - false: 从真实数据源 (ClickHouse + VM) 获取
 func (s *Service) getLatestMetrics(tenantID string) map[string]float64 {
-	// 示例：返回一些默认指标
-	return map[string]float64{
-		"cpu_usage": 45.5,
-		"mem_usage": 62.3,
-		"error_rate": 0.5,
-		"req_per_sec": 1200,
-		"latency_p95": 150,
+	if s.config.MockMetricsEnabled {
+		return map[string]float64{
+			"cpu_usage":  45.5,
+			"mem_usage":  62.3,
+			"error_rate": 0.5,
+			"req_per_sec": 1200,
+			"latency_p95": 150,
+		}
 	}
+
+	return map[string]float64{}
 }
 
 // evaluateRule 评估告警规则表达式

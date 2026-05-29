@@ -35,6 +35,12 @@ func main() {
 		cfg.TLSInsecureSkip = true
 	}
 
+	// 生产环境指标数据源配置
+	// MockMetricsEnabled: true 使用模拟数据（仅开发测试），false 使用真实数据源 (VM + ClickHouse)
+	if v := os.Getenv("MOCK_METRICS_ENABLED"); v == "true" {
+		cfg.MockMetricsEnabled = true
+	}
+
 	svc, err := alertengine.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: %v\n", err)

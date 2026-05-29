@@ -33,6 +33,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	svcproto "cloud-flow/services/proto"
+	"cloud-flow/services/shared/auth"
 	"cloud-flow/services/shared/tenant"
 	"cloud-flow/services/shared/tlsutil"
 )
@@ -102,8 +103,11 @@ type Service struct {
 	// P0-02 修复: TiDB 数据库连接
 	db *sql.DB
 
-	// Auth Service 连接
+	// Auth Service 连接（旧字段保留用于兼容）
 	authConn *grpc.ClientConn
+
+	// P0-3 修复: 共享认证中间件
+	auth *auth.Authenticator
 
 	// gRPC/HTTP
 	grpcServer *grpc.Server
@@ -145,24 +149,20 @@ func New(config *Config) (*Service, error) {
 		}
 	}
 
-	// P0-2 修复: 连接 Auth Service（使用 TLS）
+	// P0-3 修复: 使用共享认证中间件
 	if config.AuthAddr != "" {
-		// 使用 tlsutil.DialOptions() 获取客户端拨号选项
-		tlsCfg := tlsutil.Config{
-			Enabled:      config.TLSEnabled,
+		authMiddleware, err := auth.NewAuthenticator(auth.Config{
+			AuthAddr:     config.AuthAddr,
+			TLSEnabled:   config.TLSEnabled,
 			CAFile:       config.TLSCAFile,
 			CertFile:     config.TLSCertFile,
 			KeyFile:      config.TLSKeyFile,
 			InsecureSkip: config.TLSInsecureSkip,
-		}
-		dialOpts, err := tlsutil.DialOptions(tlsCfg)
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to get TLS dial options: %w", err)
+			return nil, fmt.Errorf("failed to init auth middleware: %w", err)
 		}
-		s.authConn, err = grpc.Dial(config.AuthAddr, dialOpts...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to dial auth service: %w", err)
-		}
+		s.auth = authMiddleware
 	}
 
 	// P0-02 修复: 初始化 TiDB 连接
@@ -366,9 +366,20 @@ func (s *Service) Start() error {
 	mux.HandleFunc("/api/projects", s.projectsHandler)
 	mux.HandleFunc("/api/quotas", s.quotasHandler)
 
+	var handler http.Handler = mux
+	// P0-3 修复: 应用共享认证中间件
+	if s.auth != nil {
+		handler = s.auth.Middleware("/healthz")(handler)
+	}
+	// 始终应用租户中间件（在认证后）
+	handler = tenant.HTTPMiddleware(handler)
+
 	s.httpServer = &http.Server{
-		Addr:    s.config.HttpAddr,
-		Handler: tenant.HTTPMiddleware(mux),
+		Addr:         s.config.HttpAddr,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 	go func() { s.httpServer.ListenAndServe() }()
 
@@ -408,6 +419,11 @@ func (s *Service) Stop() {
 
 	if s.db != nil {
 		s.db.Close()
+	}
+
+	// P0-3 修复: 清理认证中间件资源
+	if s.auth != nil {
+		s.auth.Close()
 	}
 }
 

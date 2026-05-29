@@ -1,0 +1,14 @@
+go 1.22
+
+use (
+	./pkg
+	./proto
+	./services/alert-engine
+	./services/auth-service
+	./services/control-plane
+	./services/data-plane
+	./services/query-service
+	./services/shared/auth
+	./services/tenant-service
+	./services/topology-engine
+)

@@ -26,6 +26,7 @@ import (
 	svcproto "cloud-flow/services/proto"
 	"cloud-flow/services/shared/tenant"
 	"cloud-flow/services/shared/tlsutil"
+	"cloud-flow/services/shared/security"
 )
 
 // ============================================================================
@@ -118,6 +119,9 @@ type Service struct {
 	// P0-2 修复: TLS 凭证
 	grpcCreds credentials.TransportCredentials
 
+	// 安全管理
+	securityManager *security.SecurityManager
+
 	startTime time.Time
 }
 
@@ -138,19 +142,29 @@ func New(config *Config) (*Service, error) {
 		config = DefaultConfig()
 	}
 
-	// 初始化认证器
-	authenticator := auth.NewAuthenticator(
-		config.JWTSecret,
-		config.JWTIssuer,
-		config.JWTExpireSec,
-		config.JWTRefreshSec,
-		nil, // OIDC 在 Start 中初始化
-	)
+	// 初始化安全管理器
+	secConfig := security.DefaultSecurityConfig()
+	secManager := security.NewSecurityManager(secConfig)
+	
+	// 初始化认证器（使用安全管理器的黑名单）
+	authConfig := &auth.JWTConfig{
+		PrivateKey:      config.JWTSecret,
+		Issuer:          config.JWTIssuer,
+		ExpireDuration:  time.Duration(config.JWTExpireSec) * time.Second,
+		RefreshDuration: time.Duration(config.JWTRefreshSec) * time.Second,
+		Blacklist:       secManager.Blacklist(),
+	}
+	
+	authenticator, err := auth.NewAuthenticatorWithConfig(authConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create authenticator: %w", err)
+	}
 
 	s := &Service{
 		config:        config,
 		authenticator: authenticator,
 		cacheTTL:      5 * time.Minute,
+		securityManager: secManager,
 		startTime:     time.Now(),
 		health:        health.NewServer(),
 	}
@@ -357,6 +371,7 @@ func (s *Service) Start() error {
 	mux.HandleFunc("/api/login", s.loginHandler)
 	mux.HandleFunc("/api/verify", s.verifyHandler)
 	mux.HandleFunc("/api/refresh", s.refreshHandler)
+	mux.HandleFunc("/api/revoke", s.revokeHandler)
 	mux.HandleFunc("/api/oidc/callback", s.oidcCallbackHandler)
 	mux.HandleFunc("/api/oidc/auth", s.oidcAuthHandler)
 	mux.HandleFunc("/api/roles", s.rolesHandler)
@@ -421,18 +436,47 @@ func (s *Service) Stop() {
 
 // Authenticate 认证 (用户名+密码 → JWT)
 func (s *Service) Authenticate(ctx context.Context, req *svcproto.AuthenticateRequest) (*svcproto.AuthenticateResponse, error) {
-	// P0-02 修复: 从 TiDB 查找用户
+	// 1. 检查账户是否被锁定
+	if s.securityManager != nil && s.securityManager.Lockout().IsLocked(req.Username) {
+		return nil, fmt.Errorf("account temporarily locked due to too many failed attempts")
+	}
+
+	// 2. 从 TiDB 查找用户
 	user, err := s.findUserFromDB(req.Username)
 	if err != nil || user == nil {
+		// 记录失败尝试（即使用户名不存在也要记录，防止用户名枚举攻击）
+		if s.securityManager != nil {
+			s.securityManager.Lockout().RecordFailedAttempt(req.Username)
+		}
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// 使用 bcrypt 验证密码哈希
+	// 3. 验证密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		// 记录失败尝试
+		if s.securityManager != nil {
+			s.securityManager.Lockout().RecordFailedAttempt(user.UserID)
+		}
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// 签发 JWT
+	// 4. 登录成功，清除失败记录
+	if s.securityManager != nil {
+		s.securityManager.Lockout().RecordSuccessfulAttempt(user.UserID)
+	}
+
+	// 5. 检查 token 生成速率限制
+	if s.securityManager != nil {
+		limited, err := s.securityManager.RateLimiter().CheckAndConsume(user.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("rate limiter error: %w", err)
+		}
+		if limited {
+			return nil, fmt.Errorf("too many token requests, please try again later")
+		}
+	}
+
+	// 6. 签发 JWT
 	token, err := s.authenticator.JWTManager().GenerateToken(
 		user.UserID, user.TenantID, user.Username, user.Role, "", nil, false,
 	)
@@ -582,6 +626,31 @@ func (s *Service) OIDCCallback(ctx context.Context, req *svcproto.OIDCCallbackRe
 		UserId:    claims.Subject,
 		Role:      claims.Role,
 	}, nil
+}
+
+// RevokeToken 撤销 Token
+func (s *Service) RevokeToken(ctx context.Context, req *svcproto.RevokeTokenRequest) (*svcproto.RevokeTokenResponse, error) {
+	// 验证 token 并获取 claims
+	claims, err := s.authenticator.Authenticate(ctx, req.Token)
+	if err != nil {
+		return &svcproto.RevokeTokenResponse{Success: false, Message: "invalid token"}, nil
+	}
+
+	// 撤销 token
+	if s.securityManager != nil {
+		err = s.securityManager.RevokeToken(ctx, claims.GetJTI(), req.Reason, claims.Subject, claims.ExpiresAt.Time)
+		if err != nil {
+			return &svcproto.RevokeTokenResponse{Success: false, Message: err.Error()}, nil
+		}
+	} else {
+		// 回退到原始的黑名单方法
+		err = s.authenticator.RevokeToken(ctx, req.Token)
+		if err != nil {
+			return &svcproto.RevokeTokenResponse{Success: false, Message: err.Error()}, nil
+		}
+	}
+
+	return &svcproto.RevokeTokenResponse{Success: true}, nil
 }
 
 // ============================================================================
@@ -768,6 +837,37 @@ func (s *Service) refreshHandler(w http.ResponseWriter, r *http.Request) {
 		"token":      newToken,
 		"expires_at": time.Now().Add(time.Duration(s.config.JWTExpireSec) * time.Second).Unix(),
 	})
+}
+
+func (s *Service) revokeHandler(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token  string `json:"token"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if body.Token == "" {
+		body.Token = extractBearerToken(r)
+	}
+
+	if body.Token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := s.RevokeToken(r.Context(), &svcproto.RevokeTokenRequest{
+		Token:  body.Token,
+		Reason: body.Reason,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, resp)
 }
 
 func (s *Service) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {

@@ -760,6 +760,19 @@ type Authenticator struct {
 	apiKeyManager *APIKeyManager
 }
 
+// NewAuthenticatorWithConfig 使用配置创建认证器
+func NewAuthenticatorWithConfig(config *JWTConfig) (*Authenticator, error) {
+	jwtManager, err := NewJWTManagerWithConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Authenticator{
+		jwtManager:    jwtManager,
+		apiKeyManager: NewAPIKeyManager(),
+	}, nil
+}
+
 // NewAuthenticator 创建统一认证器 (RS256 模式)
 //
 // P1-01 修复: 默认使用 RS256

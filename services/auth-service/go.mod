@@ -11,6 +11,7 @@ require (
 	github.com/redis/go-redis/v9 v9.7.0
 	go.etcd.io/etcd/client/v3 v3.5.13
 	golang.org/x/crypto v0.47.0
+	golang.org/x/time v0.5.0
 	google.golang.org/grpc v1.80.0
 	gorm.io/driver/mysql v1.5.6
 	gorm.io/gorm v1.25.10

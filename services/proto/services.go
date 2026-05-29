@@ -685,6 +685,18 @@ type AuthorizeResponse struct {
 	Reason  string `json:"reason"`
 }
 
+// RevokeTokenRequest 撤销 Token 请求
+type RevokeTokenRequest struct {
+	Token  string `json:"token"`
+	Reason string `json:"reason"`
+}
+
+// RevokeTokenResponse 撤销 Token 响应
+type RevokeTokenResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // ============================================================================
 // tenant-service
 // ============================================================================
@@ -1296,6 +1308,8 @@ type AuthServiceServer interface {
 	CreatePolicy(ctx context.Context, req *CreatePolicyRequest) (*CreatePolicyResponse, error)
 	CheckPermission(ctx context.Context, req *CheckPermissionRequest) (*CheckPermissionResponse, error)
 	OIDCCallback(ctx context.Context, req *OIDCCallbackRequest) (*AuthenticateResponse, error)
+	// New security method:
+	RevokeToken(ctx context.Context, req *RevokeTokenRequest) (*RevokeTokenResponse, error)
 }
 
 // TenantServiceServer tenant-service gRPC 服务
@@ -1346,6 +1360,10 @@ func (UnimplementedAuthServiceServer) CheckPermission(ctx context.Context, req *
 }
 
 func (UnimplementedAuthServiceServer) OIDCCallback(ctx context.Context, req *OIDCCallbackRequest) (*AuthenticateResponse, error) {
+	return nil, nil
+}
+
+func (UnimplementedAuthServiceServer) RevokeToken(ctx context.Context, req *RevokeTokenRequest) (*RevokeTokenResponse, error) {
 	return nil, nil
 }
 

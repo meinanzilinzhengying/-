@@ -1,12 +1,15 @@
-.PHONY: help build test lint docker up down
+.PHONY: help build test lint docker up down prod-up prod-down prod-check prod-health
 
 # 帮助菜单
 help: ## 显示帮助信息
 	@echo "CloudFlow 开发工具"
 	@echo "======================"
 	@echo ""
-	@echo "可用命令:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo "开发环境命令:"
+	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -v "^prod-" | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "生产环境命令:"
+	@grep -E '^prod-[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[35m%-20s\033[0m %s\n", $$1, $$2}'
 
 # 构建所有 Go 服务
 build: ## 构建所有 Go 服务
@@ -75,3 +78,26 @@ work-sync: ## 同步 Go 工作区
 			cd $$dir && go mod tidy && cd - > /dev/null; \
 		fi \
 	done
+
+# 生产环境命令
+prod-up: ## 启动生产环境
+	@echo "Starting production environment..."
+	@[ -f .env ] || (echo "错误：.env 文件不存在，请先复制 .env.example" && exit 1)
+	docker-compose -f docker-compose.prod.yml up -d
+
+prod-down: ## 停止生产环境
+	@echo "Stopping production environment..."
+	docker-compose -f docker-compose.prod.yml down
+
+prod-check: ## 运行生产环境部署检查清单
+	@echo "Running production checklist..."
+	./scripts/prod-checklist.sh
+
+prod-health: ## 运行生产环境健康检查
+	@echo "Running health check..."
+	./scripts/health-check.sh
+
+prod-logs: ## 查看生产环境服务日志
+	@echo "Showing production logs..."
+	docker-compose -f docker-compose.prod.yml logs -f
+
